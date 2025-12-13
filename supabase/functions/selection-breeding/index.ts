@@ -296,21 +296,35 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 10. Register all agents (survivors + offspring) to new generation
-    const newGenerationAgentIds = [...survivorIds, ...insertedOffspringIds];
-    
-    if (newGenerationAgentIds.length > 0) {
-      const generationAgentRecords = newGenerationAgentIds.map(agentId => ({
+    // 10. Register ONLY offspring to new generation
+    // Survivors are already registered by start_new_generation() which pre-registers all existing agents
+    // We only need to add the newly created offspring
+    if (insertedOffspringIds.length > 0) {
+      const offspringRecords = insertedOffspringIds.map(agentId => ({
         generation_id: new_generation_id,
         agent_id: agentId,
       }));
 
       const { error: regError } = await supabase
         .from('generation_agents')
-        .insert(generationAgentRecords);
+        .insert(offspringRecords);
 
       if (regError) {
-        console.error('[selection-breeding] Failed to register agents to new generation:', regError);
+        console.error('[selection-breeding] Failed to register offspring to new generation:', regError);
+      }
+    }
+    
+    // 10b. Remove deleted agents from new generation's cohort
+    // (start_new_generation registered them before we knew who would be culled)
+    if (removedIds.length > 0) {
+      const { error: removeError } = await supabase
+        .from('generation_agents')
+        .delete()
+        .eq('generation_id', new_generation_id)
+        .in('agent_id', removedIds);
+
+      if (removeError) {
+        console.error('[selection-breeding] Failed to remove culled agents from new generation:', removeError);
       }
     }
 

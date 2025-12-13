@@ -212,10 +212,12 @@ export function PaperPortfolio() {
         {/* Recent Orders */}
         {orders.length > 0 && (
           <div className="space-y-2">
-            <div className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Recent Orders</div>
-            <ScrollArea className="max-h-[100px]">
-              <div className="space-y-1">
-                {orders.slice(0, 5).map((order) => (
+            <div className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
+              Recent Orders ({orders.length})
+            </div>
+            <ScrollArea className="h-[180px]">
+              <div className="space-y-1 pr-3">
+                {orders.map((order) => (
                   <div
                     key={order.id}
                     className="flex items-center justify-between text-xs py-1 border-b border-border/50 last:border-0"

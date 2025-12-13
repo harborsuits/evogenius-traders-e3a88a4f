@@ -5,6 +5,20 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+interface TradeTags {
+  strategy_template?: string;
+  regime_at_entry?: string;
+  entry_reason?: string[];
+  exit_reason?: string;
+  pattern_id?: string;
+  confidence?: number;
+  market_snapshot?: {
+    price: number;
+    vol_24h?: number;
+    age_seconds?: number;
+  };
+}
+
 interface ExecuteTradeRequest {
   symbol: string;
   side: 'buy' | 'sell';
@@ -13,6 +27,7 @@ interface ExecuteTradeRequest {
   limitPrice?: number;
   agentId?: string;
   generationId?: string;
+  tags?: TradeTags;
 }
 
 interface RiskConfig {
@@ -35,7 +50,7 @@ Deno.serve(async (req) => {
     );
 
     const body: ExecuteTradeRequest = await req.json();
-    const { symbol, side, qty, orderType = 'market', limitPrice, agentId, generationId } = body;
+    const { symbol, side, qty, orderType = 'market', limitPrice, agentId, generationId, tags = {} } = body;
 
     console.log('[paper-execute] Request:', { symbol, side, qty, orderType, agentId });
 
@@ -303,7 +318,7 @@ Deno.serve(async (req) => {
       fee,
     });
 
-    // Create order
+    // Create order with tags
     const { data: order, error: orderError } = await supabase
       .from('paper_orders')
       .insert({
@@ -320,6 +335,14 @@ Deno.serve(async (req) => {
         filled_qty: qty,
         slippage_pct: slippagePct,
         filled_at: new Date().toISOString(),
+        tags: {
+          ...tags,
+          market_snapshot: {
+            price: basePrice,
+            fill_price: fillPrice,
+            slippage_pct: slippagePct,
+          },
+        },
       })
       .select()
       .single();

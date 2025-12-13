@@ -27,3 +27,6 @@ verify_jwt = false
 
 [functions.trade-execute]
 verify_jwt = false
+
+[functions.trade-cycle]
+verify_jwt = false

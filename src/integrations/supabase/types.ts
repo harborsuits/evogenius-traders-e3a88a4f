@@ -321,6 +321,7 @@ export type Database = {
           slippage_pct: number | null
           status: Database["public"]["Enums"]["paper_order_status"]
           symbol: string
+          tags: Json
         }
         Insert: {
           account_id: string
@@ -339,6 +340,7 @@ export type Database = {
           slippage_pct?: number | null
           status?: Database["public"]["Enums"]["paper_order_status"]
           symbol: string
+          tags?: Json
         }
         Update: {
           account_id?: string
@@ -357,6 +359,7 @@ export type Database = {
           slippage_pct?: number | null
           status?: Database["public"]["Enums"]["paper_order_status"]
           symbol?: string
+          tags?: Json
         }
         Relationships: [
           {

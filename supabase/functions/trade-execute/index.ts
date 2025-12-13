@@ -5,6 +5,15 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+interface TradeTags {
+  strategy_template?: string;
+  regime_at_entry?: string;
+  entry_reason?: string[];
+  confidence?: number;
+  pattern_id?: string;
+  market_snapshot?: Record<string, unknown>;
+}
+
 interface ExecuteTradeRequest {
   symbol: string;
   side: 'buy' | 'sell';
@@ -14,6 +23,7 @@ interface ExecuteTradeRequest {
   agentId?: string;
   generationId?: string;
   bypassGates?: boolean;
+  tags?: TradeTags;
 }
 
 type BlockReason = 
@@ -334,6 +344,7 @@ Deno.serve(async (req) => {
         limitPrice: body.limitPrice,
         agentId: body.agentId,
         generationId: body.generationId,
+        tags: body.tags,
       }),
     });
 

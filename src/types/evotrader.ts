@@ -114,6 +114,7 @@ export interface MarketData {
   ema_50_slope: number;
   atr_ratio: number;
   regime: string;
+  updated_at: string;
 }
 
 // Configuration types

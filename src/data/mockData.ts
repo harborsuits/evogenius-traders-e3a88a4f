@@ -53,6 +53,7 @@ export const mockMarketData: MarketData[] = [
     ema_50_slope: 0.028,
     atr_ratio: 1.65,
     regime: 'Trending',
+    updated_at: new Date().toISOString(),
   },
   {
     symbol: 'ETH-USD',
@@ -62,6 +63,7 @@ export const mockMarketData: MarketData[] = [
     ema_50_slope: -0.005,
     atr_ratio: 1.42,
     regime: 'Ranging',
+    updated_at: new Date().toISOString(),
   },
 ];
 

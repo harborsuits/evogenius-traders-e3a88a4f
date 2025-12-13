@@ -77,6 +77,15 @@ export default {
           probation: "hsl(var(--status-probation))",
           removed: "hsl(var(--status-removed))",
         },
+        danger: {
+          DEFAULT: "hsl(var(--danger))",
+          foreground: "hsl(var(--danger-foreground))",
+        },
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+          foreground: "hsl(var(--warning-foreground))",
+        },
+        terminal: "hsl(var(--terminal))",
       },
       borderRadius: {
         lg: "var(--radius)",

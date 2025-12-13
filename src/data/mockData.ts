@@ -5,7 +5,14 @@ import {
   Performance, 
   SystemState, 
   MarketData,
-  SystemConfig 
+  SystemConfig,
+  TrendPullbackGenes,
+  MeanReversionGenes,
+  BreakoutGenes,
+  StrategyTemplate,
+  TradeSide,
+  TradeOutcome,
+  GenerationTerminationReason
 } from '@/types/evotrader';
 
 // Mock current generation
@@ -59,13 +66,13 @@ export const mockMarketData: MarketData[] = [
 ];
 
 // Generate mock agents
-const strategyDistribution = [
+const strategyDistribution: { template: StrategyTemplate; count: number }[] = [
   { template: 'trend_pullback', count: 33 },
   { template: 'mean_reversion', count: 33 },
   { template: 'breakout', count: 34 },
-] as const;
+];
 
-const generateMockGenes = (strategy: string) => {
+const generateMockGenes = (strategy: StrategyTemplate): TrendPullbackGenes | MeanReversionGenes | BreakoutGenes => {
   switch (strategy) {
     case 'trend_pullback':
       return {
@@ -75,7 +82,7 @@ const generateMockGenes = (strategy: string) => {
         TP1: Number((Math.random() * 1.5 + 1.5).toFixed(2)),
         TP2: Number((Math.random() * 3 + 3).toFixed(2)),
         Trailing_stop: Number((Math.random() * 1.5 + 0.5).toFixed(2)),
-      };
+      } as TrendPullbackGenes;
     case 'mean_reversion':
       return {
         BB_period: Math.floor(Math.random() * 16) + 14,
@@ -83,7 +90,7 @@ const generateMockGenes = (strategy: string) => {
         RSI_entry: Math.floor(Math.random() * 20) + 20,
         TP: Number((Math.random() * 2 + 1).toFixed(2)),
         Stop_loss: Number((Math.random() * 1.5 + 0.5).toFixed(2)),
-      };
+      } as MeanReversionGenes;
     case 'breakout':
       return {
         Lookback_period: Math.floor(Math.random() * 30) + 10,
@@ -91,9 +98,7 @@ const generateMockGenes = (strategy: string) => {
         Volume_multiplier: Number((Math.random() * 1.5 + 1.5).toFixed(2)),
         TP: Number((Math.random() * 4 + 2).toFixed(2)),
         Trailing_stop: Number((Math.random() * 2 + 1).toFixed(2)),
-      };
-    default:
-      return {};
+      } as BreakoutGenes;
   }
 };
 
@@ -120,29 +125,41 @@ strategyDistribution.forEach(({ template, count }) => {
 });
 
 // Mock trades
-export const mockTrades: Trade[] = Array.from({ length: 50 }, (_, i) => ({
-  id: `trade-${String(i + 1).padStart(4, '0')}`,
-  agent_id: `agent-${String(Math.floor(Math.random() * 100) + 1).padStart(3, '0')}`,
-  generation_id: 'gen-007',
-  timestamp: new Date(Date.now() - Math.random() * 4 * 24 * 60 * 60 * 1000).toISOString(),
-  symbol: Math.random() > 0.5 ? 'BTC-USD' : 'ETH-USD',
-  side: Math.random() > 0.5 ? 'BUY' : 'SELL',
-  intent_size: Number((Math.random() * 0.01).toFixed(6)),
-  fill_price: Math.random() > 0.5 ? 43250 + Math.random() * 500 : 2280 + Math.random() * 50,
-  fill_size: Number((Math.random() * 0.01).toFixed(6)),
-  fees: Number((Math.random() * 0.5).toFixed(2)),
-  outcome: Math.random() > 0.1 ? 'success' : (Math.random() > 0.5 ? 'failed' : 'denied'),
-  pnl: Number((Math.random() * 20 - 5).toFixed(2)),
-})).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+const tradeSides: TradeSide[] = ['BUY', 'SELL'];
+const tradeOutcomes: TradeOutcome[] = ['success', 'failed', 'denied'];
+
+export const mockTrades: Trade[] = Array.from({ length: 50 }, (_, i) => {
+  const symbol = Math.random() > 0.5 ? 'BTC-USD' : 'ETH-USD';
+  const outcomeRandom = Math.random();
+  const outcome: TradeOutcome = outcomeRandom > 0.1 ? 'success' : (outcomeRandom > 0.05 ? 'failed' : 'denied');
+  
+  return {
+    id: `trade-${String(i + 1).padStart(4, '0')}`,
+    agent_id: `agent-${String(Math.floor(Math.random() * 100) + 1).padStart(3, '0')}`,
+    generation_id: 'gen-007',
+    timestamp: new Date(Date.now() - Math.random() * 4 * 24 * 60 * 60 * 1000).toISOString(),
+    symbol,
+    side: tradeSides[Math.floor(Math.random() * 2)],
+    intent_size: Number((Math.random() * 0.01).toFixed(6)),
+    fill_price: symbol === 'BTC-USD' ? 43250 + Math.random() * 500 : 2280 + Math.random() * 50,
+    fill_size: Number((Math.random() * 0.01).toFixed(6)),
+    fees: Number((Math.random() * 0.5).toFixed(2)),
+    outcome,
+    pnl: Number((Math.random() * 20 - 5).toFixed(2)),
+  };
+}).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
 // Mock generation history
+const terminationReasons: GenerationTerminationReason[] = ['time', 'trades', 'drawdown'];
+const regimeTags = ['Trending', 'Ranging + Low Vol', 'High Vol', 'Trending + High Vol', 'Ranging', 'Trending'];
+
 export const mockGenerationHistory: Generation[] = Array.from({ length: 6 }, (_, i) => ({
   id: `gen-${String(i + 1).padStart(3, '0')}`,
   generation_number: i + 1,
   start_time: new Date(Date.now() - (7 - i) * 7 * 24 * 60 * 60 * 1000).toISOString(),
   end_time: new Date(Date.now() - (6 - i) * 7 * 24 * 60 * 60 * 1000).toISOString(),
-  regime_tag: ['Trending', 'Ranging + Low Vol', 'High Vol', 'Trending + High Vol', 'Ranging', 'Trending'][i],
-  termination_reason: ['time', 'trades', 'time', 'drawdown', 'time', 'trades'][i] as any,
+  regime_tag: regimeTags[i],
+  termination_reason: terminationReasons[i % 3],
   avg_fitness: Number((Math.random() * 0.5 + 0.3).toFixed(3)),
   total_trades: Math.floor(Math.random() * 50) + 50,
   total_pnl: Number((Math.random() * 400 - 100).toFixed(2)),

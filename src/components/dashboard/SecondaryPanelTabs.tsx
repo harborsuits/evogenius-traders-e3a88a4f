@@ -2,6 +2,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ManualPaperTrade } from './ManualPaperTrade';
 import { CoinbaseBalances } from './CoinbaseBalances';
 import { ControlEventsLog } from './ControlEventsLog';
+import { DecisionLog } from './DecisionLog';
 import { ConfigViewer } from './ConfigViewer';
 import { CoinbasePanel } from './CoinbasePanel';
 import { SystemConfig } from '@/types/evotrader';
@@ -35,6 +36,7 @@ export function SecondaryPanelTabs({ config }: SecondaryPanelTabsProps) {
       </TabsContent>
 
       <TabsContent value="system" className="space-y-4 mt-0">
+        <DecisionLog />
         <ControlEventsLog />
       </TabsContent>
 

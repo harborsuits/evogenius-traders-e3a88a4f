@@ -1,4 +1,5 @@
 import { Header } from '@/components/layout/Header';
+import { SafetyBanner } from '@/components/dashboard/SafetyBanner';
 import { MarketTicker } from '@/components/dashboard/MarketTicker';
 import { MetricCard } from '@/components/dashboard/MetricCard';
 import { GenerationProgress } from '@/components/dashboard/GenerationProgress';
@@ -87,6 +88,9 @@ const Index = () => {
       />
       
       <main className="container px-4 md:px-6 py-6 space-y-6">
+        {/* Safety Banner - Always Visible */}
+        <SafetyBanner />
+
         {/* Market Ticker */}
         <section className="animate-fade-in">
           <MarketTicker markets={marketData} />

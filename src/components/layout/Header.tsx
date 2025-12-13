@@ -1,4 +1,5 @@
 import { StatusIndicator } from '@/components/dashboard/StatusIndicator';
+import { TradeModeToggle } from '@/components/dashboard/TradeModeToggle';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SystemStatus } from '@/types/evotrader';
@@ -37,6 +38,11 @@ export function Header({ status, generationNumber }: HeaderProps) {
           )}
         </div>
 
+        {/* Trade Mode Toggle (center) */}
+        <div className="hidden lg:flex">
+          <TradeModeToggle />
+        </div>
+
         {/* Status & Actions */}
         <div className="flex items-center gap-4">
           <StatusIndicator status={status} size="md" />
@@ -55,6 +61,11 @@ export function Header({ status, generationNumber }: HeaderProps) {
             Coinbase
           </Button>
         </div>
+      </div>
+      
+      {/* Mobile trade mode toggle */}
+      <div className="lg:hidden border-t border-border px-4 py-2 flex justify-center">
+        <TradeModeToggle />
       </div>
     </header>
   );

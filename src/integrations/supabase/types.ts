@@ -536,6 +536,7 @@ export type Database = {
           active_pool: number
           current_generation_id: string | null
           id: string
+          live_armed_until: string | null
           reserve: number
           status: Database["public"]["Enums"]["system_status"]
           today_pnl: number
@@ -548,6 +549,7 @@ export type Database = {
           active_pool?: number
           current_generation_id?: string | null
           id?: string
+          live_armed_until?: string | null
           reserve?: number
           status?: Database["public"]["Enums"]["system_status"]
           today_pnl?: number
@@ -560,6 +562,7 @@ export type Database = {
           active_pool?: number
           current_generation_id?: string | null
           id?: string
+          live_armed_until?: string | null
           reserve?: number
           status?: Database["public"]["Enums"]["system_status"]
           today_pnl?: number

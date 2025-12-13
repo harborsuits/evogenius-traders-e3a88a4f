@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,9 +10,12 @@ import {
   Users, 
   Key, 
   Timer,
-  FlaskConical
+  FlaskConical,
+  Loader2
 } from 'lucide-react';
 import { useTradeModeContext } from '@/contexts/TradeModeContext';
+import { useSystemState } from '@/hooks/useEvoTraderData';
+import { useArmLive, isArmedNow, getArmedSecondsRemaining } from '@/hooks/useArmLive';
 
 interface ChecklistItem {
   label: string;
@@ -20,7 +24,30 @@ interface ChecklistItem {
 }
 
 export function LiveLockedWorkspace() {
-  const { setMode } = useTradeModeContext();
+  const { setMode, isLiveArmed } = useTradeModeContext();
+  const { data: systemState } = useSystemState();
+  const { arm, isArming } = useArmLive();
+  
+  // Get armed status from system state
+  const armedUntil = (systemState as any)?.live_armed_until ?? null;
+  const isArmed = isArmedNow(armedUntil);
+  const [secondsRemaining, setSecondsRemaining] = useState(0);
+
+  // Countdown timer effect
+  useEffect(() => {
+    if (!armedUntil) {
+      setSecondsRemaining(0);
+      return;
+    }
+
+    const updateCountdown = () => {
+      setSecondsRemaining(getArmedSecondsRemaining(armedUntil));
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [armedUntil]);
 
   // TODO: These will be real checks once implemented
   const checklist: ChecklistItem[] = [
@@ -36,12 +63,12 @@ export function LiveLockedWorkspace() {
     },
     {
       label: 'ARM enabled (60s window)',
-      checked: false, // Will check system_state.live_armed_until
+      checked: isArmed,
       icon: <Timer className="h-4 w-4" />,
     },
   ];
 
-  const allChecked = checklist.every((item) => item.checked);
+  const preArmChecks = checklist.slice(0, 2).every((item) => item.checked);
 
   return (
     <div className="space-y-6">
@@ -54,9 +81,15 @@ export function LiveLockedWorkspace() {
               <div>
                 <CardTitle className="text-lg flex items-center gap-2">
                   LIVE MODE
-                  <Badge variant="destructive" className="animate-pulse">
-                    LOCKED
-                  </Badge>
+                  {isArmed ? (
+                    <Badge variant="destructive" className="animate-pulse">
+                      ARMED — {secondsRemaining}s
+                    </Badge>
+                  ) : (
+                    <Badge variant="destructive" className="opacity-70">
+                      LOCKED
+                    </Badge>
+                  )}
                 </CardTitle>
                 <p className="text-sm text-muted-foreground mt-1">
                   Front lines workspace — real money execution
@@ -66,11 +99,17 @@ export function LiveLockedWorkspace() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="flex items-start gap-3 p-3 bg-destructive/10 rounded-lg border border-destructive/20">
+          <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+            isArmed 
+              ? 'bg-destructive/20 border-destructive/40' 
+              : 'bg-destructive/10 border-destructive/20'
+          }`}>
             <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
             <p className="text-sm text-destructive">
-              Live trading is locked until all safety checks pass and ARM is enabled.
-              This protects you from accidental real-money trades.
+              {isArmed 
+                ? `Live execution unlocked for ${secondsRemaining} seconds. Execute with caution.`
+                : 'Live trading is locked until all safety checks pass and ARM is enabled.'
+              }
             </p>
           </div>
         </CardContent>
@@ -128,12 +167,17 @@ export function LiveLockedWorkspace() {
           <Button
             variant="destructive"
             className="w-full justify-start"
-            disabled={!allChecked}
+            disabled={isArming || isArmed}
+            onClick={() => arm()}
           >
-            <Timer className="h-4 w-4 mr-2" />
-            ARM Live (60s)
-            {!allChecked && (
-              <span className="ml-auto text-xs opacity-70">Complete checklist first</span>
+            {isArming ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Timer className="h-4 w-4 mr-2" />
+            )}
+            {isArmed ? `Armed — ${secondsRemaining}s remaining` : 'ARM Live (60s)'}
+            {!isArmed && !isArming && (
+              <span className="ml-auto text-xs opacity-70">⚠️ Danger</span>
             )}
           </Button>
           

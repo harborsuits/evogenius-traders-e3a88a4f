@@ -115,10 +115,10 @@ Deno.serve(async (req) => {
       );
     }
 
-    // === Get system state ===
+    // === Get system state (including generation_id - server-side source of truth) ===
     const { data: systemState, error: stateError } = await supabase
       .from('system_state')
-      .select('trade_mode, status')
+      .select('trade_mode, status, current_generation_id')
       .limit(1)
       .single();
 
@@ -132,7 +132,9 @@ Deno.serve(async (req) => {
 
     const tradeMode = systemState?.trade_mode ?? 'paper';
     const systemStatus = systemState?.status ?? 'stopped';
-    console.log('[trade-execute] System state:', { tradeMode, systemStatus });
+    // CRITICAL: Use server-side generation_id, not client-provided (security + correctness)
+    const generationId = systemState?.current_generation_id;
+    console.log('[trade-execute] System state:', { tradeMode, systemStatus, generationId });
 
     // === GATE 3: System must be running (skip for manual trades) ===
     if (!body.bypassGates) {
@@ -343,7 +345,8 @@ Deno.serve(async (req) => {
         orderType: body.orderType,
         limitPrice: body.limitPrice,
         agentId: body.agentId,
-        generationId: body.generationId,
+        // CRITICAL: Use server-side generation_id, not client-provided
+        generationId: generationId,
         tags: body.tags,
       }),
     });

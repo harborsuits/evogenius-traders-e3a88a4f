@@ -6,13 +6,9 @@ import { AgentGrid } from '@/components/dashboard/AgentGrid';
 import { TradeLog } from '@/components/dashboard/TradeLog';
 import { GenerationHistory } from '@/components/dashboard/GenerationHistory';
 import { ControlPanel } from '@/components/dashboard/ControlPanel';
-import { ConfigViewer } from '@/components/dashboard/ConfigViewer';
-import { ControlEventsLog } from '@/components/dashboard/ControlEventsLog';
 import { PollingHealth } from '@/components/dashboard/PollingHealth';
-import { CoinbasePanel } from '@/components/dashboard/CoinbasePanel';
-import { CoinbaseBalances } from '@/components/dashboard/CoinbaseBalances';
 import { PaperPortfolio } from '@/components/dashboard/PaperPortfolio';
-import { ManualPaperTrade } from '@/components/dashboard/ManualPaperTrade';
+import { SecondaryPanelTabs } from '@/components/dashboard/SecondaryPanelTabs';
 import { 
   useSystemState,
   useAgents,
@@ -164,43 +160,23 @@ const Index = () => {
             </div>
           </div>
 
-          {/* Right Column - Controls & Config */}
+          {/* Right Column - Cockpit (Always Visible) + Tabbed Panels */}
           <div className="lg:col-span-4 space-y-6">
-            <div className="animate-fade-in" style={{ animationDelay: '200ms' }}>
+            {/* Always Visible - Cockpit Instruments */}
+            <div className="space-y-4 animate-fade-in" style={{ animationDelay: '200ms' }}>
               <ControlPanel 
                 status={status}
                 onStart={() => console.log('Start')}
                 onPause={() => console.log('Pause')}
                 onStop={() => console.log('Stop')}
               />
-            </div>
-
-            <div className="animate-fade-in" style={{ animationDelay: '225ms' }}>
               <PaperPortfolio />
-            </div>
-
-            <div className="animate-fade-in" style={{ animationDelay: '237ms' }}>
-              <ManualPaperTrade />
-            </div>
-
-            <div className="animate-fade-in" style={{ animationDelay: '250ms' }}>
-              <ControlEventsLog />
-            </div>
-
-            <div className="animate-fade-in" style={{ animationDelay: '275ms' }}>
               <PollingHealth />
             </div>
 
+            {/* Tabbed Secondary Panels */}
             <div className="animate-fade-in" style={{ animationDelay: '300ms' }}>
-              <CoinbasePanel />
-            </div>
-
-            <div className="animate-fade-in" style={{ animationDelay: '325ms' }}>
-              <CoinbaseBalances />
-            </div>
-            
-            <div className="animate-fade-in" style={{ animationDelay: '350ms' }}>
-              <ConfigViewer config={activeConfig} />
+              <SecondaryPanelTabs config={activeConfig} />
             </div>
           </div>
         </div>

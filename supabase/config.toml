@@ -30,3 +30,6 @@ verify_jwt = false
 
 [functions.trade-cycle]
 verify_jwt = false
+
+[functions.fitness-calc]
+verify_jwt = false

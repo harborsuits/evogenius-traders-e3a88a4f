@@ -55,6 +55,33 @@ export type Database = {
           },
         ]
       }
+      control_events: {
+        Row: {
+          action: string
+          id: string
+          metadata: Json | null
+          new_status: string | null
+          previous_status: string | null
+          triggered_at: string
+        }
+        Insert: {
+          action: string
+          id?: string
+          metadata?: Json | null
+          new_status?: string | null
+          previous_status?: string | null
+          triggered_at?: string
+        }
+        Update: {
+          action?: string
+          id?: string
+          metadata?: Json | null
+          new_status?: string | null
+          previous_status?: string | null
+          triggered_at?: string
+        }
+        Relationships: []
+      }
       generations: {
         Row: {
           avg_fitness: number | null

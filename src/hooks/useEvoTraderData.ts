@@ -152,7 +152,9 @@ export function useRealtimeSubscriptions() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'trades' },
         () => {
-          queryClient.invalidateQueries({ queryKey: ['trades'] });
+          queryClient.invalidateQueries({ 
+            predicate: (query) => query.queryKey[0] === 'trades' 
+          });
         }
       )
       .subscribe();
@@ -164,7 +166,9 @@ export function useRealtimeSubscriptions() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'system_state' },
         () => {
-          queryClient.invalidateQueries({ queryKey: ['system-state'] });
+          queryClient.invalidateQueries({ 
+            predicate: (query) => query.queryKey[0] === 'system-state' 
+          });
         }
       )
       .subscribe();
@@ -176,7 +180,9 @@ export function useRealtimeSubscriptions() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'market_data' },
         () => {
-          queryClient.invalidateQueries({ queryKey: ['market-data'] });
+          queryClient.invalidateQueries({ 
+            predicate: (query) => query.queryKey[0] === 'market-data' 
+          });
         }
       )
       .subscribe();
@@ -188,7 +194,9 @@ export function useRealtimeSubscriptions() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'agents' },
         () => {
-          queryClient.invalidateQueries({ queryKey: ['agents'] });
+          queryClient.invalidateQueries({ 
+            predicate: (query) => query.queryKey[0] === 'agents' 
+          });
         }
       )
       .subscribe();

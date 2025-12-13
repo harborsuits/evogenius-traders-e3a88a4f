@@ -21,7 +21,10 @@ function base64urlEncode(data: Uint8Array): string {
 
 // Parse PKCS8 PEM to raw bytes
 function parsePKCS8PEM(pem: string): Uint8Array {
-  const pemContents = pem
+  // Handle escaped newlines from environment variables
+  const normalizedPem = pem.replace(/\\n/g, '\n');
+  
+  const pemContents = normalizedPem
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
     .replace(/-----BEGIN EC PRIVATE KEY-----/g, '')

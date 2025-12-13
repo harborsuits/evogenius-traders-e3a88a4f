@@ -2,7 +2,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
 import { useTradeMode } from '@/hooks/usePaperTrading';
-import { AlertTriangle, CheckCircle, XCircle, Clock, Square, Activity, Loader2 } from 'lucide-react';
+import { useStrategyTestMode } from '@/hooks/useSystemConfig';
+import { AlertTriangle, CheckCircle, XCircle, Clock, Square, Activity, Loader2, FlaskConical } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/hooks/use-toast';
@@ -20,6 +21,7 @@ export function SafetyBanner() {
   const { data: systemState } = useSystemState();
   const { data: marketData = [] } = useMarketData();
   const { data: tradeMode } = useTradeMode();
+  const isTestMode = useStrategyTestMode();
   const queryClient = useQueryClient();
   const [emergencyStopping, setEmergencyStopping] = useState(false);
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState<number | null>(null);
@@ -149,6 +151,17 @@ export function SafetyBanner() {
             {isRunning && <Activity className="h-3 w-3 mr-1 animate-pulse" />}
             {status.toUpperCase()}
           </Badge>
+
+          {/* Test Mode Badge */}
+          {isTestMode && (
+            <Badge 
+              variant="outline"
+              className="text-sm font-mono px-3 py-1 bg-orange-500/20 text-orange-500 border-orange-500/50 animate-pulse"
+            >
+              <FlaskConical className="h-3 w-3 mr-1" />
+              TEST MODE
+            </Badge>
+          )}
         </div>
 
         {/* Center: Market Data Status */}

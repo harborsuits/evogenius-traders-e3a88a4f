@@ -33,8 +33,10 @@ interface TradeTags {
   strategy_template: string;
   regime_at_entry: string;
   entry_reason: string[];
+  exit_reason?: string;
   confidence: number;
   pattern_id: string;
+  test_mode?: boolean;
   market_snapshot: {
     price: number;
     change_24h: number;
@@ -61,71 +63,99 @@ function getDataAge(updatedAt: string): number {
   return Math.floor((Date.now() - new Date(updatedAt).getTime()) / 1000);
 }
 
-// Simple strategy decision logic (v1 - placeholder for real strategy rules)
+// Test mode thresholds - looser to trigger trades for pipeline validation
+const TEST_MODE_THRESHOLDS = {
+  trend_threshold: 0.015,      // Was 0.02 - more "trending" hits
+  pullback_pct: 1.0,           // Was 3 - smaller pullback still qualifies
+  rsi_threshold: 1.5,          // Was 5 - easier oversold/overbought
+  vol_contraction: 1.15,       // Was 0.8 - breakout triggers in normal conditions
+};
+
+// Simple strategy decision logic
 function makeDecision(
   agent: Agent,
   market: MarketData,
   hasPosition: boolean,
-  positionQty: number
-): { decision: Decision; reasons: string[]; confidence: number } {
+  positionQty: number,
+  testMode: boolean
+): { decision: Decision; reasons: string[]; confidence: number; exitReason?: string } {
   const reasons: string[] = [];
   let confidence = 0.5;
+  let exitReason: string | undefined;
   
   const regime = getRegime(market);
   const strategy = agent.strategy_template;
   const genes = agent.genes;
   
+  // Use test mode thresholds if enabled, otherwise use agent genes
+  const thresholds = testMode ? {
+    trend_threshold: TEST_MODE_THRESHOLDS.trend_threshold,
+    pullback_pct: TEST_MODE_THRESHOLDS.pullback_pct,
+    rsi_threshold: TEST_MODE_THRESHOLDS.rsi_threshold,
+    vol_contraction: TEST_MODE_THRESHOLDS.vol_contraction,
+  } : {
+    trend_threshold: genes.trend_threshold ?? 0.02,
+    pullback_pct: genes.pullback_pct ?? 3,
+    rsi_threshold: genes.rsi_threshold ?? 5,
+    vol_contraction: genes.vol_contraction ?? 0.8,
+  };
+  
   // Trend Pullback Strategy
   if (strategy === 'trend_pullback') {
-    const emaTrending = Math.abs(market.ema_50_slope) > (genes.trend_threshold ?? 0.02);
-    const pullback = Math.abs(market.change_24h) < (genes.pullback_pct ?? 3);
+    const emaTrending = Math.abs(market.ema_50_slope) > thresholds.trend_threshold;
+    const pullback = Math.abs(market.change_24h) < thresholds.pullback_pct;
     
     if (emaTrending && market.ema_50_slope > 0 && pullback && !hasPosition) {
       reasons.push('ema_trending_up', 'pullback_detected');
+      if (testMode) reasons.push('test_mode');
       confidence = 0.6 + Math.min(0.2, Math.abs(market.ema_50_slope) * 5);
       return { decision: 'buy', reasons, confidence };
     }
     
     if (hasPosition && market.ema_50_slope < 0) {
       reasons.push('trend_reversal');
+      exitReason = 'trend_reversal';
       confidence = 0.65;
-      return { decision: 'sell', reasons, confidence };
+      return { decision: 'sell', reasons, confidence, exitReason };
     }
   }
   
   // Mean Reversion Strategy
   if (strategy === 'mean_reversion') {
-    const oversold = market.change_24h < -(genes.rsi_threshold ?? 5);
-    const overbought = market.change_24h > (genes.rsi_threshold ?? 5);
+    const oversold = market.change_24h < -thresholds.rsi_threshold;
+    const overbought = market.change_24h > thresholds.rsi_threshold;
     
     if (oversold && !hasPosition && regime === 'ranging') {
       reasons.push('oversold', 'ranging_regime');
+      if (testMode) reasons.push('test_mode');
       confidence = 0.55 + Math.min(0.2, Math.abs(market.change_24h) / 20);
       return { decision: 'buy', reasons, confidence };
     }
     
     if (overbought && hasPosition) {
       reasons.push('overbought', 'take_profit');
+      exitReason = 'take_profit';
       confidence = 0.6;
-      return { decision: 'sell', reasons, confidence };
+      return { decision: 'sell', reasons, confidence, exitReason };
     }
   }
   
   // Breakout Strategy
   if (strategy === 'breakout') {
-    const volatilityContraction = market.atr_ratio < (genes.vol_contraction ?? 0.8);
-    const volumeExpansion = market.volume_24h > 0; // Simplified - would need baseline
+    const volatilityContraction = market.atr_ratio < thresholds.vol_contraction;
     
     if (volatilityContraction && market.ema_50_slope > 0 && !hasPosition) {
       reasons.push('volatility_contraction', 'upward_bias');
+      if (testMode) reasons.push('test_mode');
       confidence = 0.5 + Math.min(0.15, (1 - market.atr_ratio) * 0.5);
       return { decision: 'buy', reasons, confidence };
     }
     
     if (hasPosition && market.atr_ratio > 1.5) {
       reasons.push('volatility_spike', 'exit_breakout');
+      exitReason = 'exit_breakout';
       confidence = 0.55;
-      return { decision: 'sell', reasons, confidence };
+      return { decision: 'sell', reasons, confidence, exitReason };
     }
   }
   
@@ -301,14 +331,27 @@ Deno.serve(async (req) => {
       );
     }
     
+    // 7b. Get system config for test mode flag
+    const { data: configData } = await supabase
+      .from('system_config')
+      .select('config')
+      .limit(1)
+      .single();
+    
+    const testMode = configData?.config?.strategy_test_mode === true;
+    
+    if (testMode) {
+      console.log('[trade-cycle] TEST MODE ACTIVE - using loosened thresholds');
+    }
+    
     const regime = getRegime(market);
     const positionQty = positionBySymbol.get(symbol) ?? 0;
     const hasPosition = positionQty > 0;
 
     console.log(`[trade-cycle] Agent ${agent.id.substring(0, 8)} | ${agent.strategy_template} | ${symbol} | regime=${regime} | pos=${positionQty}`);
 
-    // 8. Make decision
-    const { decision, reasons, confidence } = makeDecision(agent, market, hasPosition, positionQty);
+    // 8. Make decision (pass testMode flag)
+    const { decision, reasons, confidence, exitReason } = makeDecision(agent, market, hasPosition, positionQty, testMode);
     
     // Calculate qty early so we can log the correct value
     const baseQty = symbol === 'BTC-USD' ? 0.0001 : 0.001;
@@ -320,8 +363,10 @@ Deno.serve(async (req) => {
       strategy_template: agent.strategy_template,
       regime_at_entry: regime,
       entry_reason: reasons,
+      exit_reason: exitReason,
       confidence,
       pattern_id: patternId,
+      test_mode: testMode,
       market_snapshot: {
         price: market.price,
         change_24h: market.change_24h,

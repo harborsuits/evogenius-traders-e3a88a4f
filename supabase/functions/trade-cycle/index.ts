@@ -125,13 +125,22 @@ function isLearnableTrade(tags: TradeTagsForLearning): boolean {
 // Export for use in fitness/evolution functions later
 // Usage: if (!isLearnableTrade(trade.tags)) continue;
 
+// Confidence calibration - scales raw confidence by sample size
+// Prevents overconfidence with few trades (survivorship bias protection)
+function calibrateConfidence(rawConfidence: number, tradeCount: number): number {
+  const MIN_TRADES_FOR_FULL_CONFIDENCE = 30;
+  const scaleFactor = Math.min(1, tradeCount / MIN_TRADES_FOR_FULL_CONFIDENCE);
+  return rawConfidence * scaleFactor;
+}
+
 // Simple strategy decision logic
 function makeDecision(
   agent: Agent,
   market: MarketData,
   hasPosition: boolean,
   positionQty: number,
-  testMode: boolean
+  testMode: boolean,
+  agentTradeCount: number = 0
 ): { decision: Decision; reasons: string[]; confidence: number; exitReason?: string } {
   const reasons: string[] = [];
   let confidence = 0.5;
@@ -162,14 +171,15 @@ function makeDecision(
     if (emaTrending && market.ema_50_slope > 0 && pullback && !hasPosition) {
       reasons.push('ema_trending_up', 'pullback_detected');
       if (testMode) reasons.push('test_mode');
-      confidence = 0.6 + Math.min(0.2, Math.abs(market.ema_50_slope) * 5);
+      const rawConfidence = 0.6 + Math.min(0.2, Math.abs(market.ema_50_slope) * 5);
+      confidence = calibrateConfidence(rawConfidence, agentTradeCount);
       return { decision: 'buy', reasons, confidence };
     }
     
     if (hasPosition && market.ema_50_slope < 0) {
       reasons.push('trend_reversal');
       exitReason = 'trend_reversal';
-      confidence = 0.65;
+      confidence = calibrateConfidence(0.65, agentTradeCount);
       return { decision: 'sell', reasons, confidence, exitReason };
     }
   }
@@ -182,14 +192,15 @@ function makeDecision(
     if (oversold && !hasPosition && regime === 'ranging') {
       reasons.push('oversold', 'ranging_regime');
       if (testMode) reasons.push('test_mode');
-      confidence = 0.55 + Math.min(0.2, Math.abs(market.change_24h) / 20);
+      const rawConfidence = 0.55 + Math.min(0.2, Math.abs(market.change_24h) / 20);
+      confidence = calibrateConfidence(rawConfidence, agentTradeCount);
       return { decision: 'buy', reasons, confidence };
     }
     
     if (overbought && hasPosition) {
       reasons.push('overbought', 'take_profit');
       exitReason = 'take_profit';
-      confidence = 0.6;
+      confidence = calibrateConfidence(0.6, agentTradeCount);
       return { decision: 'sell', reasons, confidence, exitReason };
     }
   }
@@ -201,14 +212,15 @@ function makeDecision(
     if (volatilityContraction && market.ema_50_slope > 0 && !hasPosition) {
       reasons.push('volatility_contraction', 'upward_bias');
       if (testMode) reasons.push('test_mode');
-      confidence = 0.5 + Math.min(0.15, (1 - market.atr_ratio) * 0.5);
+      const rawConfidence = 0.5 + Math.min(0.15, (1 - market.atr_ratio) * 0.5);
+      confidence = calibrateConfidence(rawConfidence, agentTradeCount);
       return { decision: 'buy', reasons, confidence };
     }
     
     if (hasPosition && market.atr_ratio > (thresholds.vol_expansion_exit ?? 1.4)) {
       reasons.push('volatility_spike', 'exit_breakout');
       exitReason = 'exit_breakout';
-      confidence = 0.55;
+      confidence = calibrateConfidence(0.55, agentTradeCount);
       return { decision: 'sell', reasons, confidence, exitReason };
     }
   }
@@ -398,14 +410,22 @@ Deno.serve(async (req) => {
       console.log('[trade-cycle] TEST MODE ACTIVE - using loosened thresholds');
     }
     
+    // 7c. Get agent's trade count for confidence calibration
+    const { data: agentTradeData } = await supabase
+      .from('paper_orders')
+      .select('id')
+      .eq('agent_id', agent.id)
+      .eq('status', 'filled');
+    const agentTradeCount = agentTradeData?.length ?? 0;
+    
     const regime = getRegime(market);
     const positionQty = positionBySymbol.get(symbol) ?? 0;
     const hasPosition = positionQty > 0;
 
-    console.log(`[trade-cycle] Agent ${agent.id.substring(0, 8)} | ${agent.strategy_template} | ${symbol} | regime=${regime} | pos=${positionQty}`);
+    console.log(`[trade-cycle] Agent ${agent.id.substring(0, 8)} | ${agent.strategy_template} | ${symbol} | regime=${regime} | pos=${positionQty} | trades=${agentTradeCount}`);
 
-    // 8. Make decision (pass testMode flag)
-    const { decision, reasons, confidence, exitReason } = makeDecision(agent, market, hasPosition, positionQty, testMode);
+    // 8. Make decision (pass testMode flag and trade count for confidence calibration)
+    const { decision, reasons, confidence, exitReason } = makeDecision(agent, market, hasPosition, positionQty, testMode, agentTradeCount);
     
     // Calculate qty early so we can log the correct value
     const baseQty = symbol === 'BTC-USD' ? 0.0001 : 0.001;

@@ -44,11 +44,13 @@ interface FitnessComponents {
   profitable_days_ratio: number;
   max_drawdown: number;
   overtrading_penalty: number;
+  diversity_penalty: number;
   fitness_score: number;
   realized_pnl: number;
   total_trades: number;
   gross_profit: number;
   total_fees: number;
+  symbols_traded: number;
 }
 
 // Filter out test mode trades
@@ -119,6 +121,31 @@ function calculateOvertradingPenalty(
   }
   
   return Math.min(1, penalty);
+}
+
+// ===========================================================================
+// SYMBOL DIVERSITY PENALTY (PREVENT COIN FIXATION)
+// ===========================================================================
+// Penalizes agents that trade only one symbol when multiple are available.
+// This prevents agents from getting stuck on BTC or ETH and missing opportunities.
+// ===========================================================================
+function calculateDiversityPenalty(
+  trades: TradeRecord[],
+  availableSymbols: number = 2  // BTC-USD and ETH-USD
+): number {
+  if (trades.length === 0) return 0;
+  
+  const uniqueSymbols = new Set(trades.map(t => t.symbol)).size;
+  const diversityRatio = uniqueSymbols / availableSymbols;
+  
+  // No penalty if trading both symbols
+  if (diversityRatio >= 1) return 0;
+  
+  // Light penalty for single-symbol fixation (max 0.1)
+  // Only applies after sufficient sample size (10+ trades)
+  if (trades.length < 10) return 0;
+  
+  return (1 - diversityRatio) * 0.1;
 }
 
 // ===========================================================================
@@ -235,11 +262,13 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
       profitable_days_ratio: 0,
       max_drawdown: 0,
       overtrading_penalty: 0,
+      diversity_penalty: 0,
       fitness_score: 0,
       realized_pnl: 0,
       total_trades: 0,
       gross_profit: 0,
       total_fees: 0,
+      symbols_traded: 0,
     };
   }
 
@@ -283,17 +312,21 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
     pnlResult.grossProfit, 
     tradesPerDay
   );
+  const diversityPenalty = calculateDiversityPenalty(learnableTrades);
+  const symbolsTraded = new Set(learnableTrades.map(t => t.symbol)).size;
 
   // === FITNESS FORMULA ===
   // Normalize sharpe to 0..1 range for weighting (sharpe of 2 = excellent)
   const normalizedSharpe = (sharpe + 3) / 6; // Maps -3..3 to 0..1
   
+  // Updated formula with diversity penalty
   const fitnessScore = 
     (normalizedPnl * 0.35) +
     (normalizedSharpe * 0.25) +
     (profitableDaysRatio * 0.15) -
     (maxDrawdown * 0.15) -
-    (overtradingPenalty * 0.10);
+    (overtradingPenalty * 0.10) -
+    (diversityPenalty);  // Up to -0.1 for single-symbol fixation
 
   return {
     normalized_pnl: normalizedPnl,
@@ -301,11 +334,13 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
     profitable_days_ratio: profitableDaysRatio,
     max_drawdown: maxDrawdown,
     overtrading_penalty: overtradingPenalty,
+    diversity_penalty: diversityPenalty,
     fitness_score: fitnessScore,
     realized_pnl: pnlResult.realizedPnl,
     total_trades: learnableTrades.length,
     gross_profit: pnlResult.grossProfit,
     total_fees: pnlResult.totalFees,
+    symbols_traded: symbolsTraded,
   };
 }
 

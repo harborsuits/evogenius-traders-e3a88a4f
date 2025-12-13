@@ -319,14 +319,22 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
   // Normalize sharpe to 0..1 range for weighting (sharpe of 2 = excellent)
   const normalizedSharpe = (sharpe + 3) / 6; // Maps -3..3 to 0..1
   
-  // Updated formula with diversity penalty
-  const fitnessScore = 
+  // Base fitness calculation
+  let fitnessScore = 
     (normalizedPnl * 0.35) +
     (normalizedSharpe * 0.25) +
     (profitableDaysRatio * 0.15) -
     (maxDrawdown * 0.15) -
     (overtradingPenalty * 0.10) -
     (diversityPenalty);  // Up to -0.1 for single-symbol fixation
+
+  // MINIMUM TRADES GATE: Penalize agents with insufficient sample size
+  // Prevents lucky 1-2 trade agents from ranking high in selection
+  const MIN_TRADES_FOR_FULL_FITNESS = 10;
+  if (learnableTrades.length < MIN_TRADES_FOR_FULL_FITNESS) {
+    const samplePenalty = 0.5 * (1 - learnableTrades.length / MIN_TRADES_FOR_FULL_FITNESS);
+    fitnessScore *= (1 - samplePenalty);  // Up to 50% reduction for 0 trades
+  }
 
   return {
     normalized_pnl: normalizedPnl,

@@ -53,14 +53,39 @@ export function CoinbasePanel() {
 
   const handleTestConnection = async () => {
     setIsTesting(true);
-    // This will call coinbase-test edge function when implemented
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    toast({
-      title: 'Connection Test',
-      description: 'Coinbase API credentials not yet configured. Add COINBASE_API_KEY and COINBASE_API_SECRET to edge function secrets.',
-      variant: 'destructive',
-    });
-    setIsTesting(false);
+    try {
+      const { data, error } = await supabase.functions.invoke('coinbase-test');
+      
+      if (error) {
+        toast({
+          title: 'Connection Test Failed',
+          description: error.message || 'Failed to invoke coinbase-test function',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      if (data?.ok) {
+        toast({
+          title: 'Connection Successful',
+          description: `Found ${data.account_count} accounts with permissions: ${data.permissions?.join(', ')}`,
+        });
+      } else {
+        toast({
+          title: 'Connection Failed',
+          description: data?.error || 'Unknown error',
+          variant: 'destructive',
+        });
+      }
+    } catch (err) {
+      toast({
+        title: 'Connection Test Error',
+        description: err instanceof Error ? err.message : 'Unexpected error',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsTesting(false);
+    }
   };
 
   const permissionsList = [

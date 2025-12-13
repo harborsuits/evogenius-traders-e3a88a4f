@@ -1,19 +1,29 @@
 project_id = "jptlmxxwbrmwcmevbvwj"
 
-[functions.paper-execute]
-verify_jwt = false
-
-[functions.paper-reset]
-verify_jwt = false
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
 
 [functions.system-control]
-verify_jwt = false
-
-[functions.market-poll]
 verify_jwt = false
 
 [functions.coinbase-test]
 verify_jwt = false
 
 [functions.coinbase-balances]
+verify_jwt = false
+
+[functions.paper-execute]
+verify_jwt = false
+
+[functions.paper-reset]
+verify_jwt = false
+
+[functions.market-poll]
+verify_jwt = false
+
+[functions.trade-execute]
 verify_jwt = false

@@ -12,6 +12,7 @@ import { PollingHealth } from '@/components/dashboard/PollingHealth';
 import { CoinbasePanel } from '@/components/dashboard/CoinbasePanel';
 import { CoinbaseBalances } from '@/components/dashboard/CoinbaseBalances';
 import { PaperPortfolio } from '@/components/dashboard/PaperPortfolio';
+import { ManualPaperTrade } from '@/components/dashboard/ManualPaperTrade';
 import { 
   useSystemState,
   useAgents,
@@ -176,6 +177,10 @@ const Index = () => {
 
             <div className="animate-fade-in" style={{ animationDelay: '225ms' }}>
               <PaperPortfolio />
+            </div>
+
+            <div className="animate-fade-in" style={{ animationDelay: '237ms' }}>
+              <ManualPaperTrade />
             </div>
 
             <div className="animate-fade-in" style={{ animationDelay: '250ms' }}>

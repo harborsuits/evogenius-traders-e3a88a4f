@@ -139,7 +139,29 @@ Deno.serve(async (req) => {
 
     const basePrice = Number(marketData.price);
     const notional = qty * basePrice;
-    const totalEquity = account.starting_cash; // Use starting_cash as reference for position sizing
+    
+    // Calculate current equity = cash + position values (marked to market)
+    const { data: allPositions } = await supabase
+      .from('paper_positions')
+      .select('symbol, qty')
+      .eq('account_id', account.id);
+    
+    let positionValue = 0;
+    if (allPositions && allPositions.length > 0) {
+      for (const pos of allPositions) {
+        const { data: posMarket } = await supabase
+          .from('market_data')
+          .select('price')
+          .eq('symbol', pos.symbol)
+          .limit(1)
+          .single();
+        if (posMarket) {
+          positionValue += pos.qty * Number(posMarket.price);
+        }
+      }
+    }
+    
+    const totalEquity = account.cash + positionValue;
 
     // Risk validation
     const maxTradeNotional = totalEquity * riskConfig.max_trade_pct;

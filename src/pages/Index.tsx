@@ -11,6 +11,7 @@ import { ControlPanel } from '@/components/dashboard/ControlPanel';
 import { PollingHealth } from '@/components/dashboard/PollingHealth';
 import { PaperPortfolio } from '@/components/dashboard/PaperPortfolio';
 import { SecondaryPanelTabs } from '@/components/dashboard/SecondaryPanelTabs';
+import { TradeCycleStatus } from '@/components/dashboard/TradeCycleStatus';
 import { 
   useSystemState,
   useAgents,
@@ -178,6 +179,7 @@ const Index = () => {
               />
               <GenerationHealth generationId={systemState?.current_generation_id ?? null} />
               <PaperPortfolio />
+              <TradeCycleStatus />
               <PollingHealth />
             </div>
 

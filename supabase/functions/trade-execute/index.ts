@@ -118,7 +118,7 @@ Deno.serve(async (req) => {
     // === Get system state (including generation_id - server-side source of truth) ===
     const { data: systemState, error: stateError } = await supabase
       .from('system_state')
-      .select('trade_mode, status, current_generation_id')
+      .select('trade_mode, status, current_generation_id, live_armed_until')
       .limit(1)
       .single();
 
@@ -132,9 +132,10 @@ Deno.serve(async (req) => {
 
     const tradeMode = systemState?.trade_mode ?? 'paper';
     const systemStatus = systemState?.status ?? 'stopped';
+    const liveArmedUntil = systemState?.live_armed_until;
     // CRITICAL: Use server-side generation_id, not client-provided (security + correctness)
     const generationId = systemState?.current_generation_id;
-    console.log('[trade-execute] System state:', { tradeMode, systemStatus, generationId });
+    console.log('[trade-execute] System state:', { tradeMode, systemStatus, generationId, liveArmedUntil });
 
     // === GATE 3: System must be running (skip for manual trades) ===
     if (!body.bypassGates) {
@@ -300,18 +301,49 @@ Deno.serve(async (req) => {
       }
     }
 
-    // === GATE 6: Live mode requires explicit arm ===
+    // === GATE 6: Live mode requires explicit arm (timestamp-based) ===
     if (tradeMode === 'live') {
-      const reason: BlockReason = 'BLOCKED_LIVE_NOT_ARMED';
-      console.log(`[trade-execute] ${reason}`);
+      const isArmed = liveArmedUntil && new Date(liveArmedUntil) > new Date();
+      
+      if (!isArmed) {
+        const reason: BlockReason = 'BLOCKED_LIVE_NOT_ARMED';
+        console.log(`[trade-execute] ${reason}: liveArmedUntil=${liveArmedUntil}, now=${new Date().toISOString()}`);
+        
+        await logDecision(supabase, 'trade_blocked', {
+          symbol: body.symbol,
+          side: body.side,
+          qty: body.qty,
+          block_reason: reason,
+          live_armed_until: liveArmedUntil,
+          agent_id: body.agentId,
+          generation_id: generationId,
+          mode: 'live',
+        });
+
+        return new Response(
+          JSON.stringify({ 
+            ok: false, 
+            blocked: true,
+            reason,
+            error: 'Live trading requires ARM. ARM has expired or was never enabled.',
+            mode: 'live',
+            armed_until: liveArmedUntil,
+          }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Live is armed - but we still don't execute live trades yet (future implementation)
+      console.log(`[trade-execute] Live mode is armed until ${liveArmedUntil}, but live execution not implemented yet`);
       
       await logDecision(supabase, 'trade_blocked', {
         symbol: body.symbol,
         side: body.side,
         qty: body.qty,
-        block_reason: reason,
+        block_reason: 'LIVE_NOT_IMPLEMENTED',
+        live_armed_until: liveArmedUntil,
         agent_id: body.agentId,
-        generation_id: body.generationId,
+        generation_id: generationId,
         mode: 'live',
       });
 
@@ -319,11 +351,12 @@ Deno.serve(async (req) => {
         JSON.stringify({ 
           ok: false, 
           blocked: true,
-          reason,
-          error: 'Live trading requires explicit arm. Switch to paper mode.',
-          mode: 'live'
+          reason: 'LIVE_NOT_IMPLEMENTED',
+          error: 'Live execution is armed but not yet implemented. Use paper mode.',
+          mode: 'live',
+          armed: true,
         }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 501, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 

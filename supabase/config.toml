@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.coinbase-test]
 verify_jwt = false
+
+[functions.coinbase-balances]
+verify_jwt = false

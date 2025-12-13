@@ -46,7 +46,7 @@ const Index = () => {
   const status = (systemState?.status ?? 'stopped') as SystemStatus;
   const eliteCount = agents.filter((a: Agent) => a.is_elite).length;
 
-  // Default config values
+  // Default config values - always use this structure
   const defaultConfig = {
     trading: { symbols: ['BTC-USD', 'ETH-USD'], decision_interval_minutes: 60 },
     capital: { total: 10000, active_pool_pct: 0.40 },
@@ -55,7 +55,16 @@ const Index = () => {
     risk: { max_trades_per_agent_per_day: 5, max_trades_per_symbol_per_day: 50 },
   };
 
-  const activeConfig = config ?? defaultConfig;
+  // Merge with defaults to ensure all properties exist
+  const activeConfig = {
+    ...defaultConfig,
+    ...config,
+    generation: { ...defaultConfig.generation, ...(config?.generation ?? {}) },
+    trading: { ...defaultConfig.trading, ...(config?.trading ?? {}) },
+    capital: { ...defaultConfig.capital, ...(config?.capital ?? {}) },
+    population: { ...defaultConfig.population, ...(config?.population ?? {}) },
+    risk: { ...defaultConfig.risk, ...(config?.risk ?? {}) },
+  };
 
   if (isLoading) {
     return (

@@ -10,6 +10,7 @@ import { ConfigViewer } from '@/components/dashboard/ConfigViewer';
 import { ControlEventsLog } from '@/components/dashboard/ControlEventsLog';
 import { PollingHealth } from '@/components/dashboard/PollingHealth';
 import { CoinbasePanel } from '@/components/dashboard/CoinbasePanel';
+import { CoinbaseBalances } from '@/components/dashboard/CoinbaseBalances';
 import { 
   useSystemState,
   useAgents,
@@ -182,6 +183,10 @@ const Index = () => {
 
             <div className="animate-fade-in" style={{ animationDelay: '300ms' }}>
               <CoinbasePanel />
+            </div>
+
+            <div className="animate-fade-in" style={{ animationDelay: '325ms' }}>
+              <CoinbaseBalances />
             </div>
             
             <div className="animate-fade-in" style={{ animationDelay: '350ms' }}>

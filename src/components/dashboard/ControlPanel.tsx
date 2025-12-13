@@ -7,9 +7,13 @@ import {
   Square, 
   RefreshCw, 
   AlertTriangle,
-  Terminal
+  Terminal,
+  Loader2
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
+import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 
 interface ControlPanelProps {
   status: SystemStatus;
@@ -26,29 +30,68 @@ export function ControlPanel({
   onStop, 
   onRefresh 
 }: ControlPanelProps) {
-  const handleStart = () => {
-    toast({
-      title: "System Starting",
-      description: "Initializing trading agents...",
-    });
-    onStart?.();
+  const [loading, setLoading] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
+  const executeAction = async (action: 'start' | 'pause' | 'stop') => {
+    setLoading(action);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('system-control', {
+        body: { action }
+      });
+
+      if (error) {
+        console.error('[ControlPanel] Error:', error);
+        toast({
+          title: "Action Failed",
+          description: error.message || "Could not execute action",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Invalidate system state to trigger refetch
+      queryClient.invalidateQueries({ 
+        predicate: (query) => query.queryKey[0] === 'system-state' 
+      });
+
+      const messages = {
+        start: { title: "System Starting", desc: "Initializing trading agents..." },
+        pause: { title: "System Paused", desc: "All trading activity suspended." },
+        stop: { title: "System Stopped", desc: "Generation terminated. Calculating fitness scores..." },
+      };
+
+      toast({
+        title: messages[action].title,
+        description: messages[action].desc,
+        variant: action === 'stop' ? 'destructive' : 'default',
+      });
+
+      // Call optional callbacks
+      if (action === 'start') onStart?.();
+      if (action === 'pause') onPause?.();
+      if (action === 'stop') onStop?.();
+
+    } catch (err) {
+      console.error('[ControlPanel] Unexpected error:', err);
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(null);
+    }
   };
 
-  const handlePause = () => {
+  const handleRefresh = () => {
+    queryClient.invalidateQueries();
     toast({
-      title: "System Paused",
-      description: "All trading activity suspended.",
+      title: "Data Refreshed",
+      description: "All data has been reloaded.",
     });
-    onPause?.();
-  };
-
-  const handleStop = () => {
-    toast({
-      title: "System Stopped",
-      description: "Generation terminated. Calculating fitness scores...",
-      variant: "destructive",
-    });
-    onStop?.();
+    onRefresh?.();
   };
 
   return (
@@ -66,22 +109,30 @@ export function ControlPanel({
           <Button 
             variant="terminal"
             size="sm"
-            onClick={handleStart}
-            disabled={status === 'running'}
+            onClick={() => executeAction('start')}
+            disabled={status === 'running' || loading !== null}
             className="w-full"
           >
-            <Play className="h-4 w-4" />
+            {loading === 'start' ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
             Start
           </Button>
           
           <Button 
             variant="warning"
             size="sm"
-            onClick={handlePause}
-            disabled={status !== 'running'}
+            onClick={() => executeAction('pause')}
+            disabled={status !== 'running' || loading !== null}
             className="w-full"
           >
-            <Pause className="h-4 w-4" />
+            {loading === 'pause' ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Pause className="h-4 w-4" />
+            )}
             Pause
           </Button>
         </div>
@@ -89,11 +140,15 @@ export function ControlPanel({
         <Button 
           variant="danger"
           size="sm"
-          onClick={handleStop}
-          disabled={status === 'stopped'}
+          onClick={() => executeAction('stop')}
+          disabled={status === 'stopped' || loading !== null}
           className="w-full"
         >
-          <Square className="h-4 w-4" />
+          {loading === 'stop' ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Square className="h-4 w-4" />
+          )}
           Emergency Stop
         </Button>
         
@@ -101,7 +156,8 @@ export function ControlPanel({
           <Button 
             variant="ghost"
             size="sm"
-            onClick={onRefresh}
+            onClick={handleRefresh}
+            disabled={loading !== null}
             className="w-full text-muted-foreground hover:text-foreground"
           >
             <RefreshCw className="h-4 w-4" />

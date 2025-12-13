@@ -1,1 +1,4 @@
 project_id = "jptlmxxwbrmwcmevbvwj"
+
+[functions.system-control]
+verify_jwt = false

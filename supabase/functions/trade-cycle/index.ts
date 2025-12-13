@@ -377,7 +377,7 @@ Deno.serve(async (req) => {
         metadata: {
           cycle_id: cycleId,
           agent_id: agent.id,
-          generation_id: agent.generation_id,
+          generation_id: systemState.current_generation_id,
           symbol,
           decision: 'hold',
           reason: 'stale_market_data_skip',
@@ -451,12 +451,14 @@ Deno.serve(async (req) => {
     };
 
     // 9. Log decision to control_events (even for HOLD)
+    // CRITICAL: Use system_state.current_generation_id, NOT agent.generation_id
+    // Agents table may have stale/placeholder generation_id
     await supabase.from('control_events').insert({
       action: 'trade_decision',
       metadata: {
         cycle_id: cycleId,
         agent_id: agent.id,
-        generation_id: agent.generation_id,
+        generation_id: systemState.current_generation_id,
         symbol,
         decision,
         qty: decision !== 'hold' ? plannedQty : null,

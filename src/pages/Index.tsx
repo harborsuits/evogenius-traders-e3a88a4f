@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { Header } from '@/components/layout/Header';
 import { MarketTicker } from '@/components/dashboard/MarketTicker';
 import { MetricCard } from '@/components/dashboard/MetricCard';
@@ -9,73 +8,113 @@ import { GenerationHistory } from '@/components/dashboard/GenerationHistory';
 import { ControlPanel } from '@/components/dashboard/ControlPanel';
 import { ConfigViewer } from '@/components/dashboard/ConfigViewer';
 import { 
-  mockSystemState, 
-  mockMarketData, 
-  mockAgents, 
-  mockTrades,
-  mockGenerationHistory,
-  mockConfig 
-} from '@/data/mockData';
+  useSystemState,
+  useAgents,
+  useTrades,
+  useMarketData,
+  useGenerationHistory,
+  useSystemConfig,
+  useRealtimeSubscriptions,
+} from '@/hooks/useEvoTraderData';
 import { 
   DollarSign, 
   Users, 
   Activity, 
   TrendingUp,
   Wallet,
-  Shield
+  Shield,
+  Loader2
 } from 'lucide-react';
-import { SystemStatus } from '@/types/evotrader';
+import { Generation, Agent, SystemStatus } from '@/types/evotrader';
 
 const Index = () => {
-  const [status, setStatus] = useState<SystemStatus>(mockSystemState.status);
+  // Enable real-time subscriptions
+  useRealtimeSubscriptions();
+
+  // Fetch all data from database
+  const { data: systemState, isLoading: loadingState } = useSystemState();
+  const { data: agents = [], isLoading: loadingAgents } = useAgents(systemState?.current_generation_id ?? null);
+  const { data: trades = [], isLoading: loadingTrades } = useTrades(systemState?.current_generation_id ?? null);
+  const { data: marketData = [], isLoading: loadingMarket } = useMarketData();
+  const { data: generationHistory = [] } = useGenerationHistory();
+  const { data: config } = useSystemConfig();
+
+  const isLoading = loadingState || loadingAgents || loadingTrades || loadingMarket;
+
+  // Extract current generation from system state
+  const currentGeneration = systemState?.generations as Generation | null;
+  const status = (systemState?.status ?? 'stopped') as SystemStatus;
+  const eliteCount = agents.filter((a: Agent) => a.is_elite).length;
+
+  // Default config values
+  const defaultConfig = {
+    trading: { symbols: ['BTC-USD', 'ETH-USD'], decision_interval_minutes: 60 },
+    capital: { total: 10000, active_pool_pct: 0.40 },
+    population: { size: 100, elite_count: 10, parent_count: 15 },
+    generation: { max_days: 7, max_trades: 100, max_drawdown_pct: 0.15 },
+    risk: { max_trades_per_agent_per_day: 5, max_trades_per_symbol_per_day: 50 },
+  };
+
+  const activeConfig = config ?? defaultConfig;
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background bg-grid flex items-center justify-center">
+        <div className="flex items-center gap-3 text-muted-foreground">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <span className="font-mono">Loading EvoTrader...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background bg-grid">
       <Header 
         status={status} 
-        generationNumber={mockSystemState.current_generation?.generation_number} 
+        generationNumber={currentGeneration?.generation_number} 
       />
       
       <main className="container px-4 md:px-6 py-6 space-y-6">
         {/* Market Ticker */}
         <section className="animate-fade-in">
-          <MarketTicker markets={mockMarketData} />
+          <MarketTicker markets={marketData} />
         </section>
 
         {/* Key Metrics */}
         <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 animate-fade-in" style={{ animationDelay: '100ms' }}>
           <MetricCard
             label="Total Capital"
-            value={`$${mockSystemState.total_capital.toLocaleString()}`}
+            value={`$${(systemState?.total_capital ?? 0).toLocaleString()}`}
             icon={Wallet}
             variant="stat"
           />
           <MetricCard
             label="Active Pool"
-            value={`$${mockSystemState.active_pool.toLocaleString()}`}
-            subValue={`${((mockSystemState.active_pool / mockSystemState.total_capital) * 100).toFixed(0)}%`}
+            value={`$${(systemState?.active_pool ?? 0).toLocaleString()}`}
+            subValue={systemState?.total_capital ? `${((systemState.active_pool / systemState.total_capital) * 100).toFixed(0)}%` : '0%'}
             icon={DollarSign}
           />
           <MetricCard
             label="Reserve"
-            value={`$${mockSystemState.reserve.toLocaleString()}`}
+            value={`$${(systemState?.reserve ?? 0).toLocaleString()}`}
             icon={Shield}
           />
           <MetricCard
             label="Agents"
-            value={mockSystemState.agents_count}
-            subValue={`${mockSystemState.elite_count} elite`}
+            value={agents.length}
+            subValue={`${eliteCount} elite`}
             icon={Users}
           />
           <MetricCard
             label="Today Trades"
-            value={mockSystemState.today_trades}
+            value={systemState?.today_trades ?? 0}
             icon={Activity}
           />
           <MetricCard
             label="Today P&L"
-            value={`$${mockSystemState.today_pnl.toFixed(2)}`}
-            trend={mockSystemState.today_pnl >= 0 ? 'up' : 'down'}
+            value={`$${(systemState?.today_pnl ?? 0).toFixed(2)}`}
+            trend={(systemState?.today_pnl ?? 0) >= 0 ? 'up' : 'down'}
             icon={TrendingUp}
           />
         </section>
@@ -86,27 +125,27 @@ const Index = () => {
           <div className="lg:col-span-8 space-y-6">
             {/* Generation Progress + Agent Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in" style={{ animationDelay: '200ms' }}>
-              {mockSystemState.current_generation && (
+              {currentGeneration && (
                 <GenerationProgress
-                  generation={mockSystemState.current_generation}
-                  maxTrades={mockConfig.generation.max_trades}
-                  maxDays={mockConfig.generation.max_days}
-                  maxDrawdown={mockConfig.generation.max_drawdown_pct}
+                  generation={currentGeneration}
+                  maxTrades={activeConfig.generation.max_trades}
+                  maxDays={activeConfig.generation.max_days}
+                  maxDrawdown={activeConfig.generation.max_drawdown_pct}
                 />
               )}
               <div className="bg-card border border-border rounded-lg p-6">
-                <AgentGrid agents={mockAgents} />
+                <AgentGrid agents={agents} />
               </div>
             </div>
 
             {/* Trade Log */}
             <div className="animate-fade-in" style={{ animationDelay: '300ms' }}>
-              <TradeLog trades={mockTrades} maxHeight="350px" />
+              <TradeLog trades={trades} maxHeight="350px" />
             </div>
 
             {/* Generation History */}
             <div className="animate-fade-in" style={{ animationDelay: '400ms' }}>
-              <GenerationHistory generations={mockGenerationHistory} />
+              <GenerationHistory generations={generationHistory} />
             </div>
           </div>
 
@@ -115,14 +154,14 @@ const Index = () => {
             <div className="animate-fade-in" style={{ animationDelay: '200ms' }}>
               <ControlPanel 
                 status={status}
-                onStart={() => setStatus('running')}
-                onPause={() => setStatus('paused')}
-                onStop={() => setStatus('stopped')}
+                onStart={() => console.log('Start')}
+                onPause={() => console.log('Pause')}
+                onStop={() => console.log('Stop')}
               />
             </div>
             
             <div className="animate-fade-in" style={{ animationDelay: '300ms' }}>
-              <ConfigViewer config={mockConfig} />
+              <ConfigViewer config={activeConfig} />
             </div>
           </div>
         </div>

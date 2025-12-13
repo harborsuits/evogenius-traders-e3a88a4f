@@ -19,10 +19,15 @@ function base64urlEncode(data: Uint8Array): string {
   return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-// Parse PKCS8 PEM to raw bytes
-function parsePKCS8PEM(pem: string): Uint8Array {
+// Parse PEM key to raw bytes and detect format
+function parsePEMKey(pem: string): { bytes: Uint8Array; format: 'pkcs8' | 'sec1' } {
   // Handle escaped newlines from environment variables
   const normalizedPem = pem.replace(/\\n/g, '\n');
+  
+  const isPKCS8 = normalizedPem.includes('BEGIN PRIVATE KEY');
+  const isSEC1 = normalizedPem.includes('BEGIN EC PRIVATE KEY');
+  
+  console.log('[coinbase-test] Key format detected:', isPKCS8 ? 'PKCS8' : isSEC1 ? 'SEC1/EC' : 'unknown');
   
   const pemContents = normalizedPem
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
@@ -31,7 +36,36 @@ function parsePKCS8PEM(pem: string): Uint8Array {
     .replace(/-----END EC PRIVATE KEY-----/g, '')
     .replace(/\s/g, '');
   
-  return Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+  return {
+    bytes: Uint8Array.from(atob(pemContents), c => c.charCodeAt(0)),
+    format: isPKCS8 ? 'pkcs8' : 'sec1'
+  };
+}
+
+// Convert SEC1 EC private key to PKCS#8 format
+// SEC1 is just the raw EC key, PKCS#8 wraps it with algorithm identifier
+function sec1ToPKCS8(sec1Bytes: Uint8Array): Uint8Array {
+  // PKCS#8 header for P-256 EC key
+  const pkcs8Header = new Uint8Array([
+    0x30, 0x81, 0x87,                         // SEQUENCE, length
+    0x02, 0x01, 0x00,                         // INTEGER version = 0
+    0x30, 0x13,                               // SEQUENCE (algorithm identifier)
+    0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // OID 1.2.840.10045.2.1 (ecPublicKey)
+    0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, // OID 1.2.840.10045.3.1.7 (P-256)
+    0x04, 0x6d,                               // OCTET STRING, length
+  ]);
+  
+  // Combine header with SEC1 key
+  const result = new Uint8Array(pkcs8Header.length + sec1Bytes.length);
+  result.set(pkcs8Header, 0);
+  result.set(sec1Bytes, pkcs8Header.length);
+  
+  // Fix the outer SEQUENCE length (position 2)
+  result[2] = sec1Bytes.length + pkcs8Header.length - 4;
+  // Fix the OCTET STRING length (last byte of header)
+  result[pkcs8Header.length - 1] = sec1Bytes.length;
+  
+  return result;
 }
 
 // Generate JWT for Coinbase Advanced Trade API
@@ -64,13 +98,16 @@ async function generateCoinbaseJWT(
   const encodedPayload = base64urlEncode(new TextEncoder().encode(JSON.stringify(payload)));
   const unsignedToken = `${encodedHeader}.${encodedPayload}`;
 
-  // Parse PKCS8 PEM key
-  const keyBytes = parsePKCS8PEM(privateKeyPem);
+  // Parse PEM key and detect format
+  const { bytes: keyBytes, format } = parsePEMKey(privateKeyPem);
+  
+  // Convert SEC1 to PKCS8 if needed
+  const pkcs8Bytes = format === 'sec1' ? sec1ToPKCS8(keyBytes) : keyBytes;
 
-  // Import the private key - use .buffer to get ArrayBuffer
+  // Import the private key
   const cryptoKey = await crypto.subtle.importKey(
     'pkcs8',
-    keyBytes.buffer as ArrayBuffer,
+    pkcs8Bytes.buffer as ArrayBuffer,
     { name: 'ECDSA', namedCurve: 'P-256' },
     false,
     ['sign']

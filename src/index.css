@@ -66,6 +66,15 @@
     --status-probation: 38 92% 55%;
     --status-removed: 0 75% 55%;
 
+    /* Semantic alert colors */
+    --danger: 0 75% 55%;
+    --danger-foreground: 0 0% 100%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 220 20% 6%;
+    
+    /* Terminal surface */
+    --terminal: 220 20% 4%;
+
     --sidebar-background: 220 18% 8%;
     --sidebar-foreground: 180 10% 90%;
     --sidebar-primary: 175 80% 50%;

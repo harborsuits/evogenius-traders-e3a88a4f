@@ -41,6 +41,15 @@ Deno.serve(async (req) => {
 
     console.log(`[system-control] Updating system_state to: ${newStatus}`)
 
+    // Get current state for logging
+    const { data: currentState } = await supabase
+      .from('system_state')
+      .select('status')
+      .eq('id', '00000000-0000-0000-0000-000000000001')
+      .single()
+
+    const previousStatus = currentState?.status || 'unknown'
+
     // Update system state
     const { data, error } = await supabase
       .from('system_state')
@@ -60,12 +69,27 @@ Deno.serve(async (req) => {
       )
     }
 
-    console.log(`[system-control] Success. New status: ${data.status}`)
+    // Log control event for audit trail
+    const { error: logError } = await supabase
+      .from('control_events')
+      .insert({
+        action,
+        previous_status: previousStatus,
+        new_status: newStatus,
+        metadata: { source: 'dashboard' }
+      })
+
+    if (logError) {
+      console.warn('[system-control] Failed to log event:', logError)
+    }
+
+    console.log(`[system-control] Success: ${previousStatus} -> ${data.status}`)
 
     return new Response(
       JSON.stringify({ 
         success: true, 
         status: data.status,
+        previousStatus,
         message: `System ${action === 'start' ? 'started' : action === 'pause' ? 'paused' : 'stopped'}`
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

@@ -51,9 +51,12 @@ export function ControlPanel({
         return;
       }
 
-      // Invalidate system state to trigger refetch
+      // Invalidate system state and control events to trigger refetch
       queryClient.invalidateQueries({ 
         predicate: (query) => query.queryKey[0] === 'system-state' 
+      });
+      queryClient.invalidateQueries({ 
+        predicate: (query) => query.queryKey[0] === 'control-events' 
       });
 
       const messages = {

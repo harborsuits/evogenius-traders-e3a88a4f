@@ -93,7 +93,7 @@ export function useMarketData() {
   });
 }
 
-// Fetch generation history
+// Fetch generation history (all generations, most recent first)
 export function useGenerationHistory(limit = 10) {
   return useQuery({
     queryKey: ['generation-history', limit],
@@ -101,7 +101,6 @@ export function useGenerationHistory(limit = 10) {
       const { data, error } = await supabase
         .from('generations')
         .select('*')
-        .eq('is_active', false)
         .order('generation_number', { ascending: false })
         .limit(limit);
       

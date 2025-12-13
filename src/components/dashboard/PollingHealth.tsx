@@ -1,12 +1,13 @@
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Activity, AlertTriangle, CheckCircle, Clock, RefreshCw } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle, Clock, RefreshCw, Zap } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useSystemState } from '@/hooks/useEvoTraderData';
+import { toast } from '@/hooks/use-toast';
 
 interface PollRun {
   id: string;
@@ -20,8 +21,35 @@ interface PollRun {
 export function PollingHealth() {
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0);
   const [showLogs, setShowLogs] = useState(false);
+  const [polling, setPolling] = useState(false);
   const queryClient = useQueryClient();
   const { data: systemState } = useSystemState();
+
+  const handleManualPoll = async () => {
+    setPolling(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('market-poll');
+      if (error) throw error;
+      
+      queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'market-data' });
+      queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'poll-runs' });
+      queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'last-market-update' });
+      
+      toast({
+        title: 'Market Data Updated',
+        description: `Updated ${data.updated || 0} symbols in ${data.duration_ms || 0}ms`,
+      });
+    } catch (err) {
+      console.error('[PollingHealth] Manual poll error:', err);
+      toast({
+        title: 'Poll Failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setPolling(false);
+    }
+  };
 
   // Fetch last market update time
   const { data: lastMarketUpdate } = useQuery({
@@ -160,16 +188,28 @@ export function PollingHealth() {
           )}
         </div>
 
-        {/* Toggle Logs */}
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full"
-          onClick={() => setShowLogs(!showLogs)}
-        >
-          <RefreshCw className="h-3 w-3 mr-2" />
-          {showLogs ? 'Hide' : 'Show'} Run History
-        </Button>
+        {/* Actions */}
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={handleManualPoll}
+            disabled={polling}
+          >
+            <Zap className="h-3 w-3 mr-2" />
+            {polling ? 'Polling...' : 'Poll Now'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={() => setShowLogs(!showLogs)}
+          >
+            <RefreshCw className="h-3 w-3 mr-2" />
+            {showLogs ? 'Hide' : 'Show'} Logs
+          </Button>
+        </div>
 
         {/* Logs Table */}
         {showLogs && pollRuns && (

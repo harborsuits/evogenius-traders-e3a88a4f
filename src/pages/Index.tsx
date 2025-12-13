@@ -170,6 +170,7 @@ const Index = () => {
             <div className="space-y-4 animate-fade-in" style={{ animationDelay: '200ms' }}>
               <ControlPanel 
                 status={status}
+                generationId={systemState?.current_generation_id}
                 onStart={() => console.log('Start')}
                 onPause={() => console.log('Pause')}
                 onStop={() => console.log('Stop')}

@@ -309,6 +309,62 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
   };
 }
 
+// ===========================================================================
+// GENERATION END DETECTION
+// ===========================================================================
+// Checks if generation should end based on:
+// 1. Time-based: 7 days elapsed
+// 2. Trade-based: 100 learnable trades
+// 3. Risk-based: 15% max drawdown
+// ===========================================================================
+
+const PLACEHOLDER_ID = '11111111-1111-1111-1111-111111111111';
+const GENERATION_TIME_LIMIT_DAYS = 7;
+const GENERATION_TRADE_LIMIT = 100;
+const GENERATION_DRAWDOWN_LIMIT = 0.15;
+
+interface GenerationEndCheck {
+  should_end: boolean;
+  reason: 'time' | 'trades' | 'drawdown' | null;
+  details: {
+    elapsed_days: number;
+    trade_count: number;
+    max_drawdown: number;
+  };
+}
+
+function checkGenerationEnd(
+  startTime: string,
+  tradeCount: number,
+  maxDrawdown: number
+): GenerationEndCheck {
+  const elapsedMs = Date.now() - new Date(startTime).getTime();
+  const elapsedDays = elapsedMs / (1000 * 60 * 60 * 24);
+
+  const details = {
+    elapsed_days: elapsedDays,
+    trade_count: tradeCount,
+    max_drawdown: maxDrawdown,
+  };
+
+  // Check time limit (7 days)
+  if (elapsedDays >= GENERATION_TIME_LIMIT_DAYS) {
+    return { should_end: true, reason: 'time', details };
+  }
+
+  // Check trade limit (100 trades)
+  if (tradeCount >= GENERATION_TRADE_LIMIT) {
+    return { should_end: true, reason: 'trades', details };
+  }
+
+  // Check drawdown limit (15%)
+  if (maxDrawdown >= GENERATION_DRAWDOWN_LIMIT) {
+    return { should_end: true, reason: 'drawdown', details };
+  }
+
+  return { should_end: false, reason: null, details };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -332,15 +388,41 @@ Deno.serve(async (req) => {
 
     const generationId = systemState?.current_generation_id;
     
-    if (!generationId) {
-      console.log('[fitness-calc] No active generation');
+    // Check for placeholder or missing generation
+    if (!generationId || generationId === PLACEHOLDER_ID) {
+      console.log('[fitness-calc] No valid generation (placeholder or missing)');
+      
+      // Log warning event
+      await supabase.from('control_events').insert({
+        action: 'generation_missing',
+        metadata: { 
+          current_id: generationId,
+          message: 'Fitness calc skipped - no valid generation. Use "Start Generation" to begin.'
+        },
+      });
+
       return new Response(
-        JSON.stringify({ ok: true, skipped: true, reason: 'no_generation' }),
+        JSON.stringify({ ok: true, skipped: true, reason: 'no_valid_generation' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // 2. Get paper account for starting capital
+    // 2. Get generation details for end detection
+    const { data: generation } = await supabase
+      .from('generations')
+      .select('id, generation_number, is_active, start_time')
+      .eq('id', generationId)
+      .single();
+
+    if (!generation || !generation.is_active) {
+      console.log('[fitness-calc] Generation not active');
+      return new Response(
+        JSON.stringify({ ok: true, skipped: true, reason: 'generation_not_active' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // 3. Get paper account for starting capital
     const { data: paperAccount } = await supabase
       .from('paper_accounts')
       .select('id, starting_cash')
@@ -350,7 +432,7 @@ Deno.serve(async (req) => {
     const startingCapital = paperAccount?.starting_cash ?? 1000;
     console.log(`[fitness-calc] Using starting capital: $${startingCapital}`);
 
-    // 3. Get all agents for this generation
+    // 4. Get all agents for this generation
     const { data: agents } = await supabase
       .from('agents')
       .select('id, generation_id, strategy_template')
@@ -364,15 +446,14 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 4. Get all filled paper orders
-    // Filter test_mode using explicit JSON path extraction
+    // 5. Get all filled paper orders
     const { data: orders } = await supabase
       .from('paper_orders')
       .select('id, agent_id, symbol, side, filled_price, filled_qty, filled_at, tags')
       .eq('status', 'filled')
       .eq('generation_id', generationId);
 
-    // Filter test_mode in JS for reliability (PostgREST JSON filtering can be brittle)
+    // Filter test_mode in JS for reliability
     const learnableOrders = (orders ?? []).filter(o => {
       const tags = o.tags as { test_mode?: boolean; entry_reason?: string[] } | null;
       return isLearnableTrade(tags);
@@ -380,7 +461,7 @@ Deno.serve(async (req) => {
 
     console.log(`[fitness-calc] Found ${learnableOrders.length} learnable orders (filtered from ${orders?.length ?? 0}) for ${agents.length} agents`);
 
-    // 5. Get fills for fee data
+    // 6. Get fills for fee data
     const orderIds = learnableOrders.map(o => o.id);
     const { data: fills } = orderIds.length > 0 
       ? await supabase.from('paper_fills').select('order_id, fee').in('order_id', orderIds)
@@ -392,7 +473,7 @@ Deno.serve(async (req) => {
       feeByOrder.set(fill.order_id, (feeByOrder.get(fill.order_id) ?? 0) + fill.fee);
     }
 
-    // 6. Group orders by agent with fees
+    // 7. Group orders by agent with fees
     const ordersByAgent = new Map<string, TradeRecord[]>();
     for (const order of learnableOrders) {
       if (!order.agent_id) continue;
@@ -411,14 +492,20 @@ Deno.serve(async (req) => {
       ordersByAgent.set(order.agent_id, agentOrders);
     }
 
-    // 7. Calculate fitness for each agent and upsert to performance table
+    // 8. Calculate fitness for each agent and track max drawdown
     const results: { agent_id: string; fitness: FitnessComponents }[] = [];
+    let globalMaxDrawdown = 0;
     
     for (const agent of agents) {
       const agentTrades = ordersByAgent.get(agent.id) ?? [];
       const fitness = calculateFitness(agentTrades, startingCapital);
       
       results.push({ agent_id: agent.id, fitness });
+      
+      // Track global max drawdown (since agents share paper account)
+      if (fitness.max_drawdown > globalMaxDrawdown) {
+        globalMaxDrawdown = fitness.max_drawdown;
+      }
 
       // Upsert performance record
       const { error: upsertError } = await supabase
@@ -441,7 +528,47 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 8. Log to control_events
+    // 9. CHECK GENERATION END CONDITIONS
+    const endCheck = checkGenerationEnd(
+      generation.start_time,
+      learnableOrders.length,
+      globalMaxDrawdown
+    );
+
+    if (endCheck.should_end && endCheck.reason) {
+      console.log(`[fitness-calc] Generation ${generation.generation_number} ending: ${endCheck.reason}`);
+      
+      // Call end_generation RPC
+      const { error: endError } = await supabase
+        .rpc('end_generation', {
+          gen_id: generationId,
+          reason: endCheck.reason,
+        });
+
+      if (endError) {
+        console.error('[fitness-calc] Failed to end generation:', endError);
+      } else {
+        console.log('[fitness-calc] Generation ended successfully');
+        
+        // Log generation end summary
+        await supabase.from('control_events').insert({
+          action: 'generation_summary',
+          metadata: {
+            generation_id: generationId,
+            generation_number: generation.generation_number,
+            termination_reason: endCheck.reason,
+            details: endCheck.details,
+            agents_with_trades: results.filter(r => r.fitness.total_trades > 0).length,
+            total_trades: learnableOrders.length,
+            top_fitness: results.length > 0 
+              ? Math.max(...results.map(r => r.fitness.fitness_score)).toFixed(4)
+              : 0,
+          },
+        });
+      }
+    }
+
+    // 10. Log fitness calculation event
     const topAgents = results
       .filter(r => r.fitness.total_trades > 0)
       .sort((a, b) => b.fitness.fitness_score - a.fitness.fitness_score)
@@ -451,10 +578,13 @@ Deno.serve(async (req) => {
       action: 'fitness_calculated',
       metadata: {
         generation_id: generationId,
+        generation_number: generation.generation_number,
         starting_capital: startingCapital,
         agents_processed: agents.length,
         agents_with_trades: results.filter(r => r.fitness.total_trades > 0).length,
         trades_analyzed: learnableOrders.length,
+        global_max_drawdown: (globalMaxDrawdown * 100).toFixed(2) + '%',
+        generation_end_check: endCheck.should_end ? endCheck.reason : 'continuing',
         top_agents: topAgents.map(r => ({
           agent_id: r.agent_id.substring(0, 8),
           score: r.fitness.fitness_score.toFixed(4),
@@ -473,9 +603,12 @@ Deno.serve(async (req) => {
       JSON.stringify({
         ok: true,
         generation_id: generationId,
+        generation_number: generation.generation_number,
         agents_processed: agents.length,
         agents_with_trades: results.filter(r => r.fitness.total_trades > 0).length,
         trades_analyzed: learnableOrders.length,
+        generation_ended: endCheck.should_end,
+        end_reason: endCheck.reason,
         duration_ms: Date.now() - startTime,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

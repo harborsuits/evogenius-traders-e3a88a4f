@@ -33,3 +33,6 @@ verify_jwt = false
 
 [functions.fitness-calc]
 verify_jwt = false
+
+[functions.generation-start]
+verify_jwt = false

@@ -8,7 +8,8 @@ import {
   RefreshCw, 
   AlertTriangle,
   Terminal,
-  Loader2
+  Loader2,
+  Rocket
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
@@ -17,14 +18,18 @@ import { useQueryClient } from '@tanstack/react-query';
 
 interface ControlPanelProps {
   status: SystemStatus;
+  generationId?: string | null;
   onStart?: () => void;
   onPause?: () => void;
   onStop?: () => void;
   onRefresh?: () => void;
 }
 
+const PLACEHOLDER_ID = '11111111-1111-1111-1111-111111111111';
+
 export function ControlPanel({ 
   status, 
+  generationId,
   onStart, 
   onPause, 
   onStop, 
@@ -32,6 +37,52 @@ export function ControlPanel({
 }: ControlPanelProps) {
   const [loading, setLoading] = useState<string | null>(null);
   const queryClient = useQueryClient();
+
+  const isGenerationMissing = !generationId || generationId === PLACEHOLDER_ID;
+
+  const startNewGeneration = async () => {
+    setLoading('generation');
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('generation-start');
+
+      if (error) {
+        console.error('[ControlPanel] Generation start error:', error);
+        toast({
+          title: "Failed to Start Generation",
+          description: error.message || "Could not start new generation",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (data?.skipped) {
+        toast({
+          title: "Generation Already Active",
+          description: `Generation ${data.generation_id?.substring(0, 8)} is already running.`,
+        });
+        return;
+      }
+
+      // Invalidate all queries to refresh data
+      queryClient.invalidateQueries();
+
+      toast({
+        title: "Generation Started",
+        description: `Generation #${data.generation_number} has begun. Agents are now linked and ready.`,
+      });
+
+    } catch (err) {
+      console.error('[ControlPanel] Unexpected error:', err);
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(null);
+    }
+  };
 
   const executeAction = async (action: 'start' | 'pause' | 'stop') => {
     setLoading(action);
@@ -108,12 +159,37 @@ export function ControlPanel({
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/* Generation Start Button - shown when generation is missing */}
+        {isGenerationMissing && (
+          <Button 
+            variant="glow"
+            size="sm"
+            onClick={startNewGeneration}
+            disabled={loading !== null}
+            className="w-full mb-2"
+          >
+            {loading === 'generation' ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Rocket className="h-4 w-4" />
+            )}
+            Start New Generation
+          </Button>
+        )}
+
+        {isGenerationMissing && (
+          <div className="flex items-center gap-2 p-2 rounded-lg bg-warning/10 text-warning text-xs mb-2">
+            <AlertTriangle className="h-4 w-4" />
+            <span className="font-mono">No active generation. Start one to enable trading.</span>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-2">
           <Button 
             variant="terminal"
             size="sm"
             onClick={() => executeAction('start')}
-            disabled={status === 'running' || loading !== null}
+            disabled={status === 'running' || loading !== null || isGenerationMissing}
             className="w-full"
           >
             {loading === 'start' ? (

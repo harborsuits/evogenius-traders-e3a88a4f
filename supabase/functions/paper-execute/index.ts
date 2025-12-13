@@ -50,7 +50,8 @@ Deno.serve(async (req) => {
     );
 
     const body: ExecuteTradeRequest = await req.json();
-    const { symbol, side, qty, orderType = 'market', limitPrice, agentId, generationId, tags = {} } = body;
+    // NOTE: generationId from client is IGNORED - we source it server-side for data integrity
+    const { symbol, side, qty, orderType = 'market', limitPrice, agentId, tags = {} } = body;
 
     console.log('[paper-execute] Request:', { symbol, side, qty, orderType, agentId });
 
@@ -62,10 +63,10 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check trade mode
+    // Check trade mode and get generation_id (SERVER-SIDE - never trust client)
     const { data: systemState, error: stateError } = await supabase
       .from('system_state')
-      .select('trade_mode, status')
+      .select('trade_mode, status, current_generation_id')
       .limit(1)
       .single();
 
@@ -74,6 +75,18 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({ ok: false, error: 'Failed to get system state' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // CRITICAL: Source generation_id from server, not client
+    const PLACEHOLDER_ID = '11111111-1111-1111-1111-111111111111';
+    const generationId = systemState.current_generation_id;
+    
+    if (!generationId || generationId === PLACEHOLDER_ID) {
+      console.log('[paper-execute] No valid generation - blocking trade');
+      return new Response(
+        JSON.stringify({ ok: false, error: 'No active generation. Start a generation first.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 

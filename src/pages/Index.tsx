@@ -3,6 +3,7 @@ import { SafetyBanner } from '@/components/dashboard/SafetyBanner';
 import { MarketTicker } from '@/components/dashboard/MarketTicker';
 import { MetricCard } from '@/components/dashboard/MetricCard';
 import { GenerationProgress } from '@/components/dashboard/GenerationProgress';
+import { GenerationHealth } from '@/components/dashboard/GenerationHealth';
 import { AgentGrid } from '@/components/dashboard/AgentGrid';
 import { TradeLog } from '@/components/dashboard/TradeLog';
 import { GenerationHistory } from '@/components/dashboard/GenerationHistory';
@@ -175,6 +176,7 @@ const Index = () => {
                 onPause={() => console.log('Pause')}
                 onStop={() => console.log('Stop')}
               />
+              <GenerationHealth generationId={systemState?.current_generation_id ?? null} />
               <PaperPortfolio />
               <PollingHealth />
             </div>

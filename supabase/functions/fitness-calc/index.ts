@@ -551,11 +551,126 @@ Deno.serve(async (req) => {
     );
 
     let newGenerationId: string | null = null;
+    let liquidatedPositions: { symbol: string; qty: number; price: number }[] = [];
     
     if (endCheck.should_end && endCheck.reason) {
       console.log(`[fitness-calc] Generation ${generation.generation_number} ending: ${endCheck.reason}`);
       
-      // Call end_generation RPC
+      // =========================================================================
+      // FORCED LIQUIDATION - CRITICAL FOR CLEAN GENERATION BOUNDARIES
+      // =========================================================================
+      // All open positions must be closed BEFORE fitness is finalized
+      // and BEFORE new generation starts. This ensures:
+      // 1. Fitness attribution is correct (no leaking to next gen)
+      // 2. New generation starts with clean slate
+      // =========================================================================
+      
+      const { data: openPositions } = await supabase
+        .from('paper_positions')
+        .select('id, symbol, qty, avg_entry_price, account_id')
+        .neq('qty', 0);
+      
+      if (openPositions && openPositions.length > 0) {
+        console.log(`[fitness-calc] Force liquidating ${openPositions.length} open positions`);
+        
+        for (const pos of openPositions) {
+          // Get current market price for liquidation
+          const { data: marketData } = await supabase
+            .from('market_data')
+            .select('price')
+            .eq('symbol', pos.symbol)
+            .limit(1)
+            .single();
+          
+          const liquidationPrice = marketData?.price ?? pos.avg_entry_price;
+          
+          // Create liquidation order with special tags
+          const { data: liqOrder } = await supabase
+            .from('paper_orders')
+            .insert({
+              account_id: pos.account_id,
+              generation_id: generationId,
+              symbol: pos.symbol,
+              side: 'sell',
+              order_type: 'market',
+              qty: pos.qty,
+              status: 'filled',
+              filled_price: liquidationPrice,
+              filled_qty: pos.qty,
+              filled_at: new Date().toISOString(),
+              tags: {
+                exit_reason: 'generation_rollover',
+                forced: true,
+                liquidation: true,
+                generation_end_reason: endCheck.reason,
+              },
+            })
+            .select()
+            .single();
+          
+          if (liqOrder) {
+            // Create fill record
+            const fee = pos.qty * liquidationPrice * 0.006;
+            await supabase.from('paper_fills').insert({
+              order_id: liqOrder.id,
+              symbol: pos.symbol,
+              side: 'sell',
+              qty: pos.qty,
+              price: liquidationPrice,
+              fee,
+            });
+            
+            // Calculate realized PnL and update account cash
+            const realizedPnl = (liquidationPrice - pos.avg_entry_price) * pos.qty - fee;
+            
+            const { data: account } = await supabase
+              .from('paper_accounts')
+              .select('cash')
+              .eq('id', pos.account_id)
+              .single();
+            
+            if (account) {
+              await supabase
+                .from('paper_accounts')
+                .update({
+                  cash: account.cash + (pos.qty * liquidationPrice) - fee,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', pos.account_id);
+            }
+            
+            // Delete the position
+            await supabase
+              .from('paper_positions')
+              .delete()
+              .eq('id', pos.id);
+            
+            liquidatedPositions.push({
+              symbol: pos.symbol,
+              qty: pos.qty,
+              price: liquidationPrice,
+            });
+            
+            console.log(`[fitness-calc] Liquidated ${pos.qty} ${pos.symbol} @ $${liquidationPrice} (PnL: $${realizedPnl.toFixed(2)})`);
+          }
+        }
+        
+        // Log liquidation event
+        await supabase.from('control_events').insert({
+          action: 'generation_liquidation',
+          metadata: {
+            generation_id: generationId,
+            generation_number: generation.generation_number,
+            positions_closed: liquidatedPositions.length,
+            positions: liquidatedPositions,
+          },
+        });
+      }
+      
+      // =========================================================================
+      // NOW END GENERATION (after liquidation, fitness is finalized)
+      // =========================================================================
+      
       const { error: endError } = await supabase
         .rpc('end_generation', {
           gen_id: generationId,
@@ -577,6 +692,7 @@ Deno.serve(async (req) => {
             details: endCheck.details,
             agents_with_trades: results.filter(r => r.fitness.total_trades > 0).length,
             total_trades: learnableOrders.length,
+            positions_liquidated: liquidatedPositions.length,
             top_fitness: results.length > 0 
               ? Math.max(...results.map(r => r.fitness.fitness_score)).toFixed(4)
               : 0,

@@ -473,13 +473,13 @@ Deno.serve(async (req) => {
       feeByOrder.set(fill.order_id, (feeByOrder.get(fill.order_id) ?? 0) + fill.fee);
     }
 
-    // 7. Group orders by agent with fees
+    // 7. Group orders by agent with fees + build ACCOUNT-LEVEL equity curve for drawdown
     const ordersByAgent = new Map<string, TradeRecord[]>();
+    const allTradesForAccount: TradeRecord[] = []; // For account-level drawdown
+    
     for (const order of learnableOrders) {
-      if (!order.agent_id) continue;
-      
-      const agentOrders = ordersByAgent.get(order.agent_id) ?? [];
-      agentOrders.push({
+      // Add to account-level list (for drawdown)
+      allTradesForAccount.push({
         id: order.id,
         symbol: order.symbol,
         side: order.side,
@@ -489,23 +489,38 @@ Deno.serve(async (req) => {
         filled_at: order.filled_at ?? '',
         tags: order.tags as TradeRecord['tags'],
       });
-      ordersByAgent.set(order.agent_id, agentOrders);
+      
+      // Add to per-agent list (for individual fitness)
+      if (order.agent_id) {
+        const agentOrders = ordersByAgent.get(order.agent_id) ?? [];
+        agentOrders.push({
+          id: order.id,
+          symbol: order.symbol,
+          side: order.side,
+          filled_price: order.filled_price ?? 0,
+          filled_qty: order.filled_qty ?? 0,
+          fee: feeByOrder.get(order.id) ?? 0,
+          filled_at: order.filled_at ?? '',
+          tags: order.tags as TradeRecord['tags'],
+        });
+        ordersByAgent.set(order.agent_id, agentOrders);
+      }
     }
 
-    // 8. Calculate fitness for each agent and track max drawdown
+    // 8. Calculate ACCOUNT-LEVEL drawdown (for generation stop-loss)
+    // This is the true risk metric since agents share a single paper account
+    const accountPnlResult = calculateRealizedPnL(allTradesForAccount, startingCapital);
+    const accountLevelDrawdown = calculateMaxDrawdown(accountPnlResult.equityCurve);
+    console.log(`[fitness-calc] Account-level drawdown: ${(accountLevelDrawdown * 100).toFixed(2)}%`);
+
+    // 9. Calculate fitness for each agent
     const results: { agent_id: string; fitness: FitnessComponents }[] = [];
-    let globalMaxDrawdown = 0;
     
     for (const agent of agents) {
       const agentTrades = ordersByAgent.get(agent.id) ?? [];
       const fitness = calculateFitness(agentTrades, startingCapital);
       
       results.push({ agent_id: agent.id, fitness });
-      
-      // Track global max drawdown (since agents share paper account)
-      if (fitness.max_drawdown > globalMaxDrawdown) {
-        globalMaxDrawdown = fitness.max_drawdown;
-      }
 
       // Upsert performance record
       const { error: upsertError } = await supabase
@@ -528,13 +543,15 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 9. CHECK GENERATION END CONDITIONS
+    // 10. CHECK GENERATION END CONDITIONS (using ACCOUNT-LEVEL drawdown)
     const endCheck = checkGenerationEnd(
       generation.start_time,
-      learnableOrders.length,
-      globalMaxDrawdown
+      learnableOrders.length,  // order_count, not round-trips
+      accountLevelDrawdown     // account-level, not per-agent max
     );
 
+    let newGenerationId: string | null = null;
+    
     if (endCheck.should_end && endCheck.reason) {
       console.log(`[fitness-calc] Generation ${generation.generation_number} ending: ${endCheck.reason}`);
       
@@ -565,6 +582,24 @@ Deno.serve(async (req) => {
               : 0,
           },
         });
+
+        // AUTO-START NEXT GENERATION
+        // TODO: Add selection/breeding here before starting new generation
+        console.log('[fitness-calc] Auto-starting next generation...');
+        
+        const { data: nextGenId, error: startError } = await supabase
+          .rpc('start_new_generation');
+
+        if (startError) {
+          console.error('[fitness-calc] Failed to start next generation:', startError);
+          await supabase.from('control_events').insert({
+            action: 'generation_start_failed',
+            metadata: { error: startError.message },
+          });
+        } else {
+          newGenerationId = nextGenId;
+          console.log('[fitness-calc] Next generation started:', nextGenId);
+        }
       }
     }
 
@@ -583,7 +618,7 @@ Deno.serve(async (req) => {
         agents_processed: agents.length,
         agents_with_trades: results.filter(r => r.fitness.total_trades > 0).length,
         trades_analyzed: learnableOrders.length,
-        global_max_drawdown: (globalMaxDrawdown * 100).toFixed(2) + '%',
+        account_drawdown: (accountLevelDrawdown * 100).toFixed(2) + '%',
         generation_end_check: endCheck.should_end ? endCheck.reason : 'continuing',
         top_agents: topAgents.map(r => ({
           agent_id: r.agent_id.substring(0, 8),
@@ -607,8 +642,10 @@ Deno.serve(async (req) => {
         agents_processed: agents.length,
         agents_with_trades: results.filter(r => r.fitness.total_trades > 0).length,
         trades_analyzed: learnableOrders.length,
+        account_drawdown: accountLevelDrawdown,
         generation_ended: endCheck.should_end,
         end_reason: endCheck.reason,
+        new_generation_id: newGenerationId,
         duration_ms: Date.now() - startTime,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

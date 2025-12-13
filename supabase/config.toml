@@ -1,5 +1,8 @@
 project_id = "jptlmxxwbrmwcmevbvwj"
 
+[functions.selection-breeding]
+verify_jwt = false
+
 [api]
 enabled = true
 port = 54321

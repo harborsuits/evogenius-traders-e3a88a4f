@@ -700,8 +700,7 @@ Deno.serve(async (req) => {
         });
 
         // AUTO-START NEXT GENERATION
-        // TODO: Add selection/breeding here before starting new generation
-        console.log('[fitness-calc] Auto-starting next generation...');
+        console.log('[fitness-calc] Starting new generation before selection/breeding...');
         
         const { data: nextGenId, error: startError } = await supabase
           .rpc('start_new_generation');
@@ -715,6 +714,52 @@ Deno.serve(async (req) => {
         } else {
           newGenerationId = nextGenId;
           console.log('[fitness-calc] Next generation started:', nextGenId);
+          
+          // =========================================================================
+          // SELECTION & BREEDING - THE EVOLUTION STEP
+          // =========================================================================
+          // Now that we have the new generation, run selection and breeding
+          // to evolve the population based on fitness from ended generation
+          // =========================================================================
+          console.log('[fitness-calc] Running selection & breeding...');
+          
+          try {
+            const selectionResponse = await fetch(
+              `${Deno.env.get('SUPABASE_URL')}/functions/v1/selection-breeding`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                },
+                body: JSON.stringify({
+                  ended_generation_id: generationId,
+                  new_generation_id: nextGenId,
+                }),
+              }
+            );
+            
+            const selectionResult = await selectionResponse.json();
+            
+            if (selectionResult.ok) {
+              console.log('[fitness-calc] Selection & breeding completed:', selectionResult);
+            } else {
+              console.error('[fitness-calc] Selection & breeding failed:', selectionResult.error);
+              await supabase.from('control_events').insert({
+                action: 'selection_breeding_failed',
+                metadata: { error: selectionResult.error, generation_id: nextGenId },
+              });
+            }
+          } catch (selectionError) {
+            console.error('[fitness-calc] Selection & breeding error:', selectionError);
+            await supabase.from('control_events').insert({
+              action: 'selection_breeding_failed',
+              metadata: { 
+                error: selectionError instanceof Error ? selectionError.message : 'Unknown error',
+                generation_id: nextGenId,
+              },
+            });
+          }
         }
       }
     }

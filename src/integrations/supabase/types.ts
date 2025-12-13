@@ -232,6 +232,194 @@ export type Database = {
         }
         Relationships: []
       }
+      paper_accounts: {
+        Row: {
+          base_currency: string
+          cash: number
+          created_at: string
+          id: string
+          name: string
+          starting_cash: number
+          updated_at: string
+        }
+        Insert: {
+          base_currency?: string
+          cash?: number
+          created_at?: string
+          id?: string
+          name?: string
+          starting_cash?: number
+          updated_at?: string
+        }
+        Update: {
+          base_currency?: string
+          cash?: number
+          created_at?: string
+          id?: string
+          name?: string
+          starting_cash?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      paper_fills: {
+        Row: {
+          fee: number
+          id: string
+          order_id: string
+          price: number
+          qty: number
+          side: Database["public"]["Enums"]["paper_order_side"]
+          symbol: string
+          timestamp: string
+        }
+        Insert: {
+          fee?: number
+          id?: string
+          order_id: string
+          price: number
+          qty: number
+          side: Database["public"]["Enums"]["paper_order_side"]
+          symbol: string
+          timestamp?: string
+        }
+        Update: {
+          fee?: number
+          id?: string
+          order_id?: string
+          price?: number
+          qty?: number
+          side?: Database["public"]["Enums"]["paper_order_side"]
+          symbol?: string
+          timestamp?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "paper_fills_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "paper_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      paper_orders: {
+        Row: {
+          account_id: string
+          agent_id: string | null
+          created_at: string
+          filled_at: string | null
+          filled_price: number | null
+          filled_qty: number | null
+          generation_id: string | null
+          id: string
+          limit_price: number | null
+          order_type: Database["public"]["Enums"]["paper_order_type"]
+          qty: number
+          reason: string | null
+          side: Database["public"]["Enums"]["paper_order_side"]
+          slippage_pct: number | null
+          status: Database["public"]["Enums"]["paper_order_status"]
+          symbol: string
+        }
+        Insert: {
+          account_id: string
+          agent_id?: string | null
+          created_at?: string
+          filled_at?: string | null
+          filled_price?: number | null
+          filled_qty?: number | null
+          generation_id?: string | null
+          id?: string
+          limit_price?: number | null
+          order_type?: Database["public"]["Enums"]["paper_order_type"]
+          qty: number
+          reason?: string | null
+          side: Database["public"]["Enums"]["paper_order_side"]
+          slippage_pct?: number | null
+          status?: Database["public"]["Enums"]["paper_order_status"]
+          symbol: string
+        }
+        Update: {
+          account_id?: string
+          agent_id?: string | null
+          created_at?: string
+          filled_at?: string | null
+          filled_price?: number | null
+          filled_qty?: number | null
+          generation_id?: string | null
+          id?: string
+          limit_price?: number | null
+          order_type?: Database["public"]["Enums"]["paper_order_type"]
+          qty?: number
+          reason?: string | null
+          side?: Database["public"]["Enums"]["paper_order_side"]
+          slippage_pct?: number | null
+          status?: Database["public"]["Enums"]["paper_order_status"]
+          symbol?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "paper_orders_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "paper_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "paper_orders_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "paper_orders_generation_id_fkey"
+            columns: ["generation_id"]
+            isOneToOne: false
+            referencedRelation: "generations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      paper_positions: {
+        Row: {
+          account_id: string
+          avg_entry_price: number
+          id: string
+          qty: number
+          realized_pnl: number
+          symbol: string
+          updated_at: string
+        }
+        Insert: {
+          account_id: string
+          avg_entry_price?: number
+          id?: string
+          qty?: number
+          realized_pnl?: number
+          symbol: string
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string
+          avg_entry_price?: number
+          id?: string
+          qty?: number
+          realized_pnl?: number
+          symbol?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "paper_positions_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "paper_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       performance: {
         Row: {
           agent_id: string
@@ -314,6 +502,7 @@ export type Database = {
           today_pnl: number
           today_trades: number
           total_capital: number
+          trade_mode: string
           updated_at: string
         }
         Insert: {
@@ -325,6 +514,7 @@ export type Database = {
           today_pnl?: number
           today_trades?: number
           total_capital?: number
+          trade_mode?: string
           updated_at?: string
         }
         Update: {
@@ -336,6 +526,7 @@ export type Database = {
           today_pnl?: number
           today_trades?: number
           total_capital?: number
+          trade_mode?: string
           updated_at?: string
         }
         Relationships: [
@@ -418,6 +609,9 @@ export type Database = {
     Enums: {
       agent_status: "elite" | "active" | "probation" | "removed"
       generation_termination_reason: "time" | "trades" | "drawdown"
+      paper_order_side: "buy" | "sell"
+      paper_order_status: "pending" | "filled" | "rejected" | "cancelled"
+      paper_order_type: "market" | "limit"
       strategy_template: "trend_pullback" | "mean_reversion" | "breakout"
       system_status: "running" | "paused" | "stopped" | "error"
       trade_outcome: "success" | "failed" | "denied"
@@ -551,6 +745,9 @@ export const Constants = {
     Enums: {
       agent_status: ["elite", "active", "probation", "removed"],
       generation_termination_reason: ["time", "trades", "drawdown"],
+      paper_order_side: ["buy", "sell"],
+      paper_order_status: ["pending", "filled", "rejected", "cancelled"],
+      paper_order_type: ["market", "limit"],
       strategy_template: ["trend_pullback", "mean_reversion", "breakout"],
       system_status: ["running", "paused", "stopped", "error"],
       trade_outcome: ["success", "failed", "denied"],

@@ -11,6 +11,7 @@ import { ControlEventsLog } from '@/components/dashboard/ControlEventsLog';
 import { PollingHealth } from '@/components/dashboard/PollingHealth';
 import { CoinbasePanel } from '@/components/dashboard/CoinbasePanel';
 import { CoinbaseBalances } from '@/components/dashboard/CoinbaseBalances';
+import { PaperPortfolio } from '@/components/dashboard/PaperPortfolio';
 import { 
   useSystemState,
   useAgents,
@@ -171,6 +172,10 @@ const Index = () => {
                 onPause={() => console.log('Pause')}
                 onStop={() => console.log('Stop')}
               />
+            </div>
+
+            <div className="animate-fade-in" style={{ animationDelay: '225ms' }}>
+              <PaperPortfolio />
             </div>
 
             <div className="animate-fade-in" style={{ animationDelay: '250ms' }}>

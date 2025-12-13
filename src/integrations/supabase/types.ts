@@ -118,6 +118,42 @@ export type Database = {
         }
         Relationships: []
       }
+      generation_agents: {
+        Row: {
+          agent_id: string
+          created_at: string
+          generation_id: string
+          id: string
+        }
+        Insert: {
+          agent_id: string
+          created_at?: string
+          generation_id: string
+          id?: string
+        }
+        Update: {
+          agent_id?: string
+          created_at?: string
+          generation_id?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "generation_agents_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "generation_agents_generation_id_fkey"
+            columns: ["generation_id"]
+            isOneToOne: false
+            referencedRelation: "generations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       generations: {
         Row: {
           avg_fitness: number | null

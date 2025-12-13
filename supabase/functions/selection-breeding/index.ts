@@ -8,22 +8,20 @@ const corsHeaders = {
 // ===========================================================================
 // SELECTION & BREEDING (SIMPLE PERCENTILE)
 // ===========================================================================
-// Population: 100 agents
-// - Top 10% (10 agents) → ELITES: unchanged, retain full capital, reproduce
-// - Next 15% (15 agents) → PARENTS: selected for breeding, survive as-is
-// - Bottom 75% (75 agents) → REMOVED: replaced by offspring
+// Selection is SCOPED to agents that participated in the ended generation
+// using the generation_agents join table.
+//
+// Population: ~100 agents (dynamically counted)
+// - Top 10% → ELITES: unchanged, retain full capital, reproduce
+// - Next 15% → PARENTS: selected for breeding, survive as-is
+// - Bottom 75% → REMOVED: replaced by offspring
 // 
 // Offspring creation:
-// - 75 offspring created from 25 parents (elites + parents)
+// - Offspring count = removed count (prevents population drift)
 // - Each offspring is a mutated clone of a randomly selected parent
 // - Mutation: ±5-15% per gene, 10% chance of larger mutation (±20-30%)
 // - All genes clamped to type-specific boundaries
 // ===========================================================================
-
-const POPULATION_SIZE = 100;
-const ELITE_COUNT = 10;       // Top 10%
-const PARENT_COUNT = 15;      // Next 15%
-const OFFSPRING_COUNT = 75;   // Bottom 75% replaced
 
 // Gene boundaries by strategy template
 const GENE_BOUNDS = {
@@ -55,7 +53,6 @@ type StrategyTemplate = keyof typeof GENE_BOUNDS;
 
 interface AgentWithFitness {
   id: string;
-  generation_id: string;
   strategy_template: StrategyTemplate;
   genes: Record<string, number>;
   capital_allocation: number;
@@ -86,9 +83,8 @@ function mutateGene(
 
 // Create a mutated offspring from a parent
 function createOffspring(
-  parent: AgentWithFitness,
-  newGenerationId: string
-): { strategy_template: string; genes: Record<string, number>; generation_id: string } {
+  parent: AgentWithFitness
+): { strategy_template: string; genes: Record<string, number> } {
   const bounds = GENE_BOUNDS[parent.strategy_template] as Record<string, { min: number; max: number }>;
   const newGenes: Record<string, number> = {};
   
@@ -107,7 +103,6 @@ function createOffspring(
   return {
     strategy_template: parent.strategy_template,
     genes: newGenes,
-    generation_id: newGenerationId,
   };
 }
 
@@ -149,20 +144,44 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 1. Get all agents with their fitness scores from ended generation
+    // 1. Get agent IDs that participated in the ended generation
+    // Using generation_agents join table for accurate cohort tracking
+    const { data: cohortMembers, error: cohortError } = await supabase
+      .from('generation_agents')
+      .select('agent_id')
+      .eq('generation_id', ended_generation_id);
+
+    if (cohortError) {
+      throw new Error(`Failed to fetch generation cohort: ${cohortError.message}`);
+    }
+
+    const cohortAgentIds = (cohortMembers ?? []).map(m => m.agent_id);
+    console.log(`[selection-breeding] Ended generation cohort size: ${cohortAgentIds.length}`);
+
+    if (cohortAgentIds.length === 0) {
+      console.log('[selection-breeding] No agents in ended generation, skipping selection');
+      return new Response(
+        JSON.stringify({ ok: true, skipped: true, reason: 'no_agents_in_cohort' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // 2. Get agent details ONLY for cohort members
     const { data: agents, error: agentsError } = await supabase
       .from('agents')
-      .select('id, generation_id, strategy_template, genes, capital_allocation, is_elite, status');
+      .select('id, strategy_template, genes, capital_allocation, is_elite, status')
+      .in('id', cohortAgentIds);
 
     if (agentsError || !agents) {
       throw new Error(`Failed to fetch agents: ${agentsError?.message}`);
     }
 
-    // 2. Get fitness scores for all agents from ended generation
+    // 3. Get fitness scores for cohort from ended generation
     const { data: performances, error: perfError } = await supabase
       .from('performance')
       .select('agent_id, fitness_score')
-      .eq('generation_id', ended_generation_id);
+      .eq('generation_id', ended_generation_id)
+      .in('agent_id', cohortAgentIds);
 
     if (perfError) {
       console.error('[selection-breeding] Failed to fetch performance:', perfError);
@@ -182,101 +201,130 @@ Deno.serve(async (req) => {
       fitness_score: fitnessMap.get(a.id) ?? 0,
     }));
 
-    // 3. SELECTION: Rank by fitness score (descending)
+    // 4. SELECTION: Rank by fitness score (descending)
     const rankedAgents = [...agentsWithFitness].sort(
       (a, b) => b.fitness_score - a.fitness_score
     );
 
-    const elites = rankedAgents.slice(0, ELITE_COUNT);
-    const parents = rankedAgents.slice(ELITE_COUNT, ELITE_COUNT + PARENT_COUNT);
-    const removed = rankedAgents.slice(ELITE_COUNT + PARENT_COUNT);
+    // Calculate dynamic tier sizes based on actual cohort size
+    const cohortSize = rankedAgents.length;
+    const eliteCount = Math.max(1, Math.floor(cohortSize * 0.10));   // 10%
+    const parentCount = Math.max(1, Math.floor(cohortSize * 0.15));  // 15%
+    const survivorCount = eliteCount + parentCount;
 
-    console.log(`[selection-breeding] Selection: ${elites.length} elites, ${parents.length} parents, ${removed.length} removed`);
+    const elites = rankedAgents.slice(0, eliteCount);
+    const parents = rankedAgents.slice(eliteCount, survivorCount);
+    const removed = rankedAgents.slice(survivorCount);
 
-    // 4. Update agent statuses for elites (mark is_elite = true)
+    console.log(`[selection-breeding] Selection from ${cohortSize}: ${elites.length} elites, ${parents.length} parents, ${removed.length} removed`);
+
     const eliteIds = elites.map(a => a.id);
     const parentIds = parents.map(a => a.id);
     const removedIds = removed.map(a => a.id);
+    const survivorIds = [...eliteIds, ...parentIds];
 
-    // Mark elites
-    const { error: eliteError } = await supabase
-      .from('agents')
-      .update({ 
-        is_elite: true, 
-        status: 'elite',
-        generation_id: new_generation_id,
-      })
-      .in('id', eliteIds);
+    // 5. Mark elites
+    if (eliteIds.length > 0) {
+      const { error: eliteError } = await supabase
+        .from('agents')
+        .update({ is_elite: true, status: 'elite' })
+        .in('id', eliteIds);
 
-    if (eliteError) {
-      console.error('[selection-breeding] Failed to update elites:', eliteError);
+      if (eliteError) {
+        console.error('[selection-breeding] Failed to update elites:', eliteError);
+      }
     }
 
-    // Mark parents (active, not elite)
-    const { error: parentError } = await supabase
-      .from('agents')
-      .update({ 
-        is_elite: false, 
-        status: 'active',
-        generation_id: new_generation_id,
-      })
-      .in('id', parentIds);
+    // 6. Mark parents (active, not elite)
+    if (parentIds.length > 0) {
+      const { error: parentError } = await supabase
+        .from('agents')
+        .update({ is_elite: false, status: 'active' })
+        .in('id', parentIds);
 
-    if (parentError) {
-      console.error('[selection-breeding] Failed to update parents:', parentError);
+      if (parentError) {
+        console.error('[selection-breeding] Failed to update parents:', parentError);
+      }
     }
 
-    // 5. BREEDING: Create offspring to replace removed agents
-    const breedingPool = [...elites, ...parents]; // 25 parents total
-    const offspring: { strategy_template: string; genes: Record<string, number>; generation_id: string }[] = [];
+    // 7. BREEDING: Create offspring to replace removed agents
+    // Offspring count = removed count (prevents population drift)
+    const breedingPool = [...elites, ...parents];
+    const offspringCount = removed.length;
+    const offspring: { strategy_template: string; genes: Record<string, number> }[] = [];
 
-    for (let i = 0; i < OFFSPRING_COUNT; i++) {
+    for (let i = 0; i < offspringCount; i++) {
       const parent = selectParent(breedingPool);
-      const child = createOffspring(parent, new_generation_id);
+      const child = createOffspring(parent);
       offspring.push(child);
     }
 
-    console.log(`[selection-breeding] Created ${offspring.length} offspring`);
+    console.log(`[selection-breeding] Created ${offspring.length} offspring (matching ${removed.length} removed)`);
 
-    // 6. Delete removed agents
-    const { error: deleteError } = await supabase
-      .from('agents')
-      .delete()
-      .in('id', removedIds);
+    // 8. Delete removed agents
+    if (removedIds.length > 0) {
+      const { error: deleteError } = await supabase
+        .from('agents')
+        .delete()
+        .in('id', removedIds);
 
-    if (deleteError) {
-      console.error('[selection-breeding] Failed to delete removed agents:', deleteError);
+      if (deleteError) {
+        console.error('[selection-breeding] Failed to delete removed agents:', deleteError);
+      }
     }
 
-    // 7. Insert offspring as new agents
-    const offspringRecords = offspring.map(o => ({
-      generation_id: o.generation_id,
-      strategy_template: o.strategy_template,
-      genes: o.genes,
-      capital_allocation: 40, // Default allocation
-      is_elite: false,
-      status: 'active',
-    }));
+    // 9. Insert offspring as new agents
+    let insertedOffspringIds: string[] = [];
+    if (offspring.length > 0) {
+      const offspringRecords = offspring.map(o => ({
+        strategy_template: o.strategy_template,
+        genes: o.genes,
+        capital_allocation: 40, // Default allocation
+        is_elite: false,
+        status: 'active',
+      }));
 
-    const { data: insertedOffspring, error: insertError } = await supabase
-      .from('agents')
-      .insert(offspringRecords)
-      .select('id');
+      const { data: insertedOffspring, error: insertError } = await supabase
+        .from('agents')
+        .insert(offspringRecords)
+        .select('id');
 
-    if (insertError) {
-      console.error('[selection-breeding] Failed to insert offspring:', insertError);
+      if (insertError) {
+        console.error('[selection-breeding] Failed to insert offspring:', insertError);
+      } else {
+        insertedOffspringIds = (insertedOffspring ?? []).map(o => o.id);
+      }
     }
 
-    // 8. Log selection/breeding event
+    // 10. Register all agents (survivors + offspring) to new generation
+    const newGenerationAgentIds = [...survivorIds, ...insertedOffspringIds];
+    
+    if (newGenerationAgentIds.length > 0) {
+      const generationAgentRecords = newGenerationAgentIds.map(agentId => ({
+        generation_id: new_generation_id,
+        agent_id: agentId,
+      }));
+
+      const { error: regError } = await supabase
+        .from('generation_agents')
+        .insert(generationAgentRecords);
+
+      if (regError) {
+        console.error('[selection-breeding] Failed to register agents to new generation:', regError);
+      }
+    }
+
+    // 11. Log selection/breeding event
     await supabase.from('control_events').insert({
       action: 'selection_breeding',
       metadata: {
         ended_generation_id,
         new_generation_id,
+        cohort_size: cohortSize,
         elites_count: elites.length,
         parents_count: parents.length,
         removed_count: removed.length,
-        offspring_created: insertedOffspring?.length ?? 0,
+        offspring_created: insertedOffspringIds.length,
         top_elite: elites[0] ? {
           agent_id: elites[0].id.substring(0, 8),
           fitness: elites[0].fitness_score.toFixed(4),
@@ -290,13 +338,13 @@ Deno.serve(async (req) => {
       },
     });
 
-    // 9. Verify final agent count
+    // 12. Verify final agent count
     const { count: finalCount } = await supabase
-      .from('agents')
+      .from('generation_agents')
       .select('*', { count: 'exact', head: true })
       .eq('generation_id', new_generation_id);
 
-    console.log(`[selection-breeding] Completed. Final agent count: ${finalCount}`);
+    console.log(`[selection-breeding] Completed. New generation agent count: ${finalCount}`);
 
     return new Response(
       JSON.stringify({
@@ -304,14 +352,15 @@ Deno.serve(async (req) => {
         ended_generation_id,
         new_generation_id,
         selection: {
+          cohort_size: cohortSize,
           elites: elites.length,
           parents: parents.length,
           removed: removed.length,
         },
         breeding: {
-          offspring_created: insertedOffspring?.length ?? 0,
+          offspring_created: insertedOffspringIds.length,
         },
-        final_agent_count: finalCount,
+        new_generation_agent_count: finalCount,
         duration_ms: Date.now() - startTime,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

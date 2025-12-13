@@ -72,6 +72,26 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Check system status - skip polling if stopped
+    const { data: systemState } = await supabase
+      .from('system_state')
+      .select('status')
+      .limit(1)
+      .single();
+
+    if (systemState?.status === 'stopped') {
+      console.log('[market-poll] System is stopped, skipping poll');
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          skipped: true,
+          reason: 'System is stopped',
+          timestamp: new Date().toISOString()
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const results: { symbol: string; price: number; change_24h: number; volume_24h: number }[] = [];
 
     for (const symbol of SYMBOLS) {

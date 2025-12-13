@@ -1,12 +1,14 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { MarketData } from '@/types/evotrader';
 import { TrendingUp, TrendingDown, RefreshCw, Radio } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
+import { useSystemState } from '@/hooks/useEvoTraderData';
 
 interface MarketTickerProps {
   markets: MarketData[];
@@ -14,20 +16,25 @@ interface MarketTickerProps {
 
 export function MarketTicker({ markets }: MarketTickerProps) {
   const [polling, setPolling] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { data: systemState } = useSystemState();
 
-  const handlePollMarket = async () => {
+  const handlePollMarket = useCallback(async (silent = false) => {
     setPolling(true);
     try {
       const { data, error } = await supabase.functions.invoke('market-poll');
       
       if (error) {
-        toast({
-          title: 'Market poll failed',
-          description: error.message,
-          variant: 'destructive',
-        });
+        if (!silent) {
+          toast({
+            title: 'Market poll failed',
+            description: error.message,
+            variant: 'destructive',
+          });
+        }
         return;
       }
 
@@ -35,25 +42,67 @@ export function MarketTicker({ markets }: MarketTickerProps) {
         predicate: (query) => query.queryKey[0] === 'market-data',
       });
 
-      toast({
-        title: 'Market data updated',
-        description: `Updated ${data.updated} symbols from Coinbase`,
-      });
+      if (!silent) {
+        toast({
+          title: 'Market data updated',
+          description: `Updated ${data.updated} symbols from Coinbase`,
+        });
+      }
     } catch (err) {
-      toast({
-        title: 'Error',
-        description: 'Failed to fetch market data',
-        variant: 'destructive',
-      });
+      if (!silent) {
+        toast({
+          title: 'Error',
+          description: 'Failed to fetch market data',
+          variant: 'destructive',
+        });
+      }
     } finally {
       setPolling(false);
     }
-  };
+  }, [queryClient, toast]);
+
+  // Determine polling interval based on system status
+  const getPollingInterval = useCallback(() => {
+    if (!systemState) return 60000; // Default 60s
+    switch (systemState.status) {
+      case 'running': return 60000;  // 60 seconds
+      case 'paused': return 300000;  // 5 minutes
+      case 'stopped': return 0;      // No polling
+      default: return 60000;
+    }
+  }, [systemState]);
+
+  // Set up auto-refresh interval
+  useEffect(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+
+    if (autoRefresh) {
+      const interval = getPollingInterval();
+      if (interval > 0) {
+        // Poll immediately when enabled
+        handlePollMarket(true);
+        intervalRef.current = setInterval(() => handlePollMarket(true), interval);
+      }
+    }
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [autoRefresh, getPollingInterval, handlePollMarket]);
 
   // Get the most recent update time from market data
   const lastUpdate = markets.length > 0 
     ? new Date(Math.max(...markets.map(m => new Date(m.updated_at).getTime())))
     : null;
+
+  const intervalLabel = systemState?.status === 'running' ? '60s' 
+    : systemState?.status === 'paused' ? '5m' 
+    : 'off';
 
   return (
     <div className="flex items-center gap-6 px-4 py-3 bg-card border border-border rounded-lg overflow-x-auto">
@@ -91,8 +140,21 @@ export function MarketTicker({ markets }: MarketTickerProps) {
       ))}
       
       <div className="flex items-center gap-3 ml-auto">
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={autoRefresh}
+            onCheckedChange={setAutoRefresh}
+            className="scale-75"
+          />
+          <span className="text-xs font-mono text-muted-foreground">
+            Auto ({intervalLabel})
+          </span>
+        </div>
+        
+        <div className="h-4 w-px bg-border" />
+        
         <div className="flex items-center gap-2 text-muted-foreground">
-          <Radio className="h-3 w-3 text-primary animate-pulse" />
+          <Radio className={cn('h-3 w-3', autoRefresh && 'text-primary animate-pulse')} />
           <span className="text-xs font-mono">Coinbase</span>
         </div>
         
@@ -105,7 +167,7 @@ export function MarketTicker({ markets }: MarketTickerProps) {
         <Button
           variant="ghost"
           size="sm"
-          onClick={handlePollMarket}
+          onClick={() => handlePollMarket(false)}
           disabled={polling}
           className="h-7 px-2"
         >

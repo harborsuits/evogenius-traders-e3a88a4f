@@ -607,7 +607,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      end_generation: {
+        Args: { gen_id: string; reason: string }
+        Returns: undefined
+      }
+      start_new_generation: { Args: never; Returns: string }
     }
     Enums: {
       agent_status: "elite" | "active" | "probation" | "removed"

@@ -12,7 +12,7 @@ interface PerformanceRecord {
   agent_id: string;
   generation_id: string;
   fitness_score: number;
-  net_pnl: number;
+  net_pnl: number;  // Now stores realized_pnl
   sharpe_ratio: number;
   max_drawdown: number;
   profitable_days_ratio: number;

@@ -20,12 +20,17 @@ type BlockReason =
   | 'BLOCKED_SYSTEM_STOPPED'
   | 'BLOCKED_SYSTEM_PAUSED'
   | 'BLOCKED_STALE_MARKET_DATA'
+  | 'BLOCKED_DEAD_MARKET_DATA'
   | 'BLOCKED_INVALID_SYMBOL'
   | 'BLOCKED_LIVE_NOT_ARMED'
-  | 'BLOCKED_INVALID_QTY';
+  | 'BLOCKED_INVALID_QTY'
+  | 'BLOCKED_AGENT_RATE_LIMIT'
+  | 'BLOCKED_SYMBOL_RATE_LIMIT';
 
 const ALLOWED_SYMBOLS = ['BTC-USD', 'ETH-USD'];
 const MAX_MARKET_AGE_SECONDS = 120;
+const MAX_TRADES_PER_AGENT_PER_DAY = 5;
+const MAX_TRADES_PER_SYMBOL_PER_DAY = 50;
 
 // deno-lint-ignore no-explicit-any
 async function logDecision(
@@ -69,6 +74,8 @@ Deno.serve(async (req) => {
         qty: body.qty,
         block_reason: reason,
         agent_id: body.agentId,
+        generation_id: body.generationId,
+        mode: 'paper',
       });
 
       return new Response(
@@ -88,6 +95,8 @@ Deno.serve(async (req) => {
         qty: body.qty,
         block_reason: reason,
         agent_id: body.agentId,
+        generation_id: body.generationId,
+        mode: 'paper',
       });
 
       return new Response(
@@ -121,31 +130,35 @@ Deno.serve(async (req) => {
         const reason: BlockReason = 'BLOCKED_SYSTEM_STOPPED';
         console.log(`[trade-execute] ${reason}`);
         
-        await logDecision(supabase, 'trade_blocked', {
-          symbol: body.symbol,
-          side: body.side,
-          qty: body.qty,
-          block_reason: reason,
-          agent_id: body.agentId,
-        });
+      await logDecision(supabase, 'trade_blocked', {
+        symbol: body.symbol,
+        side: body.side,
+        qty: body.qty,
+        block_reason: reason,
+        agent_id: body.agentId,
+        generation_id: body.generationId,
+        mode: 'paper',
+      });
 
-        return new Response(
-          JSON.stringify({ ok: false, blocked: true, reason }),
-          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
+      return new Response(
+        JSON.stringify({ ok: false, blocked: true, reason }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
-      if (systemStatus === 'paused') {
-        const reason: BlockReason = 'BLOCKED_SYSTEM_PAUSED';
-        console.log(`[trade-execute] ${reason}`);
-        
-        await logDecision(supabase, 'trade_blocked', {
-          symbol: body.symbol,
-          side: body.side,
-          qty: body.qty,
-          block_reason: reason,
-          agent_id: body.agentId,
-        });
+    if (systemStatus === 'paused') {
+      const reason: BlockReason = 'BLOCKED_SYSTEM_PAUSED';
+      console.log(`[trade-execute] ${reason}`);
+      
+      await logDecision(supabase, 'trade_blocked', {
+        symbol: body.symbol,
+        side: body.side,
+        qty: body.qty,
+        block_reason: reason,
+        agent_id: body.agentId,
+        generation_id: body.generationId,
+        mode: 'paper',
+      });
 
         return new Response(
           JSON.stringify({ ok: false, blocked: true, reason }),
@@ -166,33 +179,38 @@ Deno.serve(async (req) => {
         const reason: BlockReason = 'BLOCKED_STALE_MARKET_DATA';
         console.log(`[trade-execute] ${reason}: No market data for ${body.symbol}`);
         
-        await logDecision(supabase, 'trade_blocked', {
-          symbol: body.symbol,
-          side: body.side,
-          qty: body.qty,
-          block_reason: reason,
-          agent_id: body.agentId,
-        });
+      await logDecision(supabase, 'trade_blocked', {
+        symbol: body.symbol,
+        side: body.side,
+        qty: body.qty,
+        block_reason: reason,
+        agent_id: body.agentId,
+        generation_id: body.generationId,
+        mode: 'paper',
+      });
 
-        return new Response(
-          JSON.stringify({ ok: false, blocked: true, reason }),
-          { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
+      return new Response(
+        JSON.stringify({ ok: false, blocked: true, reason }),
+        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
       const ageSeconds = (Date.now() - new Date(marketData.updated_at).getTime()) / 1000;
       console.log(`[trade-execute] Market data age: ${ageSeconds.toFixed(1)}s`);
 
       if (ageSeconds > MAX_MARKET_AGE_SECONDS) {
-        const reason: BlockReason = 'BLOCKED_STALE_MARKET_DATA';
+        const reason: BlockReason = ageSeconds > 300 ? 'BLOCKED_DEAD_MARKET_DATA' : 'BLOCKED_STALE_MARKET_DATA';
         console.log(`[trade-execute] ${reason}: ${ageSeconds.toFixed(1)}s old`);
         
         await logDecision(supabase, 'trade_blocked', {
           symbol: body.symbol,
           side: body.side,
           qty: body.qty,
-          block_reason: `${reason} (${ageSeconds.toFixed(0)}s old)`,
+          block_reason: reason,
+          market_age_seconds: Math.floor(ageSeconds),
           agent_id: body.agentId,
+          generation_id: body.generationId,
+          mode: 'paper',
         });
 
         return new Response(
@@ -202,7 +220,75 @@ Deno.serve(async (req) => {
       }
     }
 
-    // === GATE 5: Live mode requires explicit arm ===
+    // === GATE 5: Rate limits (per-agent and per-symbol) ===
+    if (!body.bypassGates) {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      // Check agent rate limit
+      if (body.agentId) {
+        const { count: agentTradeCount } = await supabase
+          .from('paper_orders')
+          .select('*', { count: 'exact', head: true })
+          .eq('agent_id', body.agentId)
+          .gte('created_at', todayStart.toISOString())
+          .eq('status', 'filled');
+
+        if ((agentTradeCount ?? 0) >= MAX_TRADES_PER_AGENT_PER_DAY) {
+          const reason: BlockReason = 'BLOCKED_AGENT_RATE_LIMIT';
+          console.log(`[trade-execute] ${reason}: agent ${body.agentId} has ${agentTradeCount} trades today`);
+          
+          await logDecision(supabase, 'trade_blocked', {
+            symbol: body.symbol,
+            side: body.side,
+            qty: body.qty,
+            block_reason: reason,
+            trades_today: agentTradeCount,
+            max_allowed: MAX_TRADES_PER_AGENT_PER_DAY,
+            agent_id: body.agentId,
+            generation_id: body.generationId,
+            mode: 'paper',
+          });
+
+          return new Response(
+            JSON.stringify({ ok: false, blocked: true, reason }),
+            { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+
+      // Check symbol rate limit
+      const { count: symbolTradeCount } = await supabase
+        .from('paper_orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('symbol', body.symbol)
+        .gte('created_at', todayStart.toISOString())
+        .eq('status', 'filled');
+
+      if ((symbolTradeCount ?? 0) >= MAX_TRADES_PER_SYMBOL_PER_DAY) {
+        const reason: BlockReason = 'BLOCKED_SYMBOL_RATE_LIMIT';
+        console.log(`[trade-execute] ${reason}: ${body.symbol} has ${symbolTradeCount} trades today`);
+        
+        await logDecision(supabase, 'trade_blocked', {
+          symbol: body.symbol,
+          side: body.side,
+          qty: body.qty,
+          block_reason: reason,
+          trades_today: symbolTradeCount,
+          max_allowed: MAX_TRADES_PER_SYMBOL_PER_DAY,
+          agent_id: body.agentId,
+          generation_id: body.generationId,
+          mode: 'paper',
+        });
+
+        return new Response(
+          JSON.stringify({ ok: false, blocked: true, reason }),
+          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    // === GATE 6: Live mode requires explicit arm ===
     if (tradeMode === 'live') {
       const reason: BlockReason = 'BLOCKED_LIVE_NOT_ARMED';
       console.log(`[trade-execute] ${reason}`);
@@ -213,6 +299,8 @@ Deno.serve(async (req) => {
         qty: body.qty,
         block_reason: reason,
         agent_id: body.agentId,
+        generation_id: body.generationId,
+        mode: 'live',
       });
 
       return new Response(

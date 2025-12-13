@@ -12,6 +12,8 @@ import { PollingHealth } from '@/components/dashboard/PollingHealth';
 import { PaperPortfolio } from '@/components/dashboard/PaperPortfolio';
 import { SecondaryPanelTabs } from '@/components/dashboard/SecondaryPanelTabs';
 import { TradeCycleStatus } from '@/components/dashboard/TradeCycleStatus';
+import { LiveLockedWorkspace } from '@/components/dashboard/LiveLockedWorkspace';
+import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
 import { 
   useSystemState,
   useAgents,
@@ -33,6 +35,9 @@ import {
 import { Generation, Agent, SystemStatus } from '@/types/evotrader';
 
 const Index = () => {
+  // Get trade mode
+  const { isLive, isLiveArmed } = useCurrentTradeMode();
+
   // Enable real-time subscriptions
   useRealtimeSubscriptions();
 
@@ -78,6 +83,22 @@ const Index = () => {
           <Loader2 className="h-6 w-6 animate-spin" />
           <span className="font-mono">Loading EvoTrader...</span>
         </div>
+      </div>
+    );
+  }
+
+  // If in Live mode (not armed), show the locked workspace instead
+  if (isLive && !isLiveArmed) {
+    return (
+      <div className="min-h-screen bg-background bg-grid">
+        <Header 
+          status={status} 
+          generationNumber={currentGeneration?.generation_number} 
+        />
+        
+        <main className="container px-4 md:px-6 py-6 max-w-3xl mx-auto">
+          <LiveLockedWorkspace />
+        </main>
       </div>
     );
   }

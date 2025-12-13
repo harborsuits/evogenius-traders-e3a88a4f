@@ -11,18 +11,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useTradeMode, setTradeMode } from '@/hooks/usePaperTrading';
-import { useQueryClient } from '@tanstack/react-query';
+import { useTradeModeContext } from '@/contexts/TradeModeContext';
 import { toast } from '@/hooks/use-toast';
 import { AlertTriangle, FlaskConical, Zap } from 'lucide-react';
 
 export function TradeModeToggle() {
-  const { data: tradeMode, isLoading } = useTradeMode();
+  const { mode, isPaper, isLoading, setMode } = useTradeModeContext();
   const [showConfirm, setShowConfirm] = useState(false);
   const [switching, setSwitching] = useState(false);
-  const queryClient = useQueryClient();
-
-  const isPaper = tradeMode === 'paper';
 
   const handleToggle = () => {
     if (isPaper) {
@@ -34,20 +30,18 @@ export function TradeModeToggle() {
     }
   };
 
-  const switchMode = async (mode: 'paper' | 'live') => {
+  const switchMode = async (newMode: 'paper' | 'live') => {
     setSwitching(true);
     try {
-      await setTradeMode(mode);
-      queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'trade-mode' });
-      queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'system-state' });
+      await setMode(newMode);
       
       toast({
-        title: mode === 'live' ? '⚠️ LIVE MODE ENABLED' : 'Paper Mode Enabled',
+        title: newMode === 'live' ? '⚠️ LIVE MODE ENABLED' : 'Paper Mode Enabled',
         description:
-          mode === 'live'
+          newMode === 'live'
             ? 'Real money trades will be executed!'
             : 'Trades will be simulated with no real funds.',
-        variant: mode === 'live' ? 'destructive' : 'default',
+        variant: newMode === 'live' ? 'destructive' : 'default',
       });
     } catch (err) {
       console.error('[TradeModeToggle] Error:', err);

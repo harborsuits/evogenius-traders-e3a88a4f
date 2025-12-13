@@ -270,6 +270,37 @@ Deno.serve(async (req) => {
     }
 
     const dataAge = getDataAge(market.updated_at);
+    
+    // === FRESHNESS GATE: Skip if market data is stale ===
+    const MAX_MARKET_AGE_SECONDS = 120;
+    if (dataAge > MAX_MARKET_AGE_SECONDS) {
+      console.log(`[trade-cycle] Market data stale (${dataAge}s old), skipping`);
+      
+      await supabase.from('control_events').insert({
+        action: 'trade_decision',
+        metadata: {
+          cycle_id: cycleId,
+          agent_id: agent.id,
+          generation_id: agent.generation_id,
+          symbol,
+          decision: 'hold',
+          reason: 'stale_market_data_skip',
+          market_age_seconds: dataAge,
+          mode: 'paper',
+        },
+      });
+      
+      return new Response(
+        JSON.stringify({ 
+          ok: true, 
+          skipped: true, 
+          reason: 'stale_market_data_skip',
+          market_age_seconds: dataAge,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     const regime = getRegime(market);
     const positionQty = positionBySymbol.get(symbol) ?? 0;
     const hasPosition = positionQty > 0;
@@ -278,6 +309,10 @@ Deno.serve(async (req) => {
 
     // 8. Make decision
     const { decision, reasons, confidence } = makeDecision(agent, market, hasPosition, positionQty);
+    
+    // Calculate qty early so we can log the correct value
+    const baseQty = symbol === 'BTC-USD' ? 0.0001 : 0.001;
+    const plannedQty = decision === 'sell' ? Math.min(baseQty, positionQty) : baseQty;
     
     const patternId = generatePatternId(agent.strategy_template, symbol, regime, reasons);
     
@@ -305,7 +340,7 @@ Deno.serve(async (req) => {
         generation_id: agent.generation_id,
         symbol,
         decision,
-        qty: decision !== 'hold' ? 0.0001 : null, // Small test size
+        qty: decision !== 'hold' ? plannedQty : null,
         ...tags,
         mode: 'paper',
       },
@@ -327,12 +362,8 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 11. Calculate quantity
-    // For v1: use tiny fixed size for safety (0.0001 BTC or 0.001 ETH)
-    const qty = symbol === 'BTC-USD' ? 0.0001 : 0.001;
-    
-    // For sells, can only sell what we have
-    const finalQty = decision === 'sell' ? Math.min(qty, positionQty) : qty;
+    // 11. Use pre-calculated quantity
+    const finalQty = plannedQty;
     
     if (finalQty <= 0) {
       console.log(`[trade-cycle] Decision: ${decision.toUpperCase()} but qty=0, skipping`);
@@ -352,14 +383,15 @@ Deno.serve(async (req) => {
     console.log(`[trade-cycle] Decision: ${decision.toUpperCase()} ${finalQty} ${symbol} | conf=${confidence.toFixed(2)} | reasons=${reasons.join(',')}`);
 
     // 12. Submit to trade-execute (which handles all gates)
+    // Use service role key for internal function-to-function calls
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-    const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
     
     const executeResponse = await fetch(`${supabaseUrl}/functions/v1/trade-execute`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${anonKey}`,
+        'Authorization': `Bearer ${serviceKey}`,
       },
       body: JSON.stringify({
         symbol,

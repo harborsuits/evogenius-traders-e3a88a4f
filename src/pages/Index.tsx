@@ -7,6 +7,7 @@ import { TradeLog } from '@/components/dashboard/TradeLog';
 import { GenerationHistory } from '@/components/dashboard/GenerationHistory';
 import { ControlPanel } from '@/components/dashboard/ControlPanel';
 import { ConfigViewer } from '@/components/dashboard/ConfigViewer';
+import { ControlEventsLog } from '@/components/dashboard/ControlEventsLog';
 import { 
   useSystemState,
   useAgents,
@@ -167,6 +168,10 @@ const Index = () => {
                 onPause={() => console.log('Pause')}
                 onStop={() => console.log('Stop')}
               />
+            </div>
+
+            <div className="animate-fade-in" style={{ animationDelay: '250ms' }}>
+              <ControlEventsLog />
             </div>
             
             <div className="animate-fade-in" style={{ animationDelay: '300ms' }}>

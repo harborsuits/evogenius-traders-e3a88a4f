@@ -1,6 +1,8 @@
 import React, { createContext, useContext, ReactNode } from 'react';
 import { useTradeMode, setTradeMode } from '@/hooks/usePaperTrading';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, useQuery } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import { isArmedNow } from '@/hooks/useArmLive';
 
 export type TradeMode = 'paper' | 'live';
 
@@ -9,7 +11,7 @@ interface TradeModeContextType {
   isLoading: boolean;
   isPaper: boolean;
   isLive: boolean;
-  isLiveArmed: boolean; // Future: will be true only when live is armed
+  isLiveArmed: boolean;
   setMode: (mode: TradeMode) => Promise<void>;
   getTable: (baseTable: 'orders' | 'positions' | 'accounts' | 'fills') => string;
 }
@@ -25,8 +27,26 @@ const PAPER_TABLE_MAP: Record<string, string> = {
 };
 
 export function TradeModeProvider({ children }: { children: ReactNode }) {
-  const { data: mode = 'paper', isLoading } = useTradeMode();
+  const { data: mode = 'paper', isLoading: modeLoading } = useTradeMode();
   const queryClient = useQueryClient();
+
+  // Check if live is armed
+  const { data: systemState, isLoading: stateLoading } = useQuery({
+    queryKey: ['system-state-armed'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('system_state')
+        .select('live_armed_until')
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    refetchInterval: 1000, // Check every second when armed
+  });
+
+  const isLiveArmed = isArmedNow((systemState as any)?.live_armed_until ?? null);
+  const isLoading = modeLoading || stateLoading;
 
   const handleSetMode = async (newMode: TradeMode) => {
     await setTradeMode(newMode);
@@ -47,7 +67,7 @@ export function TradeModeProvider({ children }: { children: ReactNode }) {
     isLoading,
     isPaper: mode === 'paper',
     isLive: mode === 'live',
-    isLiveArmed: false, // Always false until ARM flow is implemented
+    isLiveArmed,
     setMode: handleSetMode,
     getTable,
   };

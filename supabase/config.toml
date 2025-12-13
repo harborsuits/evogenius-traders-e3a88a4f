@@ -39,3 +39,6 @@ verify_jwt = false
 
 [functions.generation-start]
 verify_jwt = false
+
+[functions.arm-live]
+verify_jwt = false

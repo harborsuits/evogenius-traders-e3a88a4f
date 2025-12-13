@@ -63,13 +63,67 @@ function getDataAge(updatedAt: string): number {
   return Math.floor((Date.now() - new Date(updatedAt).getTime()) / 1000);
 }
 
-// Test mode thresholds - looser to trigger trades for pipeline validation
-const TEST_MODE_THRESHOLDS = {
-  trend_threshold: 0.015,      // Was 0.02 - more "trending" hits
-  pullback_pct: 1.0,           // Was 3 - smaller pullback still qualifies
-  rsi_threshold: 1.5,          // Was 5 - easier oversold/overbought
-  vol_contraction: 1.15,       // Was 0.8 - breakout triggers in normal conditions
+// ===========================================================================
+// BASELINE CRYPTO TRADING KNOWLEDGE (SEEDED PRIORS)
+// ===========================================================================
+// These are evidence-based starting thresholds from crypto market analysis.
+// They're NOT "winners", just reasonable priors to avoid garbage exploration.
+// Evolution can still mutate and discover better values over time.
+// ===========================================================================
+
+// BASELINE THRESHOLDS - sensible crypto defaults for REAL trading
+// These trigger on actual market conditions (not constantly, but reasonably)
+const BASELINE_THRESHOLDS = {
+  // Trend Pullback: EMA slope indicates trend, small retracement is entry
+  trend_threshold: 0.015,      // ~1.5% EMA slope = meaningful trend (not noise)
+  pullback_pct: 2.0,           // 2% pullback in trending market = reasonable entry
+  
+  // Mean Reversion: Oversold/overbought based on 24h change
+  rsi_threshold: 3.0,          // 3% move in 24h = starting to extend
+  
+  // Breakout: Low volatility compression before expansion
+  vol_contraction: 0.9,        // ATR ratio < 0.9 = volatility compression
+  vol_expansion_exit: 1.4,     // ATR ratio > 1.4 = exit on volatility spike
+  
+  // Confidence modifiers
+  min_confidence: 0.5,
+  max_confidence: 0.85,
 };
+
+// TEST MODE THRESHOLDS - looser to trigger trades for pipeline validation
+// IMPORTANT: Trades made with test_mode=true should NEVER train the system
+const TEST_MODE_THRESHOLDS = {
+  trend_threshold: 0.01,       // Much looser - almost any slope triggers
+  pullback_pct: 1.5,           // Small pullback still qualifies
+  rsi_threshold: 1.0,          // Very easy oversold/overbought
+  vol_contraction: 1.2,        // Breakout triggers in normal conditions
+  vol_expansion_exit: 1.3,
+  min_confidence: 0.5,
+  max_confidence: 0.85,
+};
+
+// ===========================================================================
+// LEARNABLE TRADE FILTER
+// ===========================================================================
+// Use this to exclude test mode trades from fitness/evolution/pattern_stats
+// ===========================================================================
+interface TradeTagsForLearning {
+  test_mode?: boolean;
+  entry_reason?: string[];
+}
+
+/**
+ * Returns true if this trade should be used for learning (fitness, evolution, pattern_stats).
+ * Excludes: test_mode trades, trades with 'test_mode' in entry_reason.
+ */
+function isLearnableTrade(tags: TradeTagsForLearning): boolean {
+  if (tags.test_mode === true) return false;
+  if (tags.entry_reason?.includes('test_mode')) return false;
+  return true;
+}
+
+// Export for use in fitness/evolution functions later
+// Usage: if (!isLearnableTrade(trade.tags)) continue;
 
 // Simple strategy decision logic
 function makeDecision(
@@ -87,18 +141,18 @@ function makeDecision(
   const strategy = agent.strategy_template;
   const genes = agent.genes;
   
-  // Use test mode thresholds if enabled, otherwise use agent genes
-  const thresholds = testMode ? {
-    trend_threshold: TEST_MODE_THRESHOLDS.trend_threshold,
-    pullback_pct: TEST_MODE_THRESHOLDS.pullback_pct,
-    rsi_threshold: TEST_MODE_THRESHOLDS.rsi_threshold,
-    vol_contraction: TEST_MODE_THRESHOLDS.vol_contraction,
-  } : {
-    trend_threshold: genes.trend_threshold ?? 0.02,
-    pullback_pct: genes.pullback_pct ?? 3,
-    rsi_threshold: genes.rsi_threshold ?? 5,
-    vol_contraction: genes.vol_contraction ?? 0.8,
-  };
+  // Threshold selection priority:
+  // 1. Test mode: use TEST_MODE_THRESHOLDS (loose, for pipeline validation)
+  // 2. Normal mode: use agent genes if set, else BASELINE_THRESHOLDS (sensible crypto defaults)
+  const thresholds = testMode 
+    ? TEST_MODE_THRESHOLDS 
+    : {
+        trend_threshold: genes.trend_threshold ?? BASELINE_THRESHOLDS.trend_threshold,
+        pullback_pct: genes.pullback_pct ?? BASELINE_THRESHOLDS.pullback_pct,
+        rsi_threshold: genes.rsi_threshold ?? BASELINE_THRESHOLDS.rsi_threshold,
+        vol_contraction: genes.vol_contraction ?? BASELINE_THRESHOLDS.vol_contraction,
+        vol_expansion_exit: genes.vol_expansion_exit ?? BASELINE_THRESHOLDS.vol_expansion_exit,
+      };
   
   // Trend Pullback Strategy
   if (strategy === 'trend_pullback') {
@@ -151,7 +205,7 @@ function makeDecision(
       return { decision: 'buy', reasons, confidence };
     }
     
-    if (hasPosition && market.atr_ratio > 1.5) {
+    if (hasPosition && market.atr_ratio > (thresholds.vol_expansion_exit ?? 1.4)) {
       reasons.push('volatility_spike', 'exit_breakout');
       exitReason = 'exit_breakout';
       confidence = 0.55;

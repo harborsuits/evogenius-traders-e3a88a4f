@@ -9,28 +9,19 @@ interface TradeModeContextType {
   isLoading: boolean;
   isPaper: boolean;
   isLive: boolean;
+  isLiveArmed: boolean; // Future: will be true only when live is armed
   setMode: (mode: TradeMode) => Promise<void>;
   getTable: (baseTable: 'orders' | 'positions' | 'accounts' | 'fills') => string;
 }
 
 const TradeModeContext = createContext<TradeModeContextType | undefined>(undefined);
 
-// Table mapping for paper vs live modes
-const TABLE_MAP: Record<TradeMode, Record<string, string>> = {
-  paper: {
-    orders: 'paper_orders',
-    positions: 'paper_positions',
-    accounts: 'paper_accounts',
-    fills: 'paper_fills',
-  },
-  live: {
-    // Live mode would use different tables or the same tables with different filters
-    // For now, live trading is blocked, so these map to paper tables
-    orders: 'paper_orders', // Would be 'live_orders' or 'trades' when implemented
-    positions: 'paper_positions',
-    accounts: 'paper_accounts',
-    fills: 'paper_fills',
-  },
+// Table mapping for paper mode only - live mode is blocked
+const PAPER_TABLE_MAP: Record<string, string> = {
+  orders: 'paper_orders',
+  positions: 'paper_positions',
+  accounts: 'paper_accounts',
+  fills: 'paper_fills',
 };
 
 export function TradeModeProvider({ children }: { children: ReactNode }) {
@@ -39,13 +30,16 @@ export function TradeModeProvider({ children }: { children: ReactNode }) {
 
   const handleSetMode = async (newMode: TradeMode) => {
     await setTradeMode(newMode);
-    // Invalidate all mode-dependent queries
-    queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'trade-mode' });
-    queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'system-state' });
+    // Invalidate ALL queries on mode switch to ensure clean UI flip
+    queryClient.invalidateQueries();
   };
 
   const getTable = (baseTable: 'orders' | 'positions' | 'accounts' | 'fills'): string => {
-    return TABLE_MAP[mode][baseTable];
+    if (mode === 'live') {
+      // Live mode is not armed - throw to prevent silently reading paper data
+      throw new Error('LIVE_NOT_ARMED: Live mode tables not configured. Use paper mode.');
+    }
+    return PAPER_TABLE_MAP[baseTable];
   };
 
   const value: TradeModeContextType = {
@@ -53,6 +47,7 @@ export function TradeModeProvider({ children }: { children: ReactNode }) {
     isLoading,
     isPaper: mode === 'paper',
     isLive: mode === 'live',
+    isLiveArmed: false, // Always false until ARM flow is implemented
     setMode: handleSetMode,
     getTable,
   };
@@ -74,6 +69,6 @@ export function useTradeModeContext() {
 
 // Convenience hook for components that just need to know the mode
 export function useCurrentTradeMode() {
-  const { mode, isPaper, isLive, isLoading } = useTradeModeContext();
-  return { mode, isPaper, isLive, isLoading };
+  const { mode, isPaper, isLive, isLiveArmed, isLoading } = useTradeModeContext();
+  return { mode, isPaper, isLive, isLiveArmed, isLoading };
 }

@@ -16,9 +16,14 @@ interface TradeDecision {
     qty?: number;
     decision_type?: 'trade' | 'hold' | 'blocked';
     block_reason?: string;
-    executed?: boolean;
+    market_age_seconds?: number;
+    trades_today?: number;
+    max_allowed?: number;
     fill_price?: number;
+    order_id?: string;
     agent_id?: string;
+    generation_id?: string;
+    mode?: 'paper' | 'live';
   } | null;
 }
 
@@ -119,6 +124,12 @@ export function DecisionLog() {
                     {decision.metadata?.block_reason && (
                       <div className="text-destructive text-[10px] mt-0.5 truncate">
                         {decision.metadata.block_reason}
+                        {decision.metadata.market_age_seconds && (
+                          <span className="ml-1 opacity-75">({decision.metadata.market_age_seconds}s old)</span>
+                        )}
+                        {decision.metadata.trades_today !== undefined && (
+                          <span className="ml-1 opacity-75">({decision.metadata.trades_today}/{decision.metadata.max_allowed})</span>
+                        )}
                       </div>
                     )}
                     

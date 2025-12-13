@@ -10,11 +10,11 @@ import { useState, useEffect } from 'react';
 
 type BlockReason = 
   | 'NONE' 
-  | 'SYSTEM_STOPPED' 
-  | 'SYSTEM_PAUSED' 
-  | 'STALE_MARKET_DATA' 
-  | 'KILL_SWITCH' 
-  | 'LIVE_MODE_BLOCKED';
+  | 'BLOCKED_SYSTEM_STOPPED' 
+  | 'BLOCKED_SYSTEM_PAUSED' 
+  | 'BLOCKED_STALE_MARKET_DATA' 
+  | 'BLOCKED_DEAD_MARKET_DATA' 
+  | 'BLOCKED_LIVE_NOT_ARMED';
 
 export function SafetyBanner() {
   const { data: systemState } = useSystemState();
@@ -54,12 +54,13 @@ export function SafetyBanner() {
   const isStale = secondsSinceUpdate !== null && secondsSinceUpdate > 60;
   const isDead = secondsSinceUpdate !== null && secondsSinceUpdate > 300;
 
-  // Determine block reason
+  // Determine block reason - matches edge function reason enums
   const getBlockReason = (): BlockReason => {
-    if (status === 'stopped') return 'SYSTEM_STOPPED';
-    if (status === 'paused') return 'SYSTEM_PAUSED';
-    if (isDead) return 'STALE_MARKET_DATA';
-    if (isLive) return 'LIVE_MODE_BLOCKED'; // Live mode requires explicit arm
+    if (status === 'stopped') return 'BLOCKED_SYSTEM_STOPPED';
+    if (status === 'paused') return 'BLOCKED_SYSTEM_PAUSED';
+    if (isDead) return 'BLOCKED_DEAD_MARKET_DATA';
+    if (isStale) return 'BLOCKED_STALE_MARKET_DATA';
+    if (isLive) return 'BLOCKED_LIVE_NOT_ARMED';
     return 'NONE';
   };
 
@@ -106,11 +107,11 @@ export function SafetyBanner() {
 
   const blockReasonLabels: Record<BlockReason, string> = {
     NONE: '',
-    SYSTEM_STOPPED: 'System is stopped',
-    SYSTEM_PAUSED: 'System is paused',
-    STALE_MARKET_DATA: 'Market data is stale (>5min)',
-    KILL_SWITCH: 'Kill switch activated',
-    LIVE_MODE_BLOCKED: 'Live mode requires explicit arm',
+    BLOCKED_SYSTEM_STOPPED: 'System is stopped',
+    BLOCKED_SYSTEM_PAUSED: 'System is paused',
+    BLOCKED_STALE_MARKET_DATA: 'Market data is stale (>60s)',
+    BLOCKED_DEAD_MARKET_DATA: 'Market data is dead (>5min)',
+    BLOCKED_LIVE_NOT_ARMED: 'Live mode requires explicit arm',
   };
 
   return (

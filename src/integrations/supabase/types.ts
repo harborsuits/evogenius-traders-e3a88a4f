@@ -82,6 +82,42 @@ export type Database = {
         }
         Relationships: []
       }
+      exchange_connections: {
+        Row: {
+          created_at: string
+          id: string
+          is_enabled: boolean
+          is_paper: boolean
+          label: string | null
+          last_auth_check: string | null
+          permissions: Json | null
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_enabled?: boolean
+          is_paper?: boolean
+          label?: string | null
+          last_auth_check?: string | null
+          permissions?: Json | null
+          provider?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_enabled?: boolean
+          is_paper?: boolean
+          label?: string | null
+          last_auth_check?: string | null
+          permissions?: Json | null
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       generations: {
         Row: {
           avg_fitness: number | null
@@ -166,6 +202,33 @@ export type Database = {
           symbol?: string
           updated_at?: string
           volume_24h?: number
+        }
+        Relationships: []
+      }
+      market_poll_runs: {
+        Row: {
+          duration_ms: number | null
+          error_message: string | null
+          id: string
+          ran_at: string
+          status: string
+          updated_count: number | null
+        }
+        Insert: {
+          duration_ms?: number | null
+          error_message?: string | null
+          id?: string
+          ran_at?: string
+          status: string
+          updated_count?: number | null
+        }
+        Update: {
+          duration_ms?: number | null
+          error_message?: string | null
+          id?: string
+          ran_at?: string
+          status?: string
+          updated_count?: number | null
         }
         Relationships: []
       }

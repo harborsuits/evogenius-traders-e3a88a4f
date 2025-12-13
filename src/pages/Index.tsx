@@ -8,6 +8,8 @@ import { GenerationHistory } from '@/components/dashboard/GenerationHistory';
 import { ControlPanel } from '@/components/dashboard/ControlPanel';
 import { ConfigViewer } from '@/components/dashboard/ConfigViewer';
 import { ControlEventsLog } from '@/components/dashboard/ControlEventsLog';
+import { PollingHealth } from '@/components/dashboard/PollingHealth';
+import { CoinbasePanel } from '@/components/dashboard/CoinbasePanel';
 import { 
   useSystemState,
   useAgents,
@@ -173,8 +175,16 @@ const Index = () => {
             <div className="animate-fade-in" style={{ animationDelay: '250ms' }}>
               <ControlEventsLog />
             </div>
-            
+
+            <div className="animate-fade-in" style={{ animationDelay: '275ms' }}>
+              <PollingHealth />
+            </div>
+
             <div className="animate-fade-in" style={{ animationDelay: '300ms' }}>
+              <CoinbasePanel />
+            </div>
+            
+            <div className="animate-fade-in" style={{ animationDelay: '350ms' }}>
               <ConfigViewer config={activeConfig} />
             </div>
           </div>

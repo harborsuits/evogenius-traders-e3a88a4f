@@ -32,7 +32,7 @@ async function fetchCoinbasePrice(symbol: string): Promise<{ price: number; volu
     
     return {
       price: parseFloat(data.price),
-      volume_24h: parseFloat(data.volume) * parseFloat(data.price), // Convert to USD volume
+      volume_24h: parseFloat(data.volume) * parseFloat(data.price),
     };
   } catch (error) {
     console.error(`[market-poll] Error fetching ${symbol}:`, error);
@@ -59,20 +59,40 @@ async function fetch24hChange(symbol: string, currentPrice: number): Promise<num
   }
 }
 
+async function logPollRun(
+  supabase: any,
+  status: 'success' | 'skipped' | 'error',
+  updatedCount: number,
+  durationMs: number,
+  errorMessage?: string
+) {
+  try {
+    await supabase.from('market_poll_runs').insert({
+      status,
+      updated_count: updatedCount,
+      duration_ms: durationMs,
+      error_message: errorMessage || null,
+    });
+  } catch (err) {
+    console.error('[market-poll] Failed to log run:', err);
+  }
+}
+
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const startTime = Date.now();
+  
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
   try {
     console.log('[market-poll] Starting market data poll...');
-    
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Check system status - skip polling if stopped
+    // Check system status
     const { data: systemState } = await supabase
       .from('system_state')
       .select('status')
@@ -81,6 +101,9 @@ serve(async (req) => {
 
     if (systemState?.status === 'stopped') {
       console.log('[market-poll] System is stopped, skipping poll');
+      const duration = Date.now() - startTime;
+      await logPollRun(supabase, 'skipped', 0, duration);
+      
       return new Response(
         JSON.stringify({ 
           success: true, 
@@ -100,7 +123,6 @@ serve(async (req) => {
       if (priceData) {
         const change_24h = await fetch24hChange(symbol, priceData.price);
         
-        // Upsert into market_data
         const { error } = await supabase
           .from('market_data')
           .upsert({
@@ -126,13 +148,18 @@ serve(async (req) => {
       }
     }
 
-    console.log(`[market-poll] Updated ${results.length} symbols`);
+    const duration = Date.now() - startTime;
+    await logPollRun(supabase, 'success', results.length, duration);
+    
+    console.log(`[market-poll] Updated ${results.length} symbols in ${duration}ms`);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
+        skipped: false,
         updated: results.length,
         data: results,
+        duration_ms: duration,
         timestamp: new Date().toISOString()
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -140,6 +167,9 @@ serve(async (req) => {
 
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    const duration = Date.now() - startTime;
+    await logPollRun(supabase, 'error', 0, duration, errorMessage);
+    
     console.error('[market-poll] Fatal error:', errorMessage);
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),

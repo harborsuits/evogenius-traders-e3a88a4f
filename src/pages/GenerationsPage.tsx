@@ -16,9 +16,15 @@ export default function GenerationsPage() {
     <div className="min-h-screen bg-background bg-grid">
       <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
         <div className="container px-4 py-4 flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => navigate('/')}><ArrowLeft className="h-4 w-4 mr-2" />Back</Button>
+          <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Orbit
+          </Button>
           <div className="flex-1" />
-          <h1 className="font-mono text-lg text-primary">Generations History</h1>
+          <div className="flex items-center gap-2">
+            <History className="h-5 w-5 text-primary" />
+            <h1 className="font-mono text-lg text-primary">Generations History</h1>
+          </div>
         </div>
       </header>
       <main className="container px-4 py-6">

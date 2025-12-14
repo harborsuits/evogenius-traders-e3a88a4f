@@ -31,6 +31,7 @@ export function DockZone({ zone }: DockZoneProps) {
 
   return (
     <div
+      data-dock-zone={zone}
       className={cn(
         'relative w-full border-border/30 transition-all duration-300 shrink-0 z-50 bg-background',
         zone === 'top' ? 'border-b' : 'border-t',

@@ -4,7 +4,7 @@ import { MarketTicker } from '@/components/dashboard/MarketTicker';
 import { MetricCard } from '@/components/dashboard/MetricCard';
 import { GenerationProgress } from '@/components/dashboard/GenerationProgress';
 import { GenerationHealth } from '@/components/dashboard/GenerationHealth';
-import { AgentGrid } from '@/components/dashboard/AgentGrid';
+import { TopAgentsLeaderboard } from '@/components/dashboard/TopAgentsLeaderboard';
 import { TradeLog } from '@/components/dashboard/TradeLog';
 import { GenerationHistory } from '@/components/dashboard/GenerationHistory';
 import { ControlPanel } from '@/components/dashboard/ControlPanel';
@@ -16,7 +16,6 @@ import { LiveLockedWorkspace } from '@/components/dashboard/LiveLockedWorkspace'
 import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
 import { 
   useSystemState,
-  useAgents,
   useTrades,
   useMarketData,
   useGenerationHistory,
@@ -44,7 +43,6 @@ const Index = () => {
 
   // Fetch all data from database
   const { data: systemState, isLoading: loadingState } = useSystemState();
-  const { data: agents = [], isLoading: loadingAgents } = useAgents(systemState?.current_generation_id ?? null);
   const { data: trades = [], isLoading: loadingTrades } = useTrades(systemState?.current_generation_id ?? null);
   const { data: marketData = [], isLoading: loadingMarket } = useMarketData();
   const { data: generationHistory = [] } = useGenerationHistory();
@@ -54,7 +52,7 @@ const Index = () => {
   const { data: genOrdersCount = 0 } = useGenOrdersCount(systemState?.current_generation_id ?? null);
   const { data: cohortCount = 0 } = useCohortCount(systemState?.current_generation_id ?? null);
 
-  const isLoading = loadingState || loadingAgents || loadingTrades || loadingMarket;
+  const isLoading = loadingState || loadingTrades || loadingMarket;
 
   // Extract current generation from system state
   const currentGeneration = systemState?.generations as Generation | null;
@@ -181,7 +179,7 @@ const Index = () => {
                 />
               )}
               <div className="bg-card border border-border rounded-lg p-6">
-                <AgentGrid agents={agents} />
+                <TopAgentsLeaderboard generationId={systemState?.current_generation_id ?? null} />
               </div>
             </div>
 

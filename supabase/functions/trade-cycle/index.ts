@@ -307,24 +307,33 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 3. Get market data for all symbols
+    // 3. Get market data for ALL symbols (dynamic universe)
+    // Only include fresh data (updated within last 5 minutes)
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    
     const { data: marketDataList, error: marketError } = await supabase
       .from('market_data')
       .select('*')
-      .in('symbol', ['BTC-USD', 'ETH-USD']);
+      .gte('updated_at', fiveMinutesAgo)
+      .order('volume_24h', { ascending: false });
 
     if (marketError || !marketDataList || marketDataList.length === 0) {
-      console.log('[trade-cycle] No market data available');
+      console.log('[trade-cycle] No fresh market data available');
       return new Response(
         JSON.stringify({ ok: true, skipped: true, reason: 'no_market_data' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+    
+    console.log(`[trade-cycle] ${marketDataList.length} symbols with fresh market data`);
 
     const marketBySymbol = new Map<string, MarketData>();
     for (const m of marketDataList) {
       marketBySymbol.set(m.symbol, m as MarketData);
     }
+    
+    // Get all available symbols for rotation
+    const availableSymbols = marketDataList.map(m => m.symbol);
 
     // 4. Get paper account for position checks
     const { data: paperAccount } = await supabase
@@ -356,9 +365,11 @@ Deno.serve(async (req) => {
     const agentIndex = Math.floor(Date.now() / 60000) % agents.length;
     const agent = agents[agentIndex] as Agent;
     
-    // 7. Pick symbol (alternate between BTC and ETH based on agent index)
-    const symbols = ['BTC-USD', 'ETH-USD'];
-    const symbol = symbols[agentIndex % 2];
+    // 7. Pick symbol using deterministic rotation (hash-based for reproducibility)
+    // Each agent evaluates a different symbol based on agent index and time
+    // This spreads opportunity scanning across the universe
+    const symbolIndex = (agentIndex + Math.floor(Date.now() / 300000)) % availableSymbols.length;
+    const symbol = availableSymbols[symbolIndex];
     const market = marketBySymbol.get(symbol);
 
     if (!market) {

@@ -71,20 +71,20 @@ function getDataAge(updatedAt: string): number {
 // Evolution can still mutate and discover better values over time.
 // ===========================================================================
 
-// BASELINE THRESHOLDS - LOOSENED FOR VALIDATION PHASE
-// These are slightly relaxed to generate trades in typical market conditions.
-// Once validation passes (30-50 trades, non-zero fitness), tighten back.
+// BASELINE THRESHOLDS - VALIDATION PHASE (AGGRESSIVE)
+// These are very loose to force trades for pipeline validation.
+// MUST tighten back after validation passes (30-50 trades).
 const BASELINE_THRESHOLDS = {
-  // Trend Pullback: Lowered slope threshold for more frequent triggers
-  trend_threshold: 0.008,      // ~0.8% EMA slope (was 0.015) - triggers on mild trends
-  pullback_pct: 3.0,           // 3% pullback tolerance (was 2.0) - more lenient
+  // Trend Pullback: Very low slope threshold
+  trend_threshold: 0.005,      // 0.5% EMA slope - almost any trend triggers
+  pullback_pct: 5.0,           // 5% pullback tolerance - very lenient
   
-  // Mean Reversion: Lowered change threshold for easier oversold/overbought
-  rsi_threshold: 1.5,          // 1.5% move in 24h (was 3.0) - more frequent signals
+  // Mean Reversion: Very low change threshold
+  rsi_threshold: 0.8,          // 0.8% move in 24h - triggers on small moves
   
-  // Breakout: Raised contraction threshold so more conditions qualify
-  vol_contraction: 1.1,        // ATR ratio < 1.1 (was 0.9) - triggers in normal volatility
-  vol_expansion_exit: 1.3,     // ATR ratio > 1.3 (was 1.4) - earlier exit
+  // Breakout: High contraction threshold so most conditions qualify
+  vol_contraction: 1.3,        // ATR ratio < 1.3 - triggers in normal/high volatility
+  vol_expansion_exit: 1.2,     // Earlier exit
   
   // Confidence modifiers
   min_confidence: 0.5,

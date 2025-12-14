@@ -71,19 +71,20 @@ function getDataAge(updatedAt: string): number {
 // Evolution can still mutate and discover better values over time.
 // ===========================================================================
 
-// BASELINE THRESHOLDS - sensible crypto defaults for REAL trading
-// These trigger on actual market conditions (not constantly, but reasonably)
+// BASELINE THRESHOLDS - LOOSENED FOR VALIDATION PHASE
+// These are slightly relaxed to generate trades in typical market conditions.
+// Once validation passes (30-50 trades, non-zero fitness), tighten back.
 const BASELINE_THRESHOLDS = {
-  // Trend Pullback: EMA slope indicates trend, small retracement is entry
-  trend_threshold: 0.015,      // ~1.5% EMA slope = meaningful trend (not noise)
-  pullback_pct: 2.0,           // 2% pullback in trending market = reasonable entry
+  // Trend Pullback: Lowered slope threshold for more frequent triggers
+  trend_threshold: 0.008,      // ~0.8% EMA slope (was 0.015) - triggers on mild trends
+  pullback_pct: 3.0,           // 3% pullback tolerance (was 2.0) - more lenient
   
-  // Mean Reversion: Oversold/overbought based on 24h change
-  rsi_threshold: 3.0,          // 3% move in 24h = starting to extend
+  // Mean Reversion: Lowered change threshold for easier oversold/overbought
+  rsi_threshold: 1.5,          // 1.5% move in 24h (was 3.0) - more frequent signals
   
-  // Breakout: Low volatility compression before expansion
-  vol_contraction: 0.9,        // ATR ratio < 0.9 = volatility compression
-  vol_expansion_exit: 1.4,     // ATR ratio > 1.4 = exit on volatility spike
+  // Breakout: Raised contraction threshold so more conditions qualify
+  vol_contraction: 1.1,        // ATR ratio < 1.1 (was 0.9) - triggers in normal volatility
+  vol_expansion_exit: 1.3,     // ATR ratio > 1.3 (was 1.4) - earlier exit
   
   // Confidence modifiers
   min_confidence: 0.5,

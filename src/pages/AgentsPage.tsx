@@ -1,14 +1,15 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useSystemState } from '@/hooks/useEvoTraderData';
+import { usePaperAccount } from '@/hooks/usePaperTrading';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
-import { ArrowLeft, Trophy, Filter } from 'lucide-react';
+import { ArrowLeft, Trophy, Filter, ChevronUp, ChevronDown } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -17,12 +18,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+type SortDirection = 'asc' | 'desc' | null;
+
 export default function AgentsPage() {
   const navigate = useNavigate();
   const { data: systemState } = useSystemState();
+  const { data: account } = usePaperAccount();
   const [strategyFilter, setStrategyFilter] = useState<string>('all');
   const [minTradesFilter, setMinTradesFilter] = useState<string>('');
+  const [minWinRateFilter, setMinWinRateFilter] = useState<string>('');
+  const [winRateSort, setWinRateSort] = useState<SortDirection>(null);
   
+  // Fetch agents with performance
   const { data: agents = [], isLoading } = useQuery({
     queryKey: ['all-agents', systemState?.current_generation_id],
     queryFn: async () => {
@@ -64,13 +71,132 @@ export default function AgentsPage() {
     enabled: !!systemState?.current_generation_id,
   });
 
-  // Filter agents
-  const minTrades = parseInt(minTradesFilter) || 0;
-  const filteredAgents = agents.filter((agent: any) => {
-    if (strategyFilter !== 'all' && agent.strategy_template !== strategyFilter) return false;
-    if (minTrades > 0 && (agent.performance?.total_trades ?? 0) < minTrades) return false;
-    return true;
+  // Fetch trade outcomes per agent to compute win rate
+  const { data: agentTradeStats = new Map() } = useQuery({
+    queryKey: ['agent-trade-stats', account?.id, systemState?.current_generation_id],
+    queryFn: async () => {
+      if (!account?.id || !systemState?.current_generation_id) return new Map();
+      
+      // Get all filled orders for current generation
+      const { data: orders } = await supabase
+        .from('paper_orders')
+        .select('id, agent_id, side, symbol, filled_price, filled_qty')
+        .eq('account_id', account.id)
+        .eq('generation_id', systemState.current_generation_id)
+        .eq('status', 'filled');
+      
+      if (!orders?.length) return new Map();
+
+      // Get fills for PnL calculation
+      const { data: fills } = await supabase
+        .from('paper_fills')
+        .select('order_id, price, qty, side, fee')
+        .in('order_id', orders.map(o => o.id));
+
+      // Group by agent and compute wins/losses based on realized PnL
+      // For simplicity: track per-agent position changes and infer PnL per closed position
+      const agentStats = new Map<string, { wins: number; losses: number }>();
+      
+      // Initialize stats for all agents
+      orders.forEach(order => {
+        if (order.agent_id && !agentStats.has(order.agent_id)) {
+          agentStats.set(order.agent_id, { wins: 0, losses: 0 });
+        }
+      });
+
+      // Group fills by agent and symbol to compute realized PnL
+      const agentSymbolFills = new Map<string, { buys: number[]; sells: number[]; buyQtys: number[]; sellQtys: number[] }>();
+      
+      fills?.forEach(fill => {
+        const order = orders.find(o => o.id === fill.order_id);
+        if (!order?.agent_id) return;
+        
+        const key = `${order.agent_id}:${order.symbol}`;
+        if (!agentSymbolFills.has(key)) {
+          agentSymbolFills.set(key, { buys: [], sells: [], buyQtys: [], sellQtys: [] });
+        }
+        
+        const data = agentSymbolFills.get(key)!;
+        if (fill.side === 'buy') {
+          data.buys.push(fill.price);
+          data.buyQtys.push(fill.qty);
+        } else {
+          data.sells.push(fill.price);
+          data.sellQtys.push(fill.qty);
+        }
+      });
+
+      // For each agent-symbol pair, estimate win/loss from avg buy vs avg sell
+      agentSymbolFills.forEach((data, key) => {
+        const agentId = key.split(':')[0];
+        const stats = agentStats.get(agentId);
+        if (!stats) return;
+
+        const totalBuyQty = data.buyQtys.reduce((a, b) => a + b, 0);
+        const totalSellQty = data.sellQtys.reduce((a, b) => a + b, 0);
+        
+        if (totalBuyQty > 0 && totalSellQty > 0) {
+          // Has both buys and sells - compute rough PnL
+          const avgBuy = data.buys.reduce((sum, p, i) => sum + p * data.buyQtys[i], 0) / totalBuyQty;
+          const avgSell = data.sells.reduce((sum, p, i) => sum + p * data.sellQtys[i], 0) / totalSellQty;
+          const closedQty = Math.min(totalBuyQty, totalSellQty);
+          const pnl = (avgSell - avgBuy) * closedQty;
+          
+          if (pnl > 0) {
+            stats.wins++;
+          } else if (pnl < 0) {
+            stats.losses++;
+          }
+          // breakeven (pnl === 0) is ignored
+        }
+      });
+
+      return agentStats;
+    },
+    enabled: !!account?.id && !!systemState?.current_generation_id,
   });
+
+  // Compute win rate for an agent
+  const getWinRate = (agentId: string): number | null => {
+    const stats = agentTradeStats.get(agentId);
+    if (!stats) return null;
+    const total = stats.wins + stats.losses;
+    if (total === 0) return null;
+    return (stats.wins / total) * 100;
+  };
+
+  // Filter and sort agents
+  const minTrades = parseInt(minTradesFilter) || 0;
+  const minWinRate = parseFloat(minWinRateFilter) || 0;
+  
+  const filteredAgents = useMemo(() => {
+    let result = agents.filter((agent: any) => {
+      if (strategyFilter !== 'all' && agent.strategy_template !== strategyFilter) return false;
+      if (minTrades > 0 && (agent.performance?.total_trades ?? 0) < minTrades) return false;
+      if (minWinRate > 0) {
+        const wr = getWinRate(agent.id);
+        if (wr === null || wr < minWinRate) return false;
+      }
+      return true;
+    });
+
+    // Apply win rate sort if active
+    if (winRateSort) {
+      result = [...result].sort((a, b) => {
+        const aWR = getWinRate(a.id) ?? -1;
+        const bWR = getWinRate(b.id) ?? -1;
+        return winRateSort === 'asc' ? aWR - bWR : bWR - aWR;
+      });
+    }
+
+    return result;
+  }, [agents, strategyFilter, minTrades, minWinRate, winRateSort, agentTradeStats]);
+
+  const toggleWinRateSort = () => {
+    if (winRateSort === null) setWinRateSort('desc');
+    else if (winRateSort === 'desc') setWinRateSort('asc');
+    else setWinRateSort(null);
+  };
 
   const getStrategyBadge = (template: string) => {
     const colors: Record<string, string> = {
@@ -127,7 +253,7 @@ export default function AgentsPage() {
             <CardContent className="pt-4">
               <div className="text-xs text-muted-foreground mb-1">Elite</div>
               <div className="font-mono text-2xl text-yellow-500">
-                {agents.filter(a => a.is_elite).length}
+                {agents.filter((a: any) => a.is_elite).length}
               </div>
             </CardContent>
           </Card>
@@ -135,7 +261,7 @@ export default function AgentsPage() {
             <CardContent className="pt-4">
               <div className="text-xs text-muted-foreground mb-1">With Trades</div>
               <div className="font-mono text-2xl">
-                {agents.filter(a => (a.performance?.total_trades ?? 0) > 0).length}
+                {agents.filter((a: any) => (a.performance?.total_trades ?? 0) > 0).length}
               </div>
             </CardContent>
           </Card>
@@ -144,7 +270,7 @@ export default function AgentsPage() {
               <div className="text-xs text-muted-foreground mb-1">Avg Fitness</div>
               <div className="font-mono text-2xl">
                 {agents.length > 0 
-                  ? (agents.reduce((sum, a) => sum + (a.performance?.fitness_score ?? 0), 0) / agents.length * 100).toFixed(1)
+                  ? (agents.reduce((sum: number, a: any) => sum + (a.performance?.fitness_score ?? 0), 0) / agents.length * 100).toFixed(1)
                   : 0}%
               </div>
             </CardContent>
@@ -160,7 +286,7 @@ export default function AgentsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex gap-4 flex-wrap">
+            <div className="flex gap-4 flex-wrap items-center">
               <Select value={strategyFilter} onValueChange={setStrategyFilter}>
                 <SelectTrigger className="w-40">
                   <SelectValue placeholder="Strategy" />
@@ -177,10 +303,22 @@ export default function AgentsPage() {
                 type="number"
                 value={minTradesFilter}
                 onChange={e => setMinTradesFilter(e.target.value)}
-                className="w-32"
+                className="w-28"
               />
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Min Win%</span>
+                <Input 
+                  placeholder="0-100"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={minWinRateFilter}
+                  onChange={e => setMinWinRateFilter(e.target.value)}
+                  className="w-20"
+                />
+              </div>
               <div className="flex-1" />
-              <span className="text-sm text-muted-foreground self-center">
+              <span className="text-sm text-muted-foreground">
                 {filteredAgents.length} / {agents.length} agents
               </span>
             </div>
@@ -205,6 +343,16 @@ export default function AgentsPage() {
                     <th className="text-left py-3 px-2">Strategy</th>
                     <th className="text-center py-3 px-2">Status</th>
                     <th className="text-right py-3 px-2">Trades</th>
+                    <th 
+                      className="text-right py-3 px-2 cursor-pointer hover:text-foreground select-none"
+                      onClick={toggleWinRateSort}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        Win Rate
+                        {winRateSort === 'desc' && <ChevronDown className="h-3 w-3" />}
+                        {winRateSort === 'asc' && <ChevronUp className="h-3 w-3" />}
+                      </span>
+                    </th>
                     <th className="text-right py-3 px-2">Net P&L</th>
                     <th className="text-right py-3 px-2">Fitness</th>
                     <th className="text-right py-3 px-2">Drawdown</th>
@@ -212,72 +360,84 @@ export default function AgentsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredAgents.map((agent: any, index) => (
-                    <tr key={agent.id} className="border-b border-border/50 hover:bg-muted/30">
-                      <td className="py-2 px-2 font-mono text-muted-foreground">
-                        #{index + 1}
-                      </td>
-                      <td className="py-2 px-2">
-                        <Link 
-                          to={`/agents/${agent.id}`}
-                          className="font-mono text-primary hover:underline"
-                        >
-                          {agent.id.slice(0, 8)}
-                        </Link>
-                      </td>
-                      <td className="py-2 px-2">
-                        {getStrategyBadge(agent.strategy_template)}
-                      </td>
-                      <td className="py-2 px-2 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          {agent.is_elite && <span className="text-yellow-500">★</span>}
-                          <Badge variant="outline" className="text-[10px]">
-                            {agent.status}
-                          </Badge>
-                        </div>
-                      </td>
-                      <td className="py-2 px-2 text-right font-mono">
-                        {agent.performance?.total_trades ?? 0}
-                      </td>
-                      <td className={`py-2 px-2 text-right font-mono ${
-                        (agent.performance?.net_pnl ?? 0) >= 0 ? 'text-success' : 'text-destructive'
-                      }`}>
-                        {(agent.performance?.net_pnl ?? 0) >= 0 ? '+' : ''}
-                        ${(agent.performance?.net_pnl ?? 0).toFixed(2)}
-                      </td>
-                      <td className="py-2 px-2 text-right">
-                        {agent.performance?.fitness_score != null ? (
-                          <Badge 
-                            variant={
-                              agent.performance.fitness_score > 0.3 ? 'default' : 
-                              agent.performance.fitness_score > 0 ? 'secondary' : 
-                              'destructive'
-                            }
+                  {filteredAgents.map((agent: any, index) => {
+                    const winRate = getWinRate(agent.id);
+                    return (
+                      <tr key={agent.id} className="border-b border-border/50 hover:bg-muted/30">
+                        <td className="py-2 px-2 font-mono text-muted-foreground">
+                          #{index + 1}
+                        </td>
+                        <td className="py-2 px-2">
+                          <Link 
+                            to={`/agents/${agent.id}`}
+                            className="font-mono text-primary hover:underline"
                           >
-                            {(agent.performance.fitness_score * 100).toFixed(0)}%
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="py-2 px-2 text-right font-mono text-destructive">
-                        {agent.performance?.max_drawdown 
-                          ? `${(agent.performance.max_drawdown * 100).toFixed(1)}%`
-                          : '—'}
-                      </td>
-                      <td className="py-2 px-2">
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          asChild
-                        >
-                          <Link to={`/agents/${agent.id}`}>
-                            View
+                            {agent.id.slice(0, 8)}
                           </Link>
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-2 px-2">
+                          {getStrategyBadge(agent.strategy_template)}
+                        </td>
+                        <td className="py-2 px-2 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            {agent.is_elite && <span className="text-yellow-500">★</span>}
+                            <Badge variant="outline" className="text-[10px]">
+                              {agent.status}
+                            </Badge>
+                          </div>
+                        </td>
+                        <td className="py-2 px-2 text-right font-mono">
+                          {agent.performance?.total_trades ?? 0}
+                        </td>
+                        <td className="py-2 px-2 text-right font-mono">
+                          {winRate !== null ? (
+                            <span className={winRate >= 50 ? 'text-success' : 'text-muted-foreground'}>
+                              {winRate.toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className={`py-2 px-2 text-right font-mono ${
+                          (agent.performance?.net_pnl ?? 0) >= 0 ? 'text-success' : 'text-destructive'
+                        }`}>
+                          {(agent.performance?.net_pnl ?? 0) >= 0 ? '+' : ''}
+                          ${(agent.performance?.net_pnl ?? 0).toFixed(2)}
+                        </td>
+                        <td className="py-2 px-2 text-right">
+                          {agent.performance?.fitness_score != null ? (
+                            <Badge 
+                              variant={
+                                agent.performance.fitness_score > 0.3 ? 'default' : 
+                                agent.performance.fitness_score > 0 ? 'secondary' : 
+                                'destructive'
+                              }
+                            >
+                              {(agent.performance.fitness_score * 100).toFixed(0)}%
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-2 text-right font-mono text-destructive">
+                          {agent.performance?.max_drawdown 
+                            ? `${(agent.performance.max_drawdown * 100).toFixed(1)}%`
+                            : '—'}
+                        </td>
+                        <td className="py-2 px-2">
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            asChild
+                          >
+                            <Link to={`/agents/${agent.id}`}>
+                              View
+                            </Link>
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </ScrollArea>

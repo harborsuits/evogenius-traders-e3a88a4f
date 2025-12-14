@@ -79,8 +79,8 @@ const BASELINE_THRESHOLDS = {
   trend_threshold: 0.005,      // 0.5% EMA slope - almost any trend triggers
   pullback_pct: 5.0,           // 5% pullback tolerance - very lenient
   
-  // Mean Reversion: Very low change threshold
-  rsi_threshold: 0.8,          // 0.8% move in 24h - triggers on small moves
+  // Mean Reversion: Loosened for validation
+  rsi_threshold: 0.6,          // 0.6% move in 24h - even smaller moves trigger
   
   // Breakout: High contraction threshold so most conditions qualify
   vol_contraction: 1.3,        // ATR ratio < 1.3 - triggers in normal/high volatility

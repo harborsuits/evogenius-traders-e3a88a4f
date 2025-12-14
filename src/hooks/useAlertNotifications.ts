@@ -2,30 +2,53 @@ import { useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
-/**
- * Realtime notifications for new performance_alerts rows.
- * - Toast always (when enabled)
- * - Optional Desktop Notifications (browser Notification API)
- * - Session dedupe so you don't get spam on reconnect
- */
-export function useAlertNotifications(options?: {
+type Severity = "info" | "warn" | "crit";
+
+type PerfAlertRow = {
+  id: string;
+  created_at: string;
+  scope: string;
+  scope_id: string;
+  severity: Severity | string;
+  type: string;
+  title: string;
+  message: string;
+  metadata?: any;
+  is_ack: boolean;
+  acked_at?: string | null;
+};
+
+export type AlertNotifyOptions = {
   enabled?: boolean;
-  toast?: boolean;
-  desktop?: boolean;
-  sound?: boolean;
-}) {
+  toast?: boolean;   // default true
+  desktop?: boolean; // default false
+  sound?: boolean;   // default false
+};
+
+export function useAlertNotifications(options?: AlertNotifyOptions) {
   const { toast } = useToast();
-  const opts = {
+
+  const optsRef = useRef<Required<AlertNotifyOptions>>({
     enabled: true,
     toast: true,
     desktop: false,
     sound: false,
-    ...(options ?? {}),
-  };
+  });
+
+  // Keep options in a ref so the realtime callback always sees latest settings
+  useEffect(() => {
+    const next: Required<AlertNotifyOptions> = {
+      enabled: options?.enabled ?? true,
+      toast: options?.toast ?? true,
+      desktop: options?.desktop ?? false,
+      sound: options?.sound ?? false,
+    };
+    optsRef.current = next;
+  }, [options?.enabled, options?.toast, options?.desktop, options?.sound]);
 
   const seenRef = useRef<Set<string>>(new Set());
 
-  // Load session dedupe (per tab)
+  // Load per-tab dedupe set
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem("seen_alert_ids");
@@ -43,7 +66,6 @@ export function useAlertNotifications(options?: {
   const markSeen = (id: string) => {
     seenRef.current.add(id);
     try {
-      // Cap stored ids to avoid unbounded growth
       const arr = Array.from(seenRef.current).slice(-250);
       sessionStorage.setItem("seen_alert_ids", JSON.stringify(arr));
     } catch {
@@ -52,10 +74,12 @@ export function useAlertNotifications(options?: {
   };
 
   const playSound = () => {
-    // super lightweight "beep" without external assets
     try {
-      const ctx =
-        new (window.AudioContext || (window as any).webkitAudioContext)();
+      const Ctx =
+        (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!Ctx) return;
+
+      const ctx = new Ctx();
       const o = ctx.createOscillator();
       const g = ctx.createGain();
       o.type = "sine";
@@ -66,7 +90,7 @@ export function useAlertNotifications(options?: {
       o.start();
       setTimeout(() => {
         o.stop();
-        ctx.close();
+        ctx.close?.();
       }, 120);
     } catch {
       // ignore
@@ -74,7 +98,7 @@ export function useAlertNotifications(options?: {
   };
 
   useEffect(() => {
-    if (!opts.enabled) return;
+    if (!optsRef.current.enabled) return;
 
     const channel = supabase
       .channel("perf-alerts-inserts")
@@ -82,33 +106,33 @@ export function useAlertNotifications(options?: {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "performance_alerts" },
         (payload) => {
-          const row = payload.new as any;
+          const row = payload.new as Partial<PerfAlertRow> | null;
           if (!row?.id) return;
 
-          // Only notify for un-acked alerts (new inserts should be false anyway)
+          // Don't notify acked alerts
           if (row.is_ack) return;
 
-          // Deduplicate
+          // Dedupe per tab/session
           if (seenRef.current.has(row.id)) return;
           markSeen(row.id);
 
-          const severity = String(row.severity || "info");
-          const title = String(row.title || "Performance Alert");
-          const message = String(row.message || "");
+          const severity = String(row.severity ?? "info") as Severity | string;
+          const title = String(row.title ?? "Performance Alert");
+          const message = String(row.message ?? "");
 
-          // Toast
+          const opts = optsRef.current;
+
           if (opts.toast) {
             toast({
-              title: `${severity.toUpperCase()}: ${title}`,
+              title: `${String(severity).toUpperCase()}: ${title}`,
               description: message,
               variant: severity === "crit" ? "destructive" : "default",
             });
           }
 
-          // Desktop Notification
           if (opts.desktop && "Notification" in window) {
             const show = () =>
-              new Notification(`${severity.toUpperCase()}: ${title}`, {
+              new Notification(`${String(severity).toUpperCase()}: ${title}`, {
                 body: message,
               });
 
@@ -121,7 +145,6 @@ export function useAlertNotifications(options?: {
             }
           }
 
-          // Sound
           if (opts.sound) playSound();
         }
       )
@@ -130,7 +153,7 @@ export function useAlertNotifications(options?: {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [opts.enabled, opts.toast, opts.desktop, opts.sound, toast]);
+  }, [toast]);
 
   return null;
 }

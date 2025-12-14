@@ -35,10 +35,10 @@ function OrbitalLayout() {
         </Button>
       </div>
       
-      {/* News Ticker Area - placeholder */}
-      <div className="h-8 border-t border-border/30 flex items-center px-4 bg-card/30">
-        <span className="text-[10px] font-mono text-muted-foreground animate-pulse">
-          📰 News ticker coming soon...
+      {/* News Ticker Area */}
+      <div className="h-6 border-t border-border/30 flex items-center px-3 bg-card/30">
+        <span className="text-[10px] font-mono text-muted-foreground">
+          📰 News ticker...
         </span>
       </div>
       

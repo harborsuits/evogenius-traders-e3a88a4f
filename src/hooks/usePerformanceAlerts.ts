@@ -110,6 +110,9 @@ export function usePerformanceAlerts() {
     if (systemState?.status !== 'running') return;
     if (!systemState?.current_generation_id) return;
     
+    // Fix C: Guard on mutation pending to prevent spam
+    if (insertAlertMutation.isPending) return;
+    
     // Throttle: only run once per 60 seconds
     const now = Date.now();
     if (now - lastRunRef.current < 60000) return;
@@ -155,7 +158,7 @@ export function usePerformanceAlerts() {
         scope: 'agent',
         check: (perf) => {
           if (perf.sharpe_ratio == null || perf.sharpe_ratio >= 0) return null;
-          if (perf.total_trades < 10) return null;
+          if ((perf.total_trades ?? 0) < 10) return null; // Fix D: Handle null/undefined
           return {
             triggered: true,
             severity: 'warn',
@@ -170,7 +173,8 @@ export function usePerformanceAlerts() {
         type: 'agent_no_trades',
         scope: 'agent',
         check: (perf) => {
-          if (perf.total_trades > 0) return null;
+          // Fix D: Use nullish coalescing and strict check
+          if ((perf.total_trades ?? 0) > 0) return null;
           if (generationFillsCount <= 10) return null;
           return {
             triggered: true,
@@ -203,7 +207,7 @@ export function usePerformanceAlerts() {
         });
       });
     });
-  }, [systemState, agentsWithPerf, generationFillsCount, existingAlerts]);
+  }, [systemState, agentsWithPerf, generationFillsCount, existingAlerts, insertAlertMutation.isPending]);
 
   return null;
 }

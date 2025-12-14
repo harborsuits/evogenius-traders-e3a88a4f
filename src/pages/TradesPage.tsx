@@ -17,8 +17,15 @@ import {
   DollarSign,
   Clock,
   X,
-  BarChart3
+  BarChart3,
+  Download
 } from 'lucide-react';
+import {
+  Tooltip as UITooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -31,7 +38,7 @@ import {
   Line,
   XAxis,
   YAxis,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   ResponsiveContainer,
   CartesianGrid,
 } from 'recharts';
@@ -237,6 +244,59 @@ export default function TradesPage() {
   const totalVolume = filteredFills.reduce((sum: number, f: any) => sum + (f.qty * f.price), 0);
   const totalFees = filteredFills.reduce((sum: number, f: any) => sum + f.fee, 0);
 
+  // CSV Export function
+  const exportToCSV = () => {
+    if (filteredFills.length === 0) return;
+
+    // CSV header
+    const headers = ['timestamp', 'side', 'symbol', 'qty', 'price', 'value', 'fee', 'order_id', 'agent_id', 'generation_id'];
+    
+    // Escape CSV values
+    const escapeCSV = (value: any): string => {
+      if (value === null || value === undefined) return '';
+      const str = String(value);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    // Build rows
+    const rows = filteredFills.map((fill: any) => [
+      new Date(fill.timestamp).toISOString(),
+      fill.side,
+      fill.symbol,
+      fill.qty,
+      fill.price,
+      (fill.qty * fill.price).toFixed(2),
+      fill.fee,
+      fill.order_id || '',
+      fill.order?.agent_id || '',
+      fill.order?.generation_id || '',
+    ].map(escapeCSV).join(','));
+
+    // Combine header and rows
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    
+    // Generate filename with date info
+    const now = new Date();
+    const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    const rangeLabel = activePreset !== 'all' ? `_${activePreset}` : '';
+    const filename = `trades_fills${rangeLabel}_${timestamp}.csv`;
+
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background bg-grid flex items-center justify-center">
@@ -389,11 +449,32 @@ export default function TradesPage() {
         
         {/* Fills Table with Chart */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="font-mono text-sm flex items-center gap-2">
               <Clock className="h-4 w-4 text-primary" />
               Execution History
             </CardTitle>
+            <TooltipProvider>
+              <UITooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={exportToCSV}
+                    disabled={filteredFills.length === 0}
+                    className="text-xs h-8"
+                  >
+                    <Download className="h-3 w-3 mr-1" />
+                    Export CSV
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {filteredFills.length === 0 
+                    ? 'No data to export' 
+                    : `Export ${filteredFills.length} fills to CSV`}
+                </TooltipContent>
+              </UITooltip>
+            </TooltipProvider>
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Timeline Chart */}
@@ -440,7 +521,7 @@ export default function TradesPage() {
                         axisLine={false}
                         tickFormatter={val => chartMetric === 'volume' ? `$${val}` : val}
                       />
-                      <Tooltip
+                      <RechartsTooltip
                         contentStyle={{
                           backgroundColor: 'hsl(var(--card))',
                           border: '1px solid hsl(var(--border))',

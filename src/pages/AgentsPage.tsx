@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
+import { Sparkline } from '@/components/ui/sparkline';
 import { ArrowLeft, Trophy, Filter, ChevronUp, ChevronDown } from 'lucide-react';
 import {
   Select,
@@ -154,6 +155,97 @@ export default function AgentsPage() {
       });
 
       return agentStats;
+    },
+    enabled: !!account?.id && !!systemState?.current_generation_id,
+  });
+
+  // Fetch PnL time series per agent for sparklines
+  const { data: agentPnLSeries = new Map() } = useQuery({
+    queryKey: ['agent-pnl-series', account?.id, systemState?.current_generation_id],
+    queryFn: async () => {
+      if (!account?.id || !systemState?.current_generation_id) return new Map();
+      
+      // Get all filled orders with timestamps for current generation
+      const { data: orders } = await supabase
+        .from('paper_orders')
+        .select('id, agent_id, symbol, side, created_at')
+        .eq('account_id', account.id)
+        .eq('generation_id', systemState.current_generation_id)
+        .eq('status', 'filled')
+        .order('created_at', { ascending: true });
+      
+      if (!orders?.length) return new Map();
+
+      // Get fills
+      const { data: fills } = await supabase
+        .from('paper_fills')
+        .select('order_id, price, qty, side, timestamp')
+        .in('order_id', orders.map(o => o.id))
+        .order('timestamp', { ascending: true });
+
+      if (!fills?.length) return new Map();
+
+      // Build cumulative PnL series per agent
+      // Track position and compute realized PnL on sells
+      const agentPositions = new Map<string, Map<string, { qty: number; costBasis: number }>>();
+      const agentPnLPoints = new Map<string, { timestamp: string; pnl: number }[]>();
+
+      fills.forEach(fill => {
+        const order = orders.find(o => o.id === fill.order_id);
+        if (!order?.agent_id) return;
+
+        const agentId = order.agent_id;
+        const symbol = order.symbol;
+
+        // Initialize agent tracking
+        if (!agentPositions.has(agentId)) {
+          agentPositions.set(agentId, new Map());
+          agentPnLPoints.set(agentId, []);
+        }
+
+        const positions = agentPositions.get(agentId)!;
+        const pnlPoints = agentPnLPoints.get(agentId)!;
+
+        if (!positions.has(symbol)) {
+          positions.set(symbol, { qty: 0, costBasis: 0 });
+        }
+
+        const pos = positions.get(symbol)!;
+        const prevCumulativePnL = pnlPoints.length > 0 ? pnlPoints[pnlPoints.length - 1].pnl : 0;
+
+        if (fill.side === 'buy') {
+          // Add to position
+          const newQty = pos.qty + fill.qty;
+          const newCost = pos.costBasis + (fill.price * fill.qty);
+          pos.qty = newQty;
+          pos.costBasis = newCost;
+          // No realized PnL on buy, but record point
+          pnlPoints.push({ timestamp: fill.timestamp, pnl: prevCumulativePnL });
+        } else {
+          // Sell - realize PnL
+          const avgEntry = pos.qty > 0 ? pos.costBasis / pos.qty : 0;
+          const realizedPnL = (fill.price - avgEntry) * fill.qty;
+          
+          // Update position
+          const soldQty = Math.min(fill.qty, pos.qty);
+          const costReduction = avgEntry * soldQty;
+          pos.qty -= soldQty;
+          pos.costBasis = Math.max(0, pos.costBasis - costReduction);
+          
+          // Record cumulative PnL
+          pnlPoints.push({ timestamp: fill.timestamp, pnl: prevCumulativePnL + realizedPnL });
+        }
+      });
+
+      // Convert to simple number arrays for sparklines
+      const result = new Map<string, number[]>();
+      agentPnLPoints.forEach((points, agentId) => {
+        if (points.length >= 2) {
+          result.set(agentId, points.map(p => p.pnl));
+        }
+      });
+
+      return result;
     },
     enabled: !!account?.id && !!systemState?.current_generation_id,
   });
@@ -381,6 +473,7 @@ export default function AgentsPage() {
                         {sortColumn === 'sharpe' && sortDirection === 'asc' && <ChevronUp className="h-3 w-3" />}
                       </span>
                     </th>
+                    <th className="text-center py-3 px-2">PnL Trend</th>
                     <th className="text-right py-3 px-2">Net P&L</th>
                     <th className="text-right py-3 px-2">Fitness</th>
                     <th className="text-right py-3 px-2">Drawdown</th>
@@ -434,6 +527,14 @@ export default function AgentsPage() {
                           ) : (
                             <span className="text-muted-foreground">—</span>
                           )}
+                        </td>
+                        <td className="py-2 px-2 text-center">
+                          <Sparkline 
+                            data={agentPnLSeries.get(agent.id) || []} 
+                            width={100} 
+                            height={24}
+                            period="Current Gen"
+                          />
                         </td>
                         <td className={`py-2 px-2 text-right font-mono ${
                           (agent.performance?.net_pnl ?? 0) >= 0 ? 'text-success' : 'text-destructive'

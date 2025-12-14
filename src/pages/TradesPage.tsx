@@ -16,7 +16,8 @@ import {
   TrendingDown,
   DollarSign,
   Clock,
-  X
+  X,
+  BarChart3
 } from 'lucide-react';
 import {
   Select,
@@ -25,8 +26,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from 'recharts';
 
 type DateRangePreset = '24h' | '7d' | '30d' | 'ytd' | 'all';
+type ChartMetric = 'count' | 'volume';
 
 function getPresetDates(preset: DateRangePreset): { start: Date | null; end: Date | null } {
   const now = new Date();
@@ -56,13 +67,61 @@ function parseDateInput(value: string, isEndDate: boolean = false): Date | null 
   if (!value) return null;
   const date = new Date(value);
   if (isNaN(date.getTime())) return null;
-  // For end date, set to end of day
   if (isEndDate) {
     date.setHours(23, 59, 59, 999);
   } else {
     date.setHours(0, 0, 0, 0);
   }
   return date;
+}
+
+// Determine bucket granularity based on date range
+function getBucketGranularity(startDate: Date | null, endDate: Date | null): 'hourly' | 'daily' | 'weekly' {
+  if (!startDate || !endDate) return 'daily'; // Default for "all time"
+  const diffMs = endDate.getTime() - startDate.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  
+  if (diffDays <= 1) return 'hourly';
+  if (diffDays <= 7) return 'daily';
+  return 'weekly';
+}
+
+// Get bucket key for a timestamp
+function getBucketKey(timestamp: Date, granularity: 'hourly' | 'daily' | 'weekly'): string {
+  const year = timestamp.getFullYear();
+  const month = String(timestamp.getMonth() + 1).padStart(2, '0');
+  const day = String(timestamp.getDate()).padStart(2, '0');
+  const hour = String(timestamp.getHours()).padStart(2, '0');
+  
+  switch (granularity) {
+    case 'hourly':
+      return `${year}-${month}-${day} ${hour}:00`;
+    case 'daily':
+      return `${year}-${month}-${day}`;
+    case 'weekly':
+      // Get week start (Sunday)
+      const weekStart = new Date(timestamp);
+      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+      return `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, '0')}-${String(weekStart.getDate()).padStart(2, '0')}`;
+    default:
+      return `${year}-${month}-${day}`;
+  }
+}
+
+// Format bucket label for display
+function formatBucketLabel(key: string, granularity: 'hourly' | 'daily' | 'weekly'): string {
+  if (granularity === 'hourly') {
+    // "2024-01-15 14:00" -> "14:00"
+    return key.split(' ')[1] || key;
+  }
+  if (granularity === 'weekly') {
+    // Show as "Jan 15"
+    const date = new Date(key);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  // Daily: "2024-01-15" -> "Jan 15"
+  const date = new Date(key);
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 export default function TradesPage() {
@@ -73,6 +132,7 @@ export default function TradesPage() {
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [activePreset, setActivePreset] = useState<DateRangePreset>('all');
+  const [chartMetric, setChartMetric] = useState<ChartMetric>('count');
   
   // Fetch fills with order info
   const { data: fills = [] } = useQuery({
@@ -104,7 +164,6 @@ export default function TradesPage() {
     enabled: !!account?.id,
   });
 
-  // Handle preset clicks
   const handlePreset = (preset: DateRangePreset) => {
     setActivePreset(preset);
     const { start, end } = getPresetDates(preset);
@@ -112,10 +171,9 @@ export default function TradesPage() {
     setEndDate(end);
   };
 
-  // Handle manual date input
   const handleStartDateChange = (value: string) => {
     setStartDate(parseDateInput(value, false));
-    setActivePreset('all'); // Clear preset when manually editing
+    setActivePreset('all');
   };
 
   const handleEndDateChange = (value: string) => {
@@ -123,7 +181,6 @@ export default function TradesPage() {
     setActivePreset('all');
   };
 
-  // Clear date filters
   const clearDateFilter = () => {
     setStartDate(null);
     setEndDate(null);
@@ -133,17 +190,45 @@ export default function TradesPage() {
   // Filter fills with date range
   const filteredFills = useMemo(() => {
     return fills.filter((fill: any) => {
-      // Symbol filter
       if (symbolFilter && !fill.symbol.toLowerCase().includes(symbolFilter.toLowerCase())) return false;
-      // Side filter
       if (sideFilter !== 'all' && fill.side !== sideFilter) return false;
-      // Date range filter
       const fillDate = new Date(fill.timestamp);
       if (startDate && fillDate < startDate) return false;
       if (endDate && fillDate > endDate) return false;
       return true;
     });
   }, [fills, symbolFilter, sideFilter, startDate, endDate]);
+
+  // Build chart data from filtered fills
+  const chartData = useMemo(() => {
+    if (filteredFills.length === 0) return [];
+    
+    const granularity = getBucketGranularity(startDate, endDate);
+    const buckets = new Map<string, { count: number; volume: number }>();
+    
+    // Aggregate fills into buckets
+    filteredFills.forEach((fill: any) => {
+      const timestamp = new Date(fill.timestamp);
+      const key = getBucketKey(timestamp, granularity);
+      
+      if (!buckets.has(key)) {
+        buckets.set(key, { count: 0, volume: 0 });
+      }
+      
+      const bucket = buckets.get(key)!;
+      bucket.count += 1;
+      bucket.volume += fill.qty * fill.price;
+    });
+    
+    // Sort by key (date string) and format for chart
+    return Array.from(buckets.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, data]) => ({
+        label: formatBucketLabel(key, granularity),
+        count: data.count,
+        volume: Math.round(data.volume),
+      }));
+  }, [filteredFills, startDate, endDate]);
 
   // Compute summary stats from filtered data
   const totalFills = filteredFills.length;
@@ -162,7 +247,6 @@ export default function TradesPage() {
 
   return (
     <div className="min-h-screen bg-background bg-grid">
-      {/* Title bar matching design language */}
       <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
         <div className="container px-4 py-4 flex items-center gap-4">
           <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
@@ -178,7 +262,7 @@ export default function TradesPage() {
       </header>
       
       <main className="container px-4 py-6 space-y-6">
-        {/* Key metrics - matching tile summary for visual continuity */}
+        {/* Key metrics */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card variant="stat">
             <CardContent className="pt-4">
@@ -230,7 +314,6 @@ export default function TradesPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Row 1: Symbol + Side */}
             <div className="flex gap-4 flex-wrap items-center">
               <Input 
                 placeholder="Search symbol..."
@@ -250,7 +333,6 @@ export default function TradesPage() {
               </Select>
             </div>
             
-            {/* Row 2: Date Range */}
             <div className="flex gap-4 flex-wrap items-center">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">Start</span>
@@ -271,7 +353,6 @@ export default function TradesPage() {
                 />
               </div>
               
-              {/* Quick presets */}
               <div className="flex gap-1">
                 {(['24h', '7d', '30d', 'ytd', 'all'] as DateRangePreset[]).map(preset => (
                   <Button
@@ -306,7 +387,7 @@ export default function TradesPage() {
           </CardContent>
         </Card>
         
-        {/* Fills Table */}
+        {/* Fills Table with Chart */}
         <Card>
           <CardHeader>
             <CardTitle className="font-mono text-sm flex items-center gap-2">
@@ -314,8 +395,83 @@ export default function TradesPage() {
               Execution History
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-[500px]">
+          <CardContent className="space-y-4">
+            {/* Timeline Chart */}
+            <div className="border border-border rounded-lg p-4 bg-muted/20">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <BarChart3 className="h-4 w-4" />
+                  <span>Activity Timeline</span>
+                </div>
+                <div className="flex gap-1">
+                  <Button
+                    variant={chartMetric === 'count' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setChartMetric('count')}
+                    className="text-xs px-2 h-6"
+                  >
+                    Fills
+                  </Button>
+                  <Button
+                    variant={chartMetric === 'volume' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setChartMetric('volume')}
+                    className="text-xs px-2 h-6"
+                  >
+                    Volume
+                  </Button>
+                </div>
+              </div>
+              
+              {chartData.length > 0 ? (
+                <div className="h-[180px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} />
+                      <XAxis 
+                        dataKey="label" 
+                        tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <YAxis 
+                        tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={val => chartMetric === 'volume' ? `$${val}` : val}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: 'hsl(var(--card))',
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                        }}
+                        formatter={(value: number) => [
+                          chartMetric === 'volume' ? `$${value.toLocaleString()}` : value,
+                          chartMetric === 'volume' ? 'Volume' : 'Fills'
+                        ]}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey={chartMetric}
+                        stroke="hsl(var(--primary))"
+                        strokeWidth={2}
+                        dot={{ fill: 'hsl(var(--primary))', strokeWidth: 0, r: 3 }}
+                        activeDot={{ r: 5, fill: 'hsl(var(--primary))' }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-[180px] flex items-center justify-center text-muted-foreground text-sm">
+                  No data in range
+                </div>
+              )}
+            </div>
+
+            {/* Table */}
+            <ScrollArea className="h-[400px]">
               <table className="w-full text-sm">
                 <thead className="text-xs text-muted-foreground border-b border-border sticky top-0 bg-card">
                   <tr>

@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 
 type SortDirection = 'asc' | 'desc' | null;
+type SortColumn = 'winRate' | 'sharpe' | null;
 
 export default function AgentsPage() {
   const navigate = useNavigate();
@@ -27,7 +28,8 @@ export default function AgentsPage() {
   const [strategyFilter, setStrategyFilter] = useState<string>('all');
   const [minTradesFilter, setMinTradesFilter] = useState<string>('');
   const [minWinRateFilter, setMinWinRateFilter] = useState<string>('');
-  const [winRateSort, setWinRateSort] = useState<SortDirection>(null);
+  const [sortColumn, setSortColumn] = useState<SortColumn>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>(null);
   
   // Fetch agents with performance
   const { data: agents = [], isLoading } = useQuery({
@@ -180,22 +182,38 @@ export default function AgentsPage() {
       return true;
     });
 
-    // Apply win rate sort if active
-    if (winRateSort) {
+    // Apply column sort if active
+    if (sortColumn && sortDirection) {
       result = [...result].sort((a, b) => {
-        const aWR = getWinRate(a.id) ?? -1;
-        const bWR = getWinRate(b.id) ?? -1;
-        return winRateSort === 'asc' ? aWR - bWR : bWR - aWR;
+        let aVal: number, bVal: number;
+        
+        if (sortColumn === 'winRate') {
+          aVal = getWinRate(a.id) ?? -1;
+          bVal = getWinRate(b.id) ?? -1;
+        } else if (sortColumn === 'sharpe') {
+          aVal = a.performance?.sharpe_ratio ?? -999;
+          bVal = b.performance?.sharpe_ratio ?? -999;
+        } else {
+          return 0;
+        }
+        
+        return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
       });
     }
 
     return result;
-  }, [agents, strategyFilter, minTrades, minWinRate, winRateSort, agentTradeStats]);
+  }, [agents, strategyFilter, minTrades, minWinRate, sortColumn, sortDirection, agentTradeStats]);
 
-  const toggleWinRateSort = () => {
-    if (winRateSort === null) setWinRateSort('desc');
-    else if (winRateSort === 'desc') setWinRateSort('asc');
-    else setWinRateSort(null);
+  const toggleSort = (column: SortColumn) => {
+    if (sortColumn !== column) {
+      setSortColumn(column);
+      setSortDirection('desc');
+    } else if (sortDirection === 'desc') {
+      setSortDirection('asc');
+    } else {
+      setSortColumn(null);
+      setSortDirection(null);
+    }
   };
 
   const getStrategyBadge = (template: string) => {
@@ -345,12 +363,22 @@ export default function AgentsPage() {
                     <th className="text-right py-3 px-2">Trades</th>
                     <th 
                       className="text-right py-3 px-2 cursor-pointer hover:text-foreground select-none"
-                      onClick={toggleWinRateSort}
+                      onClick={() => toggleSort('winRate')}
                     >
                       <span className="inline-flex items-center gap-1">
                         Win Rate
-                        {winRateSort === 'desc' && <ChevronDown className="h-3 w-3" />}
-                        {winRateSort === 'asc' && <ChevronUp className="h-3 w-3" />}
+                        {sortColumn === 'winRate' && sortDirection === 'desc' && <ChevronDown className="h-3 w-3" />}
+                        {sortColumn === 'winRate' && sortDirection === 'asc' && <ChevronUp className="h-3 w-3" />}
+                      </span>
+                    </th>
+                    <th 
+                      className="text-right py-3 px-2 cursor-pointer hover:text-foreground select-none"
+                      onClick={() => toggleSort('sharpe')}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        Sharpe
+                        {sortColumn === 'sharpe' && sortDirection === 'desc' && <ChevronDown className="h-3 w-3" />}
+                        {sortColumn === 'sharpe' && sortDirection === 'asc' && <ChevronUp className="h-3 w-3" />}
                       </span>
                     </th>
                     <th className="text-right py-3 px-2">Net P&L</th>
@@ -393,6 +421,15 @@ export default function AgentsPage() {
                           {winRate !== null ? (
                             <span className={winRate >= 50 ? 'text-success' : 'text-muted-foreground'}>
                               {winRate.toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-2 text-right font-mono">
+                          {agent.performance?.sharpe_ratio != null ? (
+                            <span className={agent.performance.sharpe_ratio >= 1 ? 'text-success' : agent.performance.sharpe_ratio >= 0 ? 'text-muted-foreground' : 'text-destructive'}>
+                              {agent.performance.sharpe_ratio.toFixed(2)}
                             </span>
                           ) : (
                             <span className="text-muted-foreground">—</span>

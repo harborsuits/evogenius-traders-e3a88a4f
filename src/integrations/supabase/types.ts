@@ -513,6 +513,48 @@ export type Database = {
           },
         ]
       }
+      performance_alerts: {
+        Row: {
+          acked_at: string | null
+          created_at: string
+          id: string
+          is_ack: boolean
+          message: string
+          metadata: Json | null
+          scope: string
+          scope_id: string
+          severity: string
+          title: string
+          type: string
+        }
+        Insert: {
+          acked_at?: string | null
+          created_at?: string
+          id?: string
+          is_ack?: boolean
+          message: string
+          metadata?: Json | null
+          scope: string
+          scope_id: string
+          severity: string
+          title: string
+          type: string
+        }
+        Update: {
+          acked_at?: string | null
+          created_at?: string
+          id?: string
+          is_ack?: boolean
+          message?: string
+          metadata?: Json | null
+          scope?: string
+          scope_id?: string
+          severity?: string
+          title?: string
+          type?: string
+        }
+        Relationships: []
+      }
       system_config: {
         Row: {
           config: Json

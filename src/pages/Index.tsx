@@ -6,13 +6,14 @@ import { LiveLockedWorkspace } from '@/components/dashboard/LiveLockedWorkspace'
 import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
 import { useSystemState, useRealtimeSubscriptions } from '@/hooks/useEvoTraderData';
 import { useBaselineInvariants } from '@/hooks/useBaselineInvariants';
+import { usePerformanceAlerts } from '@/hooks/usePerformanceAlerts';
 import { SystemStatus, Generation } from '@/types/evotrader';
 import { Loader2 } from 'lucide-react';
 
 // Cockpit tiles
 import { TradeCycleTile, GenHealthTile, PollingHealthTile, SystemControlTile, CapitalOverviewTile } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
-import { PortfolioCardContent, PositionsCardContent, OrdersCardContent, TradesCardContent, AgentsCardContent, GenerationsCardContent } from '@/components/orbital/tiles/DrillableCards';
+import { PortfolioCardContent, PositionsCardContent, OrdersCardContent, TradesCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
 
 // Static cards that don't depend on dynamic data
 const staticCards: OrbitalCard[] = [
@@ -28,12 +29,14 @@ const staticCards: OrbitalCard[] = [
   { id: 'positions', title: 'Positions', type: 'drillable', drilldownPath: '/positions', component: PositionsCardContent },
   { id: 'orders', title: 'Orders', type: 'drillable', drilldownPath: '/orders', component: OrdersCardContent },
   { id: 'generations', title: 'Generations', type: 'drillable', drilldownPath: '/generations', component: GenerationsCardContent },
+  { id: 'alerts', title: 'Alerts', type: 'drillable', drilldownPath: '/alerts', component: AlertsCardContent },
 ];
 
 const Index = () => {
   const { isLive, isLiveArmed } = useCurrentTradeMode();
   useRealtimeSubscriptions();
   useBaselineInvariants(); // Dev-only baseline guard
+  usePerformanceAlerts(); // Performance alert evaluations
   const { data: systemState, isLoading } = useSystemState();
   
   const currentGeneration = systemState?.generations as Generation | null;

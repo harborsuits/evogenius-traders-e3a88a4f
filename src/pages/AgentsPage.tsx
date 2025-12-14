@@ -9,8 +9,9 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Sparkline } from '@/components/ui/sparkline';
-import { ArrowLeft, Trophy, Filter, ChevronUp, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Trophy, Filter, ChevronUp, ChevronDown, Users, X } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -31,6 +32,27 @@ export default function AgentsPage() {
   const [minWinRateFilter, setMinWinRateFilter] = useState<string>('');
   const [sortColumn, setSortColumn] = useState<SortColumn>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
+  const [selectedAgents, setSelectedAgents] = useState<Set<string>>(new Set());
+
+  const toggleAgentSelection = (agentId: string) => {
+    setSelectedAgents(prev => {
+      const next = new Set(prev);
+      if (next.has(agentId)) {
+        next.delete(agentId);
+      } else if (next.size < 4) {
+        next.add(agentId);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedAgents(new Set());
+
+  const goToCompare = () => {
+    if (selectedAgents.size >= 1) {
+      navigate(`/agents/compare?ids=${Array.from(selectedAgents).join(',')}`);
+    }
+  };
   
   // Fetch agents with performance
   const { data: agents = [], isLoading } = useQuery({
@@ -435,6 +457,23 @@ export default function AgentsPage() {
           </CardContent>
         </Card>
 
+        {/* Selection Bar */}
+        {selectedAgents.size > 0 && (
+          <div className="sticky top-16 z-40 bg-primary/10 border border-primary/30 rounded-lg p-3 flex items-center gap-4 backdrop-blur">
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-primary" />
+              <span className="font-mono text-sm">{selectedAgents.size} selected</span>
+            </div>
+            <Button size="sm" onClick={goToCompare} disabled={selectedAgents.size < 1}>
+              Compare ({selectedAgents.size})
+            </Button>
+            <Button size="sm" variant="ghost" onClick={clearSelection}>
+              <X className="h-4 w-4 mr-1" />
+              Clear
+            </Button>
+          </div>
+        )}
+
         {/* Leaderboard */}
         <Card>
           <CardHeader>
@@ -448,6 +487,7 @@ export default function AgentsPage() {
               <table className="w-full text-sm">
                 <thead className="text-xs text-muted-foreground border-b border-border sticky top-0 bg-card">
                   <tr>
+                    <th className="text-center py-3 px-2 w-10"></th>
                     <th className="text-left py-3 px-2">Rank</th>
                     <th className="text-left py-3 px-2">Agent ID</th>
                     <th className="text-left py-3 px-2">Strategy</th>
@@ -484,7 +524,14 @@ export default function AgentsPage() {
                   {filteredAgents.map((agent: any, index) => {
                     const winRate = getWinRate(agent.id);
                     return (
-                      <tr key={agent.id} className="border-b border-border/50 hover:bg-muted/30">
+                      <tr key={agent.id} className={`border-b border-border/50 hover:bg-muted/30 ${selectedAgents.has(agent.id) ? 'bg-primary/10' : ''}`}>
+                        <td className="py-2 px-2 text-center">
+                          <Checkbox
+                            checked={selectedAgents.has(agent.id)}
+                            onCheckedChange={() => toggleAgentSelection(agent.id)}
+                            disabled={!selectedAgents.has(agent.id) && selectedAgents.size >= 4}
+                          />
+                        </td>
                         <td className="py-2 px-2 font-mono text-muted-foreground">
                           #{index + 1}
                         </td>

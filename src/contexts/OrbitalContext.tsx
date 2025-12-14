@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 
 export interface OrbitalCard {
   id: string;
@@ -13,6 +13,31 @@ export type DockZone = 'top' | 'bottom' | null;
 interface DockState {
   top: string[]; // max 3 card IDs
   bottom: string[]; // max 1 card ID
+}
+
+const DOCK_STATE_KEY = 'orbital-dock-state';
+
+function loadDockState(): DockState {
+  try {
+    const saved = localStorage.getItem(DOCK_STATE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && Array.isArray(parsed.top) && Array.isArray(parsed.bottom)) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load dock state from localStorage:', e);
+  }
+  return { top: [], bottom: [] };
+}
+
+function saveDockState(state: DockState): void {
+  try {
+    localStorage.setItem(DOCK_STATE_KEY, JSON.stringify(state));
+  } catch (e) {
+    console.warn('Failed to save dock state to localStorage:', e);
+  }
 }
 
 interface OrbitalContextValue {
@@ -54,10 +79,18 @@ const MAX_TOP_DOCK = 3;
 const MAX_BOTTOM_DOCK = 1;
 
 export function OrbitalProvider({ children, cards }: OrbitalProviderProps) {
-  const [orbitCards, setOrbitCards] = useState<string[]>(cards.map(c => c.id));
-  const [dockState, setDockState] = useState<DockState>({ top: [], bottom: [] });
+  const [dockState, setDockState] = useState<DockState>(loadDockState);
+  const [orbitCards, setOrbitCards] = useState<string[]>(() => {
+    const docked = [...dockState.top, ...dockState.bottom];
+    return cards.map(c => c.id).filter(id => !docked.includes(id));
+  });
   const [rotationAngle, setRotationAngle] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Persist dock state changes
+  useEffect(() => {
+    saveDockState(dockState);
+  }, [dockState]);
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
   const [hoverZone, setHoverZone] = useState<DockZone>(null);
 

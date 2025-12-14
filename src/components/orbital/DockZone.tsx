@@ -40,54 +40,40 @@ export function DockZone({ zone }: DockZoneProps) {
     >
 
       {isEmpty ? (
-        // Empty state with drop hint
+        // Empty state - minimal hint only when dragging
         <div 
           className={cn(
-            'h-full flex items-center justify-center gap-3',
-            'text-muted-foreground/40 transition-colors',
+            'h-full flex items-center justify-center',
+            'text-muted-foreground/30 transition-colors',
             isActive && 'text-primary/60'
           )}
           style={{ pointerEvents: 'none' }}
         >
-          {zone === 'top' ? (
-            <>
-              <ChevronUp className={cn('h-5 w-5', isActive && 'animate-bounce')} />
-              <span className="text-sm font-mono">
-                {isActive ? 'Release to dock' : 'Drag card here'}
-              </span>
-              <ChevronUp className={cn('h-5 w-5', isActive && 'animate-bounce')} />
-            </>
-          ) : (
-            <>
-              <ChevronDown className={cn('h-5 w-5', isActive && 'animate-bounce')} />
-              <span className="text-sm font-mono">
-                {isActive ? 'Release to dock' : 'Drag card here'}
-              </span>
-              <ChevronDown className={cn('h-5 w-5', isActive && 'animate-bounce')} />
-            </>
+          {isActive && (
+            zone === 'top' ? (
+              <ChevronUp className="h-4 w-4 animate-bounce" />
+            ) : (
+              <ChevronDown className="h-4 w-4 animate-bounce" />
+            )
           )}
         </div>
       ) : (
-        // Docked cards - flex layout with gap, cards get pointer events
+        // Docked cards - minimal padding
         <div 
-          className="h-full p-4 pt-8 flex gap-4 justify-center"
+          className="h-full px-2 py-1 flex gap-2 justify-center"
           style={{ pointerEvents: 'none' }}
         >
           {dockedCardIds.map((cardId) => {
             const card = getCardById(cardId);
             if (!card) return null;
             
-            // Calculate card width based on count
-            // 1 card: ~100% of container (max-width limited)
-            // 2 cards: ~50% each
-            // 3 cards: ~33% each
             const widthPercent = zone === 'bottom' 
               ? '100%' 
               : cardCount === 1 
-                ? '60%' 
+                ? '50%' 
                 : cardCount === 2 
                   ? '45%' 
-                  : '30%';
+                  : '32%';
             
             return (
               <div 
@@ -95,8 +81,8 @@ export function DockZone({ zone }: DockZoneProps) {
                 className="h-full"
                 style={{ 
                   width: widthPercent,
-                  maxWidth: cardCount === 1 ? 700 : 500,
-                  pointerEvents: 'auto', // Only docked cards get pointer events
+                  maxWidth: cardCount === 1 ? 600 : 450,
+                  pointerEvents: 'auto',
                 }}
               >
                 <OrbitalCardComponent 

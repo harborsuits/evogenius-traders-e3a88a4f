@@ -178,7 +178,8 @@ export function OrbitalCardComponent({
         ref={cardRef}
         variant="terminal"
         className={cn(
-          'relative transition-shadow duration-200 overflow-hidden h-full',
+          'relative transition-shadow duration-200 overflow-hidden flex flex-col',
+          isDocked ? 'h-full' : '',
           card.type === 'drillable' && !isDraggingRef.current && 'hover:border-primary/40 cursor-pointer',
           isBeingDragged && 'opacity-30'
         )}
@@ -189,14 +190,14 @@ export function OrbitalCardComponent({
       >
         <CardHeader 
           className={cn(
-            'pb-2 flex flex-row items-center justify-between select-none',
+            'py-2 px-3 flex flex-row items-center justify-between select-none shrink-0',
             'cursor-grab active:cursor-grabbing',
             'border-b border-border/30 bg-muted/20'
           )}
         >
           <div className="flex items-center gap-2">
-            <GripHorizontal className="h-4 w-4 text-muted-foreground/50" />
-            <CardTitle className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
+            <GripHorizontal className="h-3 w-3 text-muted-foreground/50" />
+            <CardTitle className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
               {card.title}
             </CardTitle>
           </div>
@@ -224,7 +225,10 @@ export function OrbitalCardComponent({
           </div>
         </CardHeader>
         <CardContent 
-          className="pt-3 overflow-auto h-[calc(100%-48px)]"
+          className={cn(
+            "pt-2 flex-1 min-h-0",
+            isDocked ? "overflow-hidden" : "overflow-auto"
+          )}
           onClick={handleContentClick}
         >
           <Component compact={!isDocked} />

@@ -8,8 +8,8 @@ interface DockZoneProps {
   zone: 'top' | 'bottom';
 }
 
-const DOCK_HEIGHT = 200;
-const DOCK_HEIGHT_EMPTY = 16;
+const DOCK_HEIGHT = 180;
+const DOCK_HEIGHT_EMPTY = 12;
 
 const DOCK_CONFIG = {
   top: { maxCards: 3 },

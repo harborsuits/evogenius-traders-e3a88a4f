@@ -60,15 +60,8 @@ const Index = () => {
     );
   }
 
-  return (
-    <div className="h-screen flex flex-col overflow-hidden">
-      <Header status={status} generationNumber={currentGeneration?.generation_number} />
-      <SafetyBanner />
-      <div className="flex-1 overflow-hidden">
-        <OrbitalCommandCenter cards={orbitalCards} />
-      </div>
-    </div>
-  );
+  // Full-screen orbital layout - no header wrapper
+  return <OrbitalCommandCenter cards={orbitalCards} />;
 };
 
 export default Index;

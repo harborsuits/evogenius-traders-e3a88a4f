@@ -3,35 +3,19 @@ import { useOrbital } from '@/contexts/OrbitalContext';
 import { OrbitalCardComponent } from './OrbitalCard';
 import { cn } from '@/lib/utils';
 
-const CARD_WIDTH = 340;
-const CARD_HEIGHT = 260;
+// Match prototype exactly
+const CARD_WIDTH = 350;
+const CARD_HEIGHT = 280;
+const ORBIT_RADIUS = 450;
+const PERSPECTIVE = 3000;
+const ORBIT_TRANSLATE_Z = -1200;
+const ORBIT_SCALE = 0.65;
 
 export function OrbitRing() {
   const { orbitCards, rotationAngle, rotateOrbit, getCardById, isDragging } = useOrbital();
   const containerRef = useRef<HTMLDivElement>(null);
   const isDraggingOrbit = useRef(false);
   const lastX = useRef(0);
-  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-
-  // Track container dimensions for responsive radius
-  useEffect(() => {
-    const updateDimensions = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        setDimensions({ width: rect.width, height: rect.height });
-      }
-    };
-    
-    updateDimensions();
-    window.addEventListener('resize', updateDimensions);
-    return () => window.removeEventListener('resize', updateDimensions);
-  }, []);
-
-  // Responsive radius: clamp(380, min(viewportW, viewportH) * 0.42, 640)
-  const radius = Math.max(380, Math.min(Math.min(dimensions.width, dimensions.height) * 0.42, 640));
-  
-  // Safe padding to prevent card clipping at top/bottom
-  const safePadding = CARD_HEIGHT / 2 + 40;
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     // Don't start orbit drag if clicking on a card
@@ -49,7 +33,8 @@ export function OrbitRing() {
     const deltaX = e.clientX - lastX.current;
     lastX.current = e.clientX;
     
-    rotateOrbit(deltaX * 0.35);
+    // Rotate based on horizontal movement (match prototype sensitivity)
+    rotateOrbit(-deltaX * 0.8);
   }, [rotateOrbit]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
@@ -60,7 +45,7 @@ export function OrbitRing() {
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
-    rotateOrbit(e.deltaY * 0.15);
+    rotateOrbit(-e.deltaY * 0.3);
   }, [rotateOrbit]);
 
   const cardCount = orbitCards.length;
@@ -70,92 +55,96 @@ export function OrbitRing() {
     <div
       ref={containerRef}
       className={cn(
-        'relative w-full h-full flex items-center justify-center',
+        'w-full h-full relative overflow-hidden flex items-center justify-center',
         'touch-none select-none cursor-grab',
         isDragging && 'cursor-default'
       )}
-      style={{ padding: `${safePadding}px 0` }}
+      style={{
+        perspective: `${PERSPECTIVE}px`,
+        perspectiveOrigin: '50% 50%',
+      }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerUp}
       onWheel={handleWheel}
     >
-      {/* Center anchor point (glowing dot) */}
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-0 pointer-events-none">
-        <div className="relative">
-          <div className="absolute -inset-16 rounded-full bg-primary/5 blur-3xl" />
-          <div className="absolute -inset-8 rounded-full bg-primary/10 blur-xl" />
-          <div className="w-5 h-5 rounded-full bg-primary/70 shadow-[0_0_30px_8px] shadow-primary/40" />
-        </div>
+      {/* Orbit space - pushed back with perspective */}
+      <div
+        className="relative w-full h-full flex items-center justify-center"
+        style={{
+          transformStyle: 'preserve-3d',
+          transform: `translateZ(${ORBIT_TRANSLATE_Z}px) scale(${ORBIT_SCALE})`,
+        }}
+      >
+        {/* Center anchor point (glowing dot) - matches prototype exactly */}
+        <div 
+          className="absolute pointer-events-none z-[1]"
+          style={{
+            top: '50%',
+            left: '50%',
+            width: 20,
+            height: 20,
+            marginTop: -10,
+            marginLeft: -10,
+            borderRadius: '50%',
+            background: 'rgba(59, 130, 246, 0.3)',
+            border: '2px solid rgba(59, 130, 246, 0.6)',
+            boxShadow: '0 0 40px rgba(59, 130, 246, 0.5)',
+          }}
+        />
+
+        {/* Full cards arranged around orbit ring */}
+        {orbitCards.map((cardId, index) => {
+          const card = getCardById(cardId);
+          if (!card) return null;
+
+          // Calculate base angle for this card
+          const baseAngle = index * angleStep;
+          const totalAngle = baseAngle + rotationAngle;
+          const angleRad = (totalAngle * Math.PI) / 180;
+          
+          // Position on circle using translate3d (x, 0, z)
+          const x = Math.cos(angleRad) * ORBIT_RADIUS;
+          const z = Math.sin(angleRad) * ORBIT_RADIUS;
+
+          return (
+            <div
+              key={cardId}
+              data-orbital-card
+              className="absolute transition-transform duration-100"
+              style={{
+                width: CARD_WIDTH,
+                height: CARD_HEIGHT,
+                left: '50%',
+                top: '50%',
+                marginLeft: -CARD_WIDTH / 2,
+                marginTop: -CARD_HEIGHT / 2,
+                transformStyle: 'preserve-3d',
+                transform: `translate3d(${x}px, 0, ${z}px)`,
+              }}
+            >
+              <OrbitalCardComponent 
+                card={card} 
+                cardWidth={CARD_WIDTH}
+                cardHeight={CARD_HEIGHT}
+              />
+            </div>
+          );
+        })}
       </div>
 
-      {/* Orbit ring visual (subtle circle) */}
+      {/* Rotation indicator - fixed position */}
       <div 
-        className="absolute left-1/2 top-1/2 border border-border/20 rounded-full pointer-events-none"
+        className="fixed top-8 right-8 z-50 px-5 py-3 rounded-lg backdrop-blur-xl"
         style={{
-          width: radius * 2,
-          height: radius * 2,
-          transform: 'translate(-50%, -50%)',
+          background: 'rgba(10, 10, 10, 0.9)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
         }}
-      />
-
-      {/* Full cards arranged around orbit ring */}
-      {orbitCards.map((cardId, index) => {
-        const card = getCardById(cardId);
-        if (!card) return null;
-
-        // Calculate angle for this card
-        const angle = (index * angleStep) + rotationAngle;
-        const angleRad = (angle * Math.PI) / 180;
-        
-        // Position on circle: x = cos(angle)*radius, y = sin(angle)*radius
-        const x = Math.cos(angleRad) * radius;
-        const y = Math.sin(angleRad) * radius;
-        
-        // Depth effect based on y position (top = back, bottom = front)
-        // sin(angle) ranges from -1 (top/back) to +1 (bottom/front)
-        const normalizedDepth = (Math.sin(angleRad) + 1) / 2; // 0 = back, 1 = front
-        
-        // Clamped scale: 0.85 to 1.0
-        const scale = 0.85 + 0.15 * normalizedDepth;
-        // Clamped opacity: 0.85 to 1.0
-        const opacity = 0.85 + 0.15 * normalizedDepth;
-        // Z-index based on depth
-        const zIndex = Math.round(normalizedDepth * 100);
-
-        return (
-          <div
-            key={cardId}
-            data-orbital-card
-            className="absolute transition-transform duration-100 ease-out"
-            style={{
-              width: CARD_WIDTH,
-              height: CARD_HEIGHT,
-              left: '50%',
-              top: '50%',
-              transform: `translate(-50%, -50%) translate(${x}px, ${y}px) scale(${scale})`,
-              zIndex,
-              opacity,
-            }}
-          >
-            <OrbitalCardComponent 
-              card={card} 
-              cardWidth={CARD_WIDTH}
-              cardHeight={CARD_HEIGHT}
-            />
-          </div>
-        );
-      })}
-
-      {/* Rotation indicator */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2 rounded-full bg-card/80 backdrop-blur border border-border/50 z-50">
-        <span className="text-xs text-muted-foreground font-mono">
+      >
+        <span className="text-xs text-muted-foreground">Rotation: </span>
+        <span className="text-primary font-mono font-semibold">
           {Math.round(((rotationAngle % 360) + 360) % 360)}°
-        </span>
-        <span className="w-px h-3 bg-border" />
-        <span className="text-xs text-muted-foreground font-mono">
-          {cardCount} modules
         </span>
       </div>
     </div>

@@ -15,28 +15,41 @@ function OrbitalLayout() {
   };
 
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-background">
-      {/* Top Dock Zone - fixed strip */}
+    <div 
+      className="w-screen h-screen relative overflow-hidden bg-black"
+      style={{
+        // Match prototype padding for orbit centering
+        paddingTop: 360,
+        paddingBottom: 480,
+      }}
+    >
+      {/* Top Dock Zone - fixed at top */}
       <DockZone zone="top" />
       
-      {/* Main Orbit Area - centered, fills remaining space */}
-      <div className="flex-1 relative overflow-hidden min-h-0">
-        <OrbitRing />
-        
-        {/* Reset View Button */}
+      {/* Main Orbit Area */}
+      <OrbitRing />
+      
+      {/* Bottom Dock Zone - fixed above controls */}
+      <DockZone zone="bottom" />
+      
+      {/* Controls - fixed at bottom center */}
+      <div 
+        className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[1000] flex gap-3 px-6 py-4 rounded-full backdrop-blur-xl"
+        style={{
+          background: 'rgba(10, 10, 10, 0.9)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+        }}
+      >
         <Button
           variant="outline"
           size="sm"
-          className="absolute top-4 right-4 z-50 bg-card/80 backdrop-blur"
+          className="bg-primary/20 border-primary/40 text-primary hover:bg-primary/30"
           onClick={handleResetView}
         >
           <RotateCcw className="h-4 w-4 mr-2" />
-          Reset
+          Reset View
         </Button>
       </div>
-      
-      {/* Bottom Dock Zone - fixed strip */}
-      <DockZone zone="bottom" />
     </div>
   );
 }

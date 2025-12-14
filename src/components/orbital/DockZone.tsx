@@ -8,9 +8,11 @@ interface DockZoneProps {
   zone: 'top' | 'bottom';
 }
 
+const DOCK_HEIGHT = 300;
+
 const DOCK_CONFIG = {
-  top: { maxCards: 3, height: 'h-[280px]' },
-  bottom: { maxCards: 1, height: 'h-[240px]' },
+  top: { maxCards: 3 },
+  bottom: { maxCards: 1 },
 };
 
 export function DockZone({ zone }: DockZoneProps) {
@@ -22,31 +24,27 @@ export function DockZone({ zone }: DockZoneProps) {
   const isEmpty = dockedCardIds.length === 0;
   const cardCount = dockedCardIds.length;
 
-  // Determine layout class based on number of cards
-  const getLayoutClass = () => {
-    if (zone === 'bottom') return 'grid-cols-1';
-    switch (cardCount) {
-      case 1: return 'grid-cols-1 max-w-2xl mx-auto';
-      case 2: return 'grid-cols-2';
-      case 3: return 'grid-cols-3';
-      default: return 'grid-cols-1';
-    }
-  };
-
   return (
     <div
       className={cn(
-        'w-full border-border/30 transition-all duration-300 relative',
+        'relative w-full border-border/30 transition-all duration-300',
         zone === 'top' ? 'border-b' : 'border-t',
-        isEmpty ? 'h-16' : config.height,
-        isActive && 'bg-primary/5 border-primary/40',
+        isActive && 'bg-primary/5 border-primary/50',
       )}
+      style={{ 
+        height: isEmpty ? 56 : DOCK_HEIGHT,
+        // Dock containers don't capture pointer events except on docked cards
+        pointerEvents: 'none',
+      }}
     >
-      {/* Zone label */}
-      <div className={cn(
-        'absolute left-4 flex items-center gap-2 text-xs font-mono text-muted-foreground/60',
-        zone === 'top' ? 'top-2' : 'bottom-2'
-      )}>
+      {/* Zone label - always visible */}
+      <div 
+        className={cn(
+          'absolute left-4 flex items-center gap-2 text-xs font-mono text-muted-foreground/60 z-10',
+          zone === 'top' ? 'top-2' : 'bottom-2'
+        )}
+        style={{ pointerEvents: 'none' }}
+      >
         <Dock className="h-3 w-3" />
         <span>
           {zone === 'top' ? 'TOP' : 'BOTTOM'} DOCK ({cardCount}/{config.maxCards})
@@ -55,11 +53,14 @@ export function DockZone({ zone }: DockZoneProps) {
 
       {isEmpty ? (
         // Empty state with drop hint
-        <div className={cn(
-          'h-full flex items-center justify-center gap-3',
-          'text-muted-foreground/40 transition-colors',
-          isActive && 'text-primary/60'
-        )}>
+        <div 
+          className={cn(
+            'h-full flex items-center justify-center gap-3',
+            'text-muted-foreground/40 transition-colors',
+            isActive && 'text-primary/60'
+          )}
+          style={{ pointerEvents: 'none' }}
+        >
           {zone === 'top' ? (
             <>
               <ChevronUp className={cn('h-5 w-5', isActive && 'animate-bounce')} />
@@ -79,17 +80,37 @@ export function DockZone({ zone }: DockZoneProps) {
           )}
         </div>
       ) : (
-        // Docked cards grid
-        <div className={cn(
-          'h-full p-4 pt-8 grid gap-4',
-          getLayoutClass()
-        )}>
+        // Docked cards - flex layout with gap, cards get pointer events
+        <div 
+          className="h-full p-4 pt-8 flex gap-4 justify-center"
+          style={{ pointerEvents: 'none' }}
+        >
           {dockedCardIds.map((cardId) => {
             const card = getCardById(cardId);
             if (!card) return null;
             
+            // Calculate card width based on count
+            // 1 card: ~100% of container (max-width limited)
+            // 2 cards: ~50% each
+            // 3 cards: ~33% each
+            const widthPercent = zone === 'bottom' 
+              ? '100%' 
+              : cardCount === 1 
+                ? '60%' 
+                : cardCount === 2 
+                  ? '45%' 
+                  : '30%';
+            
             return (
-              <div key={cardId} className="h-full">
+              <div 
+                key={cardId} 
+                className="h-full"
+                style={{ 
+                  width: widthPercent,
+                  maxWidth: cardCount === 1 ? 700 : 500,
+                  pointerEvents: 'auto', // Only docked cards get pointer events
+                }}
+              >
                 <OrbitalCardComponent 
                   card={card} 
                   isDocked 
@@ -103,11 +124,14 @@ export function DockZone({ zone }: DockZoneProps) {
 
       {/* Active drop glow effect */}
       {isActive && (
-        <div className={cn(
-          'absolute inset-0 pointer-events-none',
-          'bg-gradient-to-b from-primary/10 to-transparent',
-          zone === 'bottom' && 'bg-gradient-to-t'
-        )} />
+        <div 
+          className={cn(
+            'absolute inset-0',
+            'bg-gradient-to-b from-primary/10 to-transparent',
+            zone === 'bottom' && 'bg-gradient-to-t'
+          )}
+          style={{ pointerEvents: 'none' }}
+        />
       )}
     </div>
   );

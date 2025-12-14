@@ -16,13 +16,22 @@ import {
   TrendingUp, 
   TrendingDown,
   DollarSign,
-  Clock
+  Clock,
+  ChevronDown
 } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export default function TradesPage() {
   const navigate = useNavigate();
   const { data: account, isLoading } = usePaperAccount();
   const [symbolFilter, setSymbolFilter] = useState<string>('');
+  const [sideFilter, setSideFilter] = useState<string>('all');
   
   // Fetch fills with order info
   const { data: fills = [] } = useQuery({
@@ -63,6 +72,7 @@ export default function TradesPage() {
   
   const filteredFills = fills.filter(fill => {
     if (symbolFilter && !fill.symbol.toLowerCase().includes(symbolFilter.toLowerCase())) return false;
+    if (sideFilter !== 'all' && fill.side !== sideFilter) return false;
     return true;
   });
 
@@ -144,13 +154,23 @@ export default function TradesPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex gap-4">
+            <div className="flex gap-4 flex-wrap">
               <Input 
                 placeholder="Search symbol..."
                 value={symbolFilter}
                 onChange={e => setSymbolFilter(e.target.value)}
                 className="w-48"
               />
+              <Select value={sideFilter} onValueChange={setSideFilter}>
+                <SelectTrigger className="w-32">
+                  <SelectValue placeholder="Side" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Sides</SelectItem>
+                  <SelectItem value="buy">Buy</SelectItem>
+                  <SelectItem value="sell">Sell</SelectItem>
+                </SelectContent>
+              </Select>
               <div className="flex-1" />
               <span className="text-sm text-muted-foreground self-center">
                 {filteredFills.length} fills • ${totalFees.toFixed(2)} fees

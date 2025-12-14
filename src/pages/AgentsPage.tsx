@@ -1,4 +1,5 @@
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useSystemState } from '@/hooks/useEvoTraderData';
@@ -6,11 +7,21 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ArrowLeft, Trophy, TrendingUp, TrendingDown, Activity, Dna } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { ArrowLeft, Trophy, Filter } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export default function AgentsPage() {
   const navigate = useNavigate();
   const { data: systemState } = useSystemState();
+  const [strategyFilter, setStrategyFilter] = useState<string>('all');
+  const [minTradesFilter, setMinTradesFilter] = useState<string>('');
   
   const { data: agents = [], isLoading } = useQuery({
     queryKey: ['all-agents', systemState?.current_generation_id],
@@ -51,6 +62,14 @@ export default function AgentsPage() {
         });
     },
     enabled: !!systemState?.current_generation_id,
+  });
+
+  // Filter agents
+  const minTrades = parseInt(minTradesFilter) || 0;
+  const filteredAgents = agents.filter((agent: any) => {
+    if (strategyFilter !== 'all' && agent.strategy_template !== strategyFilter) return false;
+    if (minTrades > 0 && (agent.performance?.total_trades ?? 0) < minTrades) return false;
+    return true;
   });
 
   const getStrategyBadge = (template: string) => {
@@ -132,6 +151,42 @@ export default function AgentsPage() {
           </Card>
         </div>
         
+        {/* Filters */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="font-mono text-sm flex items-center gap-2">
+              <Filter className="h-4 w-4" />
+              Filters
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-4 flex-wrap">
+              <Select value={strategyFilter} onValueChange={setStrategyFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Strategy" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Strategies</SelectItem>
+                  <SelectItem value="trend_pullback">Trend</SelectItem>
+                  <SelectItem value="mean_reversion">Mean Reversion</SelectItem>
+                  <SelectItem value="breakout">Breakout</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input 
+                placeholder="Min trades..."
+                type="number"
+                value={minTradesFilter}
+                onChange={e => setMinTradesFilter(e.target.value)}
+                className="w-32"
+              />
+              <div className="flex-1" />
+              <span className="text-sm text-muted-foreground self-center">
+                {filteredAgents.length} / {agents.length} agents
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Leaderboard */}
         <Card>
           <CardHeader>
@@ -157,7 +212,7 @@ export default function AgentsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {agents.map((agent: any, index) => (
+                  {filteredAgents.map((agent: any, index) => (
                     <tr key={agent.id} className="border-b border-border/50 hover:bg-muted/30">
                       <td className="py-2 px-2 font-mono text-muted-foreground">
                         #{index + 1}

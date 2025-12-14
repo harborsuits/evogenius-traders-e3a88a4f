@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useOrbital, OrbitalCard as OrbitalCardType } from '@/contexts/OrbitalContext';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { GripHorizontal, X, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -250,14 +251,21 @@ export function OrbitalCardComponent({
           </div>
           <div className="flex items-center gap-1">
             {card.type === 'drillable' && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                onClick={(e) => { e.stopPropagation(); handleDrilldown(); }}
-              >
-                <ExternalLink className="h-3 w-3" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-primary/70 hover:text-primary"
+                    onClick={(e) => { e.stopPropagation(); handleDrilldown(); }}
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  Open details
+                </TooltipContent>
+              </Tooltip>
             )}
             {isDocked && (
               <Button

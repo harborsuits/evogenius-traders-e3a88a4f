@@ -68,10 +68,13 @@ export default function PortfolioPage() {
         <div className="container px-4 py-4 flex items-center gap-4">
           <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
             <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Command Center
+            Back to Orbit
           </Button>
           <div className="flex-1" />
-          <h1 className="font-mono text-lg text-primary">Portfolio Workspace</h1>
+          <div className="flex items-center gap-2">
+            <Wallet className="h-5 w-5 text-primary" />
+            <h1 className="font-mono text-lg text-primary">Portfolio & Positions</h1>
+          </div>
         </div>
       </header>
       

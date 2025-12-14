@@ -20,16 +20,17 @@ export function OrbitalCardComponent({
   card, 
   isDocked = false,
   dockZone,
-  cardWidth = 350,
-  cardHeight = 280,
+  cardWidth = 340,
+  cardHeight = 260,
 }: OrbitalCardProps) {
   const navigate = useNavigate();
   const { startDrag, endDrag, dockCard, undockCard, setHoverZone } = useOrbital();
   const headerRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const [isBeingDragged, setIsBeingDragged] = useState(false);
-  const [dragY, setDragY] = useState(0);
+  const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
   const startPosRef = useRef({ x: 0, y: 0 });
+  const initialRectRef = useRef<DOMRect | null>(null);
   const isDraggingRef = useRef(false);
   
   const Component = card.component;
@@ -41,31 +42,48 @@ export function OrbitalCardComponent({
     e.preventDefault();
     e.stopPropagation();
     
+    const rect = cardRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    
+    initialRectRef.current = rect;
     startPosRef.current = { x: e.clientX, y: e.clientY };
     isDraggingRef.current = true;
     
     setIsBeingDragged(true);
+    setDragPos({ x: rect.left, y: rect.top });
     startDrag(card.id);
     
     headerRef.current.setPointerCapture(e.pointerId);
-    
-    // Disable text selection on body
-    document.body.style.userSelect = 'none';
   }, [card.id, startDrag]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (!isDraggingRef.current) return;
+    if (!isDraggingRef.current || !initialRectRef.current) return;
     
     e.preventDefault();
     e.stopPropagation();
     
-    const dy = e.clientY - startPosRef.current.y;
-    setDragY(dy);
+    const deltaX = e.clientX - startPosRef.current.x;
+    const deltaY = e.clientY - startPosRef.current.y;
     
-    // Detect dock zones based on drag distance
-    if (dy < -DOCK_THRESHOLD) {
+    // Calculate new position from initial rect
+    let newX = initialRectRef.current.left + deltaX;
+    let newY = initialRectRef.current.top + deltaY;
+    
+    // Clamp to viewport bounds using actual card dimensions
+    const margin = 12;
+    const actualWidth = initialRectRef.current.width;
+    const actualHeight = initialRectRef.current.height;
+    
+    newX = Math.max(margin, Math.min(newX, window.innerWidth - actualWidth - margin));
+    newY = Math.max(margin, Math.min(newY, window.innerHeight - actualHeight - margin));
+    
+    setDragPos({ x: newX, y: newY });
+    
+    // Detect dock zones
+    const y = e.clientY;
+    if (y < DOCK_THRESHOLD) {
       setHoverZone('top');
-    } else if (dy > DOCK_THRESHOLD) {
+    } else if (y > window.innerHeight - DOCK_THRESHOLD) {
       setHoverZone('bottom');
     } else {
       setHoverZone(null);
@@ -83,19 +101,15 @@ export function OrbitalCardComponent({
     
     headerRef.current?.releasePointerCapture(e.pointerId);
     
-    // Re-enable text selection
-    document.body.style.userSelect = '';
+    const deltaY = e.clientY - startPosRef.current.y;
+    const y = e.clientY;
     
-    const dy = e.clientY - startPosRef.current.y;
-    
-    // Dock based on drag direction (matching prototype threshold)
-    if (dy < -DOCK_THRESHOLD) {
+    if (y < DOCK_THRESHOLD || deltaY < -DOCK_THRESHOLD) {
       dockCard(card.id, 'top');
-    } else if (dy > DOCK_THRESHOLD) {
+    } else if (y > window.innerHeight - DOCK_THRESHOLD || deltaY > DOCK_THRESHOLD) {
       dockCard(card.id, 'bottom');
     }
     
-    setDragY(0);
     endDrag();
   }, [card.id, dockCard, endDrag]);
 
@@ -121,88 +135,92 @@ export function OrbitalCardComponent({
     }
   }, [card, handleDrilldown]);
 
-  // Drag transform - only Y offset while dragging in orbit
-  const dragTransform = isBeingDragged && !isDocked ? `translateY(${dragY}px)` : undefined;
-
   return (
-    <Card
-      ref={cardRef}
-      className={cn(
-        'relative h-full overflow-hidden backdrop-blur-xl transition-all duration-300',
-        'border-white/10 hover:border-primary/50',
-        card.type === 'drillable' && 'cursor-pointer',
-        isBeingDragged && 'opacity-80 cursor-grabbing z-[1000]',
-        isDocked && 'z-[600]'
-      )}
-      style={{
-        background: isDocked ? 'rgba(15, 15, 15, 0.98)' : 'rgba(15, 15, 15, 0.95)',
-        boxShadow: isBeingDragged 
-          ? '0 20px 60px rgba(59, 130, 246, 0.5)' 
-          : '0 8px 32px rgba(0, 0, 0, 0.5)',
-        transform: dragTransform,
-        transition: isBeingDragged ? 'none' : 'all 0.3s ease',
-      }}
-    >
-      {/* Header - drag handle */}
-      <CardHeader 
-        ref={headerRef}
+    <>
+      {/* Main card (dims when dragging) */}
+      <Card
+        ref={cardRef}
+        variant="terminal"
         className={cn(
-          'py-3 px-4 flex flex-row items-center justify-between select-none',
-          'cursor-grab active:cursor-grabbing',
-          'border-b border-white/5 rounded-t-xl'
+          'relative transition-shadow duration-200 overflow-hidden h-full',
+          card.type === 'drillable' && 'hover:border-primary/40 cursor-pointer',
+          isBeingDragged && 'opacity-30'
         )}
-        style={{ background: 'rgba(0, 0, 0, 0.3)' }}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
       >
-        <div className="flex items-center gap-2">
-          <GripHorizontal className="h-4 w-4 text-muted-foreground/50" />
-          <CardTitle className="font-mono text-sm text-foreground font-semibold">
-            {card.title}
-          </CardTitle>
-        </div>
-        <div className="flex items-center gap-1">
-          {card.type === 'drillable' && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 text-muted-foreground/50 hover:text-foreground"
-              onClick={(e) => { e.stopPropagation(); handleDrilldown(); }}
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-            </Button>
+        <CardHeader 
+          ref={headerRef}
+          className={cn(
+            'pb-2 flex flex-row items-center justify-between select-none',
+            'cursor-grab active:cursor-grabbing',
+            'border-b border-border/30 bg-muted/20'
           )}
-          {isDocked && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-3 text-xs font-semibold bg-red-500/20 border border-red-500/40 text-red-500 hover:bg-red-500/30"
-              onClick={handleUndock}
-            >
-              Undock
-            </Button>
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+        >
+          <div className="flex items-center gap-2">
+            <GripHorizontal className="h-4 w-4 text-muted-foreground/50" />
+            <CardTitle className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
+              {card.title}
+            </CardTitle>
+          </div>
+          <div className="flex items-center gap-1">
+            {card.type === 'drillable' && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                onClick={(e) => { e.stopPropagation(); handleDrilldown(); }}
+              >
+                <ExternalLink className="h-3 w-3" />
+              </Button>
+            )}
+            {isDocked && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                onClick={handleUndock}
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent 
+          className={cn(
+            'pt-3 overflow-auto',
+            isDocked ? 'h-[calc(100%-48px)]' : 'h-[calc(100%-48px)]'
           )}
-        </div>
-      </CardHeader>
-      
-      {/* Content */}
-      <CardContent 
-        className={cn(
-          'p-4 overflow-auto',
-          isDocked ? 'h-[calc(100%-48px)]' : 'h-[225px]'
-        )}
-        onClick={handleContentClick}
-      >
-        <Component compact={!isDocked} />
-      </CardContent>
+          onClick={handleContentClick}
+        >
+          <Component compact={!isDocked} />
+        </CardContent>
+      </Card>
 
-      {/* Drillable indicator arrow */}
-      {card.type === 'drillable' && (
-        <div className="absolute right-4 top-3 text-lg opacity-50 hover:opacity-100 hover:translate-x-1 transition-all pointer-events-none">
-          →
-        </div>
+      {/* Dragged ghost (fixed, clamped to viewport) */}
+      {isBeingDragged && initialRectRef.current && (
+        <Card
+          variant="terminal"
+          className="fixed z-[1000] border-2 border-primary/60 shadow-2xl shadow-primary/20 pointer-events-none overflow-hidden"
+          style={{
+            width: initialRectRef.current.width,
+            height: initialRectRef.current.height,
+            left: dragPos.x,
+            top: dragPos.y,
+          }}
+        >
+          <CardHeader className="pb-2 flex flex-row items-center gap-2 border-b border-border/30 bg-muted/20">
+            <GripHorizontal className="h-4 w-4 text-primary/60" />
+            <CardTitle className="font-mono text-xs text-foreground uppercase tracking-wider">
+              {card.title}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-3 overflow-hidden h-[calc(100%-48px)]">
+            <Component compact={!isDocked} />
+          </CardContent>
+        </Card>
       )}
-    </Card>
+    </>
   );
 }

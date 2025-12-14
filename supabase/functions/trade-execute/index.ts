@@ -37,7 +37,8 @@ type BlockReason =
   | 'BLOCKED_AGENT_RATE_LIMIT'
   | 'BLOCKED_SYMBOL_RATE_LIMIT';
 
-const ALLOWED_SYMBOLS = ['BTC-USD', 'ETH-USD'];
+// Dynamic universe: any symbol in market_data is allowed (market-poll establishes the valid set)
+// This replaces the hardcoded ALLOWED_SYMBOLS list
 const MAX_MARKET_AGE_SECONDS = 120;
 const MAX_TRADES_PER_AGENT_PER_DAY = 5;
 const MAX_TRADES_PER_SYMBOL_PER_DAY = 50;
@@ -73,10 +74,16 @@ Deno.serve(async (req) => {
     const body: ExecuteTradeRequest = await req.json();
     console.log('[trade-execute] Received request:', body);
 
-    // === GATE 1: Validate symbol ===
-    if (!ALLOWED_SYMBOLS.includes(body.symbol)) {
+    // === GATE 1: Validate symbol exists in market_data (dynamic universe) ===
+    const { data: symbolCheck, error: symbolError } = await supabase
+      .from('market_data')
+      .select('symbol')
+      .eq('symbol', body.symbol)
+      .maybeSingle();
+    
+    if (symbolError || !symbolCheck) {
       const reason: BlockReason = 'BLOCKED_INVALID_SYMBOL';
-      console.log(`[trade-execute] ${reason}: ${body.symbol}`);
+      console.log(`[trade-execute] ${reason}: ${body.symbol} not in market_data`);
       
       await logDecision(supabase, 'trade_blocked', {
         symbol: body.symbol,

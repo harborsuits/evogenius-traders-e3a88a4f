@@ -184,46 +184,62 @@ serve(async (req) => {
       }
     }
     
-    // Sort by volume and take top N
+    // Sort by volume descending
     productsWithVolume.sort((a, b) => b.volume - a.volume);
-    const symbols = productsWithVolume.slice(0, MAX_SYMBOLS).map(p => p.symbol);
     
-    // Always ensure BTC-USD and ETH-USD are included (core pairs)
-    if (!symbols.includes('BTC-USD')) symbols.unshift('BTC-USD');
-    if (!symbols.includes('ETH-USD')) symbols.splice(1, 0, 'ETH-USD');
+    // Build final symbol set: core pairs first, then fill up to MAX_SYMBOLS
+    // Use Set to prevent duplicates and ensure bounded count
+    const symbolSet = new Set<string>(['BTC-USD', 'ETH-USD']);
+    for (const p of productsWithVolume) {
+      if (symbolSet.size >= MAX_SYMBOLS) break;
+      symbolSet.add(p.symbol);
+    }
+    const symbols = Array.from(symbolSet);
     
     console.log(`[market-poll] Polling ${symbols.length} symbols: ${symbols.slice(0, 5).join(', ')}...`);
 
     const results: { symbol: string; price: number; change_24h: number; volume_24h: number }[] = [];
 
-    for (const symbol of symbols) {
-      const priceData = await fetchCoinbasePrice(symbol);
+    // Fetch + upsert in parallel batches (concurrency limited)
+    const upsertBatchSize = 5;
+    for (let i = 0; i < symbols.length; i += upsertBatchSize) {
+      const batch = symbols.slice(i, i + upsertBatchSize);
       
-      if (priceData) {
-        const change_24h = await fetch24hChange(symbol, priceData.price);
-        
-        const { error } = await supabase
-          .from('market_data')
-          .upsert({
-            symbol,
-            price: priceData.price,
-            volume_24h: priceData.volume_24h,
-            change_24h: change_24h,
-            updated_at: new Date().toISOString(),
-          }, {
-            onConflict: 'symbol',
-          });
+      const batchResults = await Promise.all(
+        batch.map(async (symbol) => {
+          const priceData = await fetchCoinbasePrice(symbol);
+          if (!priceData) return null;
+          
+          const change_24h = await fetch24hChange(symbol, priceData.price);
+          
+          const { error } = await supabase
+            .from('market_data')
+            .upsert({
+              symbol,
+              price: priceData.price,
+              volume_24h: priceData.volume_24h,
+              change_24h: change_24h,
+              updated_at: new Date().toISOString(),
+            }, {
+              onConflict: 'symbol',
+            });
 
-        if (error) {
-          console.error(`[market-poll] DB upsert error for ${symbol}:`, error);
-        } else {
-          results.push({
+          if (error) {
+            console.error(`[market-poll] DB upsert error for ${symbol}:`, error);
+            return null;
+          }
+          
+          return {
             symbol,
             price: priceData.price,
             change_24h,
             volume_24h: priceData.volume_24h,
-          });
-        }
+          };
+        })
+      );
+      
+      for (const r of batchResults) {
+        if (r) results.push(r);
       }
     }
 

@@ -365,10 +365,19 @@ Deno.serve(async (req) => {
     const agentIndex = Math.floor(Date.now() / 60000) % agents.length;
     const agent = agents[agentIndex] as Agent;
     
-    // 7. Pick symbol using deterministic rotation (hash-based for reproducibility)
-    // Each agent evaluates a different symbol based on agent index and time
-    // This spreads opportunity scanning across the universe
-    const symbolIndex = (agentIndex + Math.floor(Date.now() / 300000)) % availableSymbols.length;
+    // 7. Pick symbol using deterministic rotation
+    // CRITICAL: Each agent evaluates only 1 symbol per cycle to prevent noise
+    // Symbol selection rotates based on agent ID hash + time bucket
+    // This ensures full universe coverage without 100 agents × 20 symbols = 2000 evals/cycle
+    const SYMBOLS_PER_AGENT = 1; // Keep it focused
+    const TIME_BUCKET_MINS = 5; // Rotate every 5 minutes
+    
+    // Simple deterministic hash from agent ID (sum of char codes)
+    const agentHash = agent.id.split('').reduce((sum, c) => sum + c.charCodeAt(0), 0);
+    const timeBucket = Math.floor(Date.now() / (TIME_BUCKET_MINS * 60000));
+    
+    // Rotate through available symbols deterministically
+    const symbolIndex = (agentHash + timeBucket) % availableSymbols.length;
     const symbol = availableSymbols[symbolIndex];
     const market = marketBySymbol.get(symbol);
 

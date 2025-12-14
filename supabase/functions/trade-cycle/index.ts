@@ -468,6 +468,13 @@ Deno.serve(async (req) => {
         qty: decision !== 'hold' ? plannedQty : null,
         ...tags,
         mode: 'paper',
+        // Threshold snapshot for deployment verification
+        thresholds_used: {
+          trend: BASELINE_THRESHOLDS.trend_threshold,
+          pullback: BASELINE_THRESHOLDS.pullback_pct,
+          rsi: BASELINE_THRESHOLDS.rsi_threshold,
+          vol_contraction: BASELINE_THRESHOLDS.vol_contraction,
+        },
       },
     });
 

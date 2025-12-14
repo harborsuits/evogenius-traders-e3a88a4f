@@ -207,7 +207,7 @@ export function usePerformanceAlerts() {
         });
       });
     });
-  }, [systemState, agentsWithPerf, generationFillsCount, existingAlerts, insertAlertMutation.isPending]);
+  }, [systemState, agentsWithPerf, generationFillsCount, existingAlerts, insertAlertMutation]);
 
   return null;
 }

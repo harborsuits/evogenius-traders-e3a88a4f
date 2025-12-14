@@ -15,7 +15,11 @@ import { useTradeModeContext } from '@/contexts/TradeModeContext';
 import { toast } from '@/hooks/use-toast';
 import { AlertTriangle, FlaskConical, Zap } from 'lucide-react';
 
-export function TradeModeToggle() {
+interface TradeModeToggleProps {
+  compact?: boolean;
+}
+
+export function TradeModeToggle({ compact = false }: TradeModeToggleProps) {
   const { mode, isPaper, isLoading, setMode } = useTradeModeContext();
   const [showConfirm, setShowConfirm] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -57,7 +61,26 @@ export function TradeModeToggle() {
   };
 
   if (isLoading) {
-    return <Badge variant="outline" className="animate-pulse">Loading...</Badge>;
+    return <Badge variant="outline" className="animate-pulse text-[10px] h-5">...</Badge>;
+  }
+
+  if (compact) {
+    return (
+      <>
+        <div className="flex items-center gap-1.5">
+          <Switch
+            checked={!isPaper}
+            onCheckedChange={handleToggle}
+            disabled={switching}
+            className="data-[state=checked]:bg-destructive h-4 w-7"
+          />
+          <span className={`text-[10px] font-mono ${!isPaper ? 'text-destructive' : 'text-muted-foreground'}`}>
+            {isPaper ? 'P' : 'L'}
+          </span>
+        </div>
+        <ConfirmDialog showConfirm={showConfirm} setShowConfirm={setShowConfirm} switchMode={switchMode} />
+      </>
+    );
   }
 
   return (
@@ -91,37 +114,51 @@ export function TradeModeToggle() {
           {isPaper ? 'PAPER MODE' : 'LIVE MODE'}
         </Badge>
       </div>
-
-      <AlertDialog open={showConfirm} onOpenChange={setShowConfirm}>
-        <AlertDialogContent className="bg-background border-destructive">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
-              <AlertTriangle className="h-5 w-5" />
-              Enable LIVE Trading?
-            </AlertDialogTitle>
-            <AlertDialogDescription className="space-y-2">
-              <p>
-                You are about to enable <strong className="text-destructive">LIVE TRADING MODE</strong>.
-              </p>
-              <p>
-                This means <strong>real money</strong> will be used for all trades executed by the system.
-              </p>
-              <p className="text-destructive font-medium">
-                Are you absolutely sure you want to proceed?
-              </p>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => switchMode('live')}
-              className="bg-destructive hover:bg-destructive/90"
-            >
-              Yes, Enable Live Trading
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog showConfirm={showConfirm} setShowConfirm={setShowConfirm} switchMode={switchMode} />
     </>
+
+  );
+}
+
+function ConfirmDialog({ 
+  showConfirm, 
+  setShowConfirm, 
+  switchMode 
+}: { 
+  showConfirm: boolean; 
+  setShowConfirm: (v: boolean) => void; 
+  switchMode: (mode: 'paper' | 'live') => void;
+}) {
+  return (
+    <AlertDialog open={showConfirm} onOpenChange={setShowConfirm}>
+      <AlertDialogContent className="bg-background border-destructive">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+            <AlertTriangle className="h-5 w-5" />
+            Enable LIVE Trading?
+          </AlertDialogTitle>
+          <AlertDialogDescription className="space-y-2">
+            <p>
+              You are about to enable <strong className="text-destructive">LIVE TRADING MODE</strong>.
+            </p>
+            <p>
+              This means <strong>real money</strong> will be used for all trades executed by the system.
+            </p>
+            <p className="text-destructive font-medium">
+              Are you absolutely sure you want to proceed?
+            </p>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => switchMode('live')}
+            className="bg-destructive hover:bg-destructive/90"
+          >
+            Yes, Enable Live Trading
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

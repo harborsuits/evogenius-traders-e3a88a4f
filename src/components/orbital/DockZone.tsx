@@ -8,7 +8,8 @@ interface DockZoneProps {
   zone: 'top' | 'bottom';
 }
 
-const DOCK_HEIGHT = 300;
+const DOCK_HEIGHT = 260;
+const DOCK_HEIGHT_EMPTY = 40;
 
 const DOCK_CONFIG = {
   top: { maxCards: 3 },
@@ -32,7 +33,7 @@ export function DockZone({ zone }: DockZoneProps) {
         isActive && 'bg-primary/5 border-primary/50',
       )}
       style={{ 
-        height: isEmpty ? 56 : DOCK_HEIGHT,
+        height: isEmpty ? DOCK_HEIGHT_EMPTY : DOCK_HEIGHT,
         // Dock containers don't capture pointer events except on docked cards
         pointerEvents: 'none',
       }}

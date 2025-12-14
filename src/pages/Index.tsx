@@ -1,7 +1,6 @@
 import { OrbitalCommandCenter } from '@/components/orbital';
 import { OrbitalCard } from '@/contexts/OrbitalContext';
 import { Header } from '@/components/layout/Header';
-import { SafetyBanner } from '@/components/dashboard/SafetyBanner';
 import { LiveLockedWorkspace } from '@/components/dashboard/LiveLockedWorkspace';
 import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
 import { useSystemState, useRealtimeSubscriptions } from '@/hooks/useEvoTraderData';
@@ -63,7 +62,6 @@ const Index = () => {
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       <Header status={status} generationNumber={currentGeneration?.generation_number} />
-      <SafetyBanner />
       <div className="flex-1 overflow-hidden">
         <OrbitalCommandCenter cards={orbitalCards} />
       </div>

@@ -475,19 +475,28 @@ Deno.serve(async (req) => {
     const startingCapital = paperAccount?.starting_cash ?? 1000;
     console.log(`[fitness-calc] Using starting capital: $${startingCapital}`);
 
-    // 4. Get all agents for this generation
-    const { data: agents } = await supabase
-      .from('agents')
-      .select('id, generation_id, strategy_template')
+    // 4. Get all agents for this generation via generation_agents join table
+    // NOTE: agents.generation_id may be stale/placeholder - use generation_agents as source of truth
+    const { data: genAgents } = await supabase
+      .from('generation_agents')
+      .select('agent_id, agents!inner(id, strategy_template)')
       .eq('generation_id', generationId);
 
-    if (!agents || agents.length === 0) {
-      console.log('[fitness-calc] No agents found');
+    // Extract agent data from the join
+    const agents = (genAgents ?? []).map(ga => ({
+      id: (ga.agents as any).id,
+      strategy_template: (ga.agents as any).strategy_template,
+    }));
+
+    if (agents.length === 0) {
+      console.log('[fitness-calc] No agents found for generation via generation_agents');
       return new Response(
         JSON.stringify({ ok: true, skipped: true, reason: 'no_agents' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    console.log(`[fitness-calc] Found ${agents.length} agents in generation cohort`);
 
     // 5. Get all filled paper orders
     const { data: orders } = await supabase

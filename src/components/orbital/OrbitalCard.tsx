@@ -220,6 +220,7 @@ export function OrbitalCardComponent({
       <Card
         ref={cardRef}
         variant="terminal"
+        data-docked-card={isDocked ? true : undefined}
         className={cn(
           'relative transition-shadow duration-200 overflow-hidden flex flex-col',
           isDocked ? 'h-full w-full' : '',
@@ -233,6 +234,7 @@ export function OrbitalCardComponent({
       >
         {/* Fixed height sticky header */}
         <CardHeader 
+          data-card-header
           className={cn(
             'flex flex-row items-center justify-between select-none shrink-0',
             'cursor-grab active:cursor-grabbing',
@@ -273,6 +275,7 @@ export function OrbitalCardComponent({
         {/* Scrollable body container with fixed height for orbit cards */}
         <div 
           ref={bodyRef}
+          data-card-body
           className={cn(
             "overflow-y-auto overflow-x-hidden px-3 py-2",
             "scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent",

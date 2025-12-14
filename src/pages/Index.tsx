@@ -1,9 +1,11 @@
+import { useMemo } from 'react';
 import { OrbitalCommandCenter } from '@/components/orbital';
 import { OrbitalCard } from '@/contexts/OrbitalContext';
 import { Header } from '@/components/layout/Header';
 import { LiveLockedWorkspace } from '@/components/dashboard/LiveLockedWorkspace';
 import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
 import { useSystemState, useRealtimeSubscriptions } from '@/hooks/useEvoTraderData';
+import { useBaselineInvariants } from '@/hooks/useBaselineInvariants';
 import { SystemStatus, Generation } from '@/types/evotrader';
 import { Loader2 } from 'lucide-react';
 
@@ -12,16 +14,15 @@ import { TradeCycleTile, GenHealthTile, PollingHealthTile, SystemControlTile, Ca
 // Drillable cards
 import { PortfolioCardContent, PositionsCardContent, OrdersCardContent, TradesCardContent, AgentsCardContent, GenerationsCardContent } from '@/components/orbital/tiles/DrillableCards';
 
-// Define all orbital cards
-const orbitalCards: OrbitalCard[] = [
+// Static cards that don't depend on dynamic data
+const staticCards: OrbitalCard[] = [
   // Cockpit tiles (not drillable)
   { id: 'trade-cycle', title: 'Trade Cycle', type: 'cockpit', component: TradeCycleTile },
   { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
   { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
   { id: 'capital', title: 'Capital Overview', type: 'cockpit', component: CapitalOverviewTile },
-  // Drillable cards - these navigate to full pages
-  { id: 'gen-health', title: 'GEN_010 Health', type: 'drillable', drilldownPath: '/generations', component: GenHealthTile },
-  { id: 'trades', title: 'Trades & Fills', type: 'drillable', drilldownPath: '/fills', component: TradesCardContent },
+  // Drillable cards - static paths
+  { id: 'trades', title: 'Trades & Fills', type: 'drillable', drilldownPath: '/trades', component: TradesCardContent },
   { id: 'agents', title: 'Agent Leaderboard', type: 'drillable', drilldownPath: '/agents', component: AgentsCardContent },
   { id: 'portfolio', title: 'Portfolio & Positions', type: 'drillable', drilldownPath: '/portfolio', component: PortfolioCardContent },
   { id: 'positions', title: 'Positions', type: 'drillable', drilldownPath: '/positions', component: PositionsCardContent },
@@ -32,10 +33,34 @@ const orbitalCards: OrbitalCard[] = [
 const Index = () => {
   const { isLive, isLiveArmed } = useCurrentTradeMode();
   useRealtimeSubscriptions();
+  useBaselineInvariants(); // Dev-only baseline guard
   const { data: systemState, isLoading } = useSystemState();
   
   const currentGeneration = systemState?.generations as Generation | null;
   const status = (systemState?.status ?? 'stopped') as SystemStatus;
+  const currentGenId = systemState?.current_generation_id;
+
+  // Build cards with dynamic genId path for GEN_010 Health
+  const orbitalCards = useMemo<OrbitalCard[]>(() => {
+    const genHealthPath = currentGenId 
+      ? `/generations/${currentGenId}` 
+      : '/generations';
+    
+    const genHealthCard: OrbitalCard = {
+      id: 'gen-health',
+      title: 'GEN_010 Health',
+      type: 'drillable',
+      drilldownPath: genHealthPath,
+      component: GenHealthTile,
+    };
+    
+    // Put gen-health first among drillables for visibility
+    return [
+      ...staticCards.slice(0, 4), // cockpit tiles
+      genHealthCard,
+      ...staticCards.slice(4), // other drillables
+    ];
+  }, [currentGenId]);
 
   if (isLoading) {
     return (

@@ -93,6 +93,7 @@ export function OrbitRing() {
       {/* Orbit Stage - sized to fit cards at current radius */}
       <div 
         ref={stageRef}
+        data-orbit-stage
         className="relative"
         style={{
           width: safeArea.radius * 2 + ORBIT_CARD_W,

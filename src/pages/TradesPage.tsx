@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   ArrowLeft, 
   Activity, 
@@ -17,7 +16,7 @@ import {
   TrendingDown,
   DollarSign,
   Clock,
-  ChevronDown
+  X
 } from 'lucide-react';
 import {
   Select,
@@ -27,11 +26,53 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+type DateRangePreset = '24h' | '7d' | '30d' | 'ytd' | 'all';
+
+function getPresetDates(preset: DateRangePreset): { start: Date | null; end: Date | null } {
+  const now = new Date();
+  const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  
+  switch (preset) {
+    case '24h':
+      return { start: new Date(now.getTime() - 24 * 60 * 60 * 1000), end: endOfToday };
+    case '7d':
+      return { start: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000), end: endOfToday };
+    case '30d':
+      return { start: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000), end: endOfToday };
+    case 'ytd':
+      return { start: new Date(now.getFullYear(), 0, 1), end: endOfToday };
+    case 'all':
+    default:
+      return { start: null, end: null };
+  }
+}
+
+function formatDateForInput(date: Date | null): string {
+  if (!date) return '';
+  return date.toISOString().split('T')[0];
+}
+
+function parseDateInput(value: string, isEndDate: boolean = false): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return null;
+  // For end date, set to end of day
+  if (isEndDate) {
+    date.setHours(23, 59, 59, 999);
+  } else {
+    date.setHours(0, 0, 0, 0);
+  }
+  return date;
+}
+
 export default function TradesPage() {
   const navigate = useNavigate();
   const { data: account, isLoading } = usePaperAccount();
   const [symbolFilter, setSymbolFilter] = useState<string>('');
   const [sideFilter, setSideFilter] = useState<string>('all');
+  const [startDate, setStartDate] = useState<Date | null>(null);
+  const [endDate, setEndDate] = useState<Date | null>(null);
+  const [activePreset, setActivePreset] = useState<DateRangePreset>('all');
   
   // Fetch fills with order info
   const { data: fills = [] } = useQuery({
@@ -62,19 +103,54 @@ export default function TradesPage() {
     },
     enabled: !!account?.id,
   });
+
+  // Handle preset clicks
+  const handlePreset = (preset: DateRangePreset) => {
+    setActivePreset(preset);
+    const { start, end } = getPresetDates(preset);
+    setStartDate(start);
+    setEndDate(end);
+  };
+
+  // Handle manual date input
+  const handleStartDateChange = (value: string) => {
+    setStartDate(parseDateInput(value, false));
+    setActivePreset('all'); // Clear preset when manually editing
+  };
+
+  const handleEndDateChange = (value: string) => {
+    setEndDate(parseDateInput(value, true));
+    setActivePreset('all');
+  };
+
+  // Clear date filters
+  const clearDateFilter = () => {
+    setStartDate(null);
+    setEndDate(null);
+    setActivePreset('all');
+  };
   
-  // Summary stats (matching card metrics)
-  const totalFills = fills.length;
-  const buyFills = fills.filter(f => f.side === 'buy');
-  const sellFills = fills.filter(f => f.side === 'sell');
-  const totalVolume = fills.reduce((sum, f) => sum + (f.qty * f.price), 0);
-  const totalFees = fills.reduce((sum, f) => sum + f.fee, 0);
-  
-  const filteredFills = fills.filter(fill => {
-    if (symbolFilter && !fill.symbol.toLowerCase().includes(symbolFilter.toLowerCase())) return false;
-    if (sideFilter !== 'all' && fill.side !== sideFilter) return false;
-    return true;
-  });
+  // Filter fills with date range
+  const filteredFills = useMemo(() => {
+    return fills.filter((fill: any) => {
+      // Symbol filter
+      if (symbolFilter && !fill.symbol.toLowerCase().includes(symbolFilter.toLowerCase())) return false;
+      // Side filter
+      if (sideFilter !== 'all' && fill.side !== sideFilter) return false;
+      // Date range filter
+      const fillDate = new Date(fill.timestamp);
+      if (startDate && fillDate < startDate) return false;
+      if (endDate && fillDate > endDate) return false;
+      return true;
+    });
+  }, [fills, symbolFilter, sideFilter, startDate, endDate]);
+
+  // Compute summary stats from filtered data
+  const totalFills = filteredFills.length;
+  const buyFills = filteredFills.filter((f: any) => f.side === 'buy');
+  const sellFills = filteredFills.filter((f: any) => f.side === 'sell');
+  const totalVolume = filteredFills.reduce((sum: number, f: any) => sum + (f.qty * f.price), 0);
+  const totalFees = filteredFills.reduce((sum: number, f: any) => sum + f.fee, 0);
 
   if (isLoading) {
     return (
@@ -153,8 +229,9 @@ export default function TradesPage() {
               Filters
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="flex gap-4 flex-wrap">
+          <CardContent className="space-y-4">
+            {/* Row 1: Symbol + Side */}
+            <div className="flex gap-4 flex-wrap items-center">
               <Input 
                 placeholder="Search symbol..."
                 value={symbolFilter}
@@ -171,8 +248,58 @@ export default function TradesPage() {
                   <SelectItem value="sell">Sell</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            
+            {/* Row 2: Date Range */}
+            <div className="flex gap-4 flex-wrap items-center">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Start</span>
+                <Input
+                  type="date"
+                  value={formatDateForInput(startDate)}
+                  onChange={e => handleStartDateChange(e.target.value)}
+                  className="w-36"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">End</span>
+                <Input
+                  type="date"
+                  value={formatDateForInput(endDate)}
+                  onChange={e => handleEndDateChange(e.target.value)}
+                  className="w-36"
+                />
+              </div>
+              
+              {/* Quick presets */}
+              <div className="flex gap-1">
+                {(['24h', '7d', '30d', 'ytd', 'all'] as DateRangePreset[]).map(preset => (
+                  <Button
+                    key={preset}
+                    variant={activePreset === preset ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => handlePreset(preset)}
+                    className="text-xs px-2 h-8"
+                  >
+                    {preset.toUpperCase()}
+                  </Button>
+                ))}
+              </div>
+              
+              {(startDate || endDate) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearDateFilter}
+                  className="text-xs h-8"
+                >
+                  <X className="h-3 w-3 mr-1" />
+                  Clear
+                </Button>
+              )}
+              
               <div className="flex-1" />
-              <span className="text-sm text-muted-foreground self-center">
+              <span className="text-sm text-muted-foreground">
                 {filteredFills.length} fills • ${totalFees.toFixed(2)} fees
               </span>
             </div>

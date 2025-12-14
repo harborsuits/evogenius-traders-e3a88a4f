@@ -3,11 +3,11 @@ import { useOrbital } from '@/contexts/OrbitalContext';
 import { OrbitalCardComponent } from './OrbitalCard';
 import { cn } from '@/lib/utils';
 
-const CARD_WIDTH = 350;
-const CARD_HEIGHT = 280;
-const SAFE_MARGIN = 40;
+const CARD_WIDTH = 380;
+const CARD_HEIGHT = 300;
+const SAFE_MARGIN = 16;
 const PERSPECTIVE = 3000;
-const ORBIT_SCALE = 0.65;
+const ORBIT_SCALE = 0.75;
 
 export function OrbitRing() {
   const { orbitCards, rotationAngle, rotateOrbit, getCardById, isDragging } = useOrbital();
@@ -166,17 +166,6 @@ export function OrbitRing() {
             </div>
           );
         })}
-      </div>
-
-      {/* Rotation indicator */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2 rounded-full bg-card/80 backdrop-blur border border-border/50 z-50">
-        <span className="text-xs text-muted-foreground font-mono">
-          {Math.round(((rotationAngle % 360) + 360) % 360)}°
-        </span>
-        <span className="w-px h-3 bg-border" />
-        <span className="text-xs text-muted-foreground font-mono">
-          {cardCount} modules
-        </span>
       </div>
     </div>
   );

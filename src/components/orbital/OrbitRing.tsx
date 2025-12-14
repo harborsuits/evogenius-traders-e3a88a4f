@@ -3,11 +3,11 @@ import { useOrbital } from '@/contexts/OrbitalContext';
 import { OrbitalCardComponent } from './OrbitalCard';
 import { cn } from '@/lib/utils';
 
-const CARD_WIDTH = 380;
-const CARD_HEIGHT = 300;
+const CARD_WIDTH = 400;
+const CARD_HEIGHT = 320;
 const SAFE_MARGIN = 0;
 const PERSPECTIVE = 3000;
-const ORBIT_SCALE = 0.88;
+const ORBIT_SCALE = 0.92;
 
 export function OrbitRing() {
   const { orbitCards, rotationAngle, rotateOrbit, getCardById, isDragging } = useOrbital();

@@ -8,8 +8,8 @@ interface DockZoneProps {
   zone: 'top' | 'bottom';
 }
 
-const DOCK_HEIGHT = 180;
-const DOCK_HEIGHT_EMPTY = 12;
+const DOCK_HEIGHT = 260;
+const DOCK_HEIGHT_EMPTY = 8;
 
 const DOCK_CONFIG = {
   top: { maxCards: 3 },
@@ -60,7 +60,7 @@ export function DockZone({ zone }: DockZoneProps) {
       ) : (
         // Docked cards - minimal padding
         <div 
-          className="h-full px-2 py-1 flex gap-2 justify-center"
+          className="h-full px-1 py-0.5 flex gap-1 justify-center"
           style={{ pointerEvents: 'none' }}
         >
           {dockedCardIds.map((cardId) => {

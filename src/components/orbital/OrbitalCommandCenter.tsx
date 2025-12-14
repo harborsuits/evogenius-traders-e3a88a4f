@@ -16,10 +16,10 @@ function OrbitalLayout() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-background">
-      {/* Top Dock Zone - fixed strip */}
+      {/* Top Dock Zone - minimal when empty */}
       <DockZone zone="top" />
       
-      {/* Main Orbit Area - centered, fills remaining space */}
+      {/* Main Orbit Area */}
       <div className="flex-1 relative overflow-hidden min-h-0">
         <OrbitRing />
         
@@ -27,15 +27,22 @@ function OrbitalLayout() {
         <Button
           variant="outline"
           size="sm"
-          className="absolute top-4 right-4 z-50 bg-card/80 backdrop-blur"
+          className="absolute top-2 right-2 z-50 bg-card/80 backdrop-blur h-7 px-2 text-xs"
           onClick={handleResetView}
         >
-          <RotateCcw className="h-4 w-4 mr-2" />
+          <RotateCcw className="h-3 w-3 mr-1" />
           Reset
         </Button>
       </div>
       
-      {/* Bottom Dock Zone - fixed strip */}
+      {/* News Ticker Area - placeholder */}
+      <div className="h-8 border-t border-border/30 flex items-center px-4 bg-card/30">
+        <span className="text-[10px] font-mono text-muted-foreground animate-pulse">
+          📰 News ticker coming soon...
+        </span>
+      </div>
+      
+      {/* Bottom Dock Zone */}
       <DockZone zone="bottom" />
     </div>
   );

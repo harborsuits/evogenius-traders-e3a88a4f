@@ -3,11 +3,9 @@ import { useOrbital } from '@/contexts/OrbitalContext';
 import { OrbitalCardComponent } from './OrbitalCard';
 import { cn } from '@/lib/utils';
 
-const CARD_WIDTH = 400;
-const CARD_HEIGHT = 320;
-const SAFE_MARGIN = 0;
-const PERSPECTIVE = 3000;
-const ORBIT_SCALE = 0.92;
+const CARD_WIDTH = 340;
+const CARD_HEIGHT = 260;
+const PERSPECTIVE = 1500;
 
 export function OrbitRing() {
   const { orbitCards, rotationAngle, rotateOrbit, getCardById, isDragging } = useOrbital();
@@ -31,11 +29,10 @@ export function OrbitRing() {
     return () => window.removeEventListener('resize', updateDimensions);
   }, []);
 
-  // Safe radius: ensure cards don't clip off-screen
-  // radius <= min((vw/2 - cardW/2 - margin), (vh/2 - cardH/2 - margin))
-  const maxRadiusX = (dimensions.width / 2) - (CARD_WIDTH / 2) - SAFE_MARGIN;
-  const maxRadiusY = (dimensions.height / 2) - (CARD_HEIGHT / 2) - SAFE_MARGIN;
-  const safeRadius = Math.max(280, Math.min(maxRadiusX, maxRadiusY, 500));
+  // Fill available vertical space - orbit should take up most of the container
+  const verticalSpace = dimensions.height - CARD_HEIGHT;
+  const horizontalSpace = dimensions.width - CARD_WIDTH;
+  const safeRadius = Math.max(120, Math.min(verticalSpace / 2 - 10, horizontalSpace / 2 - 10, 320));
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     // Don't start orbit drag if clicking on a card
@@ -74,7 +71,7 @@ export function OrbitRing() {
     <div
       ref={containerRef}
       className={cn(
-        'relative w-full h-full flex items-center justify-center',
+        'relative w-full h-full flex items-center justify-center pt-8',
         'touch-none select-none cursor-grab',
         isDragging && 'cursor-default'
       )}
@@ -85,14 +82,13 @@ export function OrbitRing() {
       onWheel={handleWheel}
       style={{ perspective: `${PERSPECTIVE}px` }}
     >
-      {/* Orbit Stage - scaled and pushed back in Z for depth */}
+      {/* Orbit Stage - no translateZ, just centered */}
       <div 
         ref={stageRef}
         className="relative"
         style={{
           width: safeRadius * 2 + CARD_WIDTH,
           height: safeRadius * 2 + CARD_HEIGHT,
-          transform: `translateZ(-400px) scale(${ORBIT_SCALE})`,
           transformStyle: 'preserve-3d',
         }}
       >

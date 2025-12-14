@@ -16,11 +16,11 @@ function OrbitalLayout() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-background">
-      {/* Top Dock Zone - minimal when empty */}
+      {/* Top Dock Zone - reserves layout space when cards docked */}
       <DockZone zone="top" />
       
-      {/* Main Orbit Area */}
-      <div className="flex-1 relative overflow-hidden min-h-0">
+      {/* Main Orbit Area - takes remaining space between docks */}
+      <div className="flex-1 relative overflow-hidden min-h-0 z-10">
         <OrbitRing />
         
         {/* Reset View Button */}
@@ -36,13 +36,13 @@ function OrbitalLayout() {
       </div>
       
       {/* News Ticker Area */}
-      <div className="h-6 border-t border-border/30 flex items-center px-3 bg-card/30">
+      <div className="h-6 border-t border-border/30 flex items-center px-3 bg-card/30 shrink-0 z-50">
         <span className="text-[10px] font-mono text-muted-foreground">
           📰 News ticker...
         </span>
       </div>
       
-      {/* Bottom Dock Zone */}
+      {/* Bottom Dock Zone - reserves layout space when cards docked */}
       <DockZone zone="bottom" />
     </div>
   );

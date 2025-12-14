@@ -1,10 +1,12 @@
-import React, { useRef, useCallback, useEffect, useState } from 'react';
+import React, { useRef, useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useOrbital, OrbitalCard as OrbitalCardType } from '@/contexts/OrbitalContext';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { GripHorizontal, X, Maximize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+const DOCK_THRESHOLD = 150; // pixels from edge to trigger dock
 
 interface OrbitalCardProps {
   card: OrbitalCardType;
@@ -22,7 +24,7 @@ export function OrbitalCardComponent({
   className 
 }: OrbitalCardProps) {
   const navigate = useNavigate();
-  const { startDrag, endDrag, dockCard, undockCard, hoverZone, setHoverZone, isDragging, draggedCardId } = useOrbital();
+  const { startDrag, endDrag, dockCard, undockCard, setHoverZone } = useOrbital();
   const headerRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const [isBeingDragged, setIsBeingDragged] = useState(false);
@@ -39,23 +41,21 @@ export function OrbitalCardComponent({
     e.preventDefault();
     e.stopPropagation();
     
-    const rect = cardRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    
     startPosRef.current = { x: e.clientX, y: e.clientY };
     isDraggingRef.current = true;
     
     setIsBeingDragged(true);
     startDrag(card.id);
     
-    // Capture pointer
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    // Capture pointer on the header element
+    headerRef.current.setPointerCapture(e.pointerId);
   }, [card.id, startDrag]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!isDraggingRef.current) return;
     
     e.preventDefault();
+    e.stopPropagation();
     
     const deltaX = e.clientX - startPosRef.current.x;
     const deltaY = e.clientY - startPosRef.current.y;
@@ -66,9 +66,9 @@ export function OrbitalCardComponent({
     const windowHeight = window.innerHeight;
     const y = e.clientY;
     
-    if (y < 150) {
+    if (y < DOCK_THRESHOLD) {
       setHoverZone('top');
-    } else if (y > windowHeight - 150) {
+    } else if (y > windowHeight - DOCK_THRESHOLD) {
       setHoverZone('bottom');
     } else {
       setHoverZone(null);
@@ -78,27 +78,33 @@ export function OrbitalCardComponent({
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     if (!isDraggingRef.current) return;
     
+    e.preventDefault();
+    e.stopPropagation();
+    
     isDraggingRef.current = false;
     setIsBeingDragged(false);
-    setDragOffset({ x: 0, y: 0 });
     
     // Release pointer
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    headerRef.current?.releasePointerCapture(e.pointerId);
     
-    // Check if should dock
+    // Calculate drag distance
+    const deltaY = e.clientY - startPosRef.current.y;
     const windowHeight = window.innerHeight;
     const y = e.clientY;
     
-    if (y < 150) {
+    // Check if should dock based on position OR drag direction
+    if (y < DOCK_THRESHOLD || deltaY < -DOCK_THRESHOLD) {
       dockCard(card.id, 'top');
-    } else if (y > windowHeight - 150) {
+    } else if (y > windowHeight - DOCK_THRESHOLD || deltaY > DOCK_THRESHOLD) {
       dockCard(card.id, 'bottom');
     }
     
+    setDragOffset({ x: 0, y: 0 });
     endDrag();
   }, [card.id, dockCard, endDrag]);
 
-  const handleUndock = useCallback(() => {
+  const handleUndock = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
     undockCard(card.id);
   }, [card.id, undockCard]);
 
@@ -123,8 +129,12 @@ export function OrbitalCardComponent({
   const dragStyle: React.CSSProperties = isBeingDragged ? {
     transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)`,
     zIndex: 1000,
-    opacity: 0.9,
-    cursor: 'grabbing',
+    position: 'fixed' as const,
+    left: startPosRef.current.x - 150,
+    top: startPosRef.current.y - 20,
+    width: 300,
+    opacity: 0.95,
+    pointerEvents: 'none' as const,
   } : {};
 
   return (
@@ -132,27 +142,28 @@ export function OrbitalCardComponent({
       ref={cardRef}
       variant="terminal"
       className={cn(
-        'relative transition-shadow duration-200',
+        'relative transition-shadow duration-200 overflow-hidden',
         isDocked ? 'h-full' : '',
-        card.type === 'drillable' && 'cursor-pointer hover:border-primary/50',
-        isBeingDragged && 'shadow-intense pointer-events-none',
+        card.type === 'drillable' && !isDocked && 'cursor-pointer hover:border-primary/50',
+        isBeingDragged && 'shadow-2xl shadow-primary/20 border-primary/50',
         className
       )}
-      style={{ ...style, ...dragStyle }}
+      style={isBeingDragged ? dragStyle : style}
     >
       <CardHeader 
         ref={headerRef}
         className={cn(
-          'pb-2 flex flex-row items-center justify-between cursor-grab select-none',
-          isBeingDragged && 'cursor-grabbing'
+          'pb-2 flex flex-row items-center justify-between select-none',
+          'cursor-grab active:cursor-grabbing',
+          'border-b border-border/30 bg-muted/20'
         )}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
       >
         <div className="flex items-center gap-2">
-          <GripHorizontal className="h-4 w-4 text-muted-foreground" />
-          <CardTitle className="font-mono text-sm text-muted-foreground uppercase tracking-wider">
+          <GripHorizontal className="h-4 w-4 text-muted-foreground/60" />
+          <CardTitle className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
             {card.title}
           </CardTitle>
         </div>
@@ -161,8 +172,8 @@ export function OrbitalCardComponent({
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6"
-              onClick={handleDrilldown}
+              className="h-6 w-6 text-muted-foreground hover:text-foreground"
+              onClick={(e) => { e.stopPropagation(); handleDrilldown(); }}
             >
               <Maximize2 className="h-3 w-3" />
             </Button>
@@ -171,7 +182,7 @@ export function OrbitalCardComponent({
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground"
               onClick={handleUndock}
             >
               <X className="h-3 w-3" />
@@ -180,10 +191,13 @@ export function OrbitalCardComponent({
         </div>
       </CardHeader>
       <CardContent 
-        className="pt-0"
+        className={cn(
+          'pt-3 overflow-auto',
+          isDocked && 'h-[calc(100%-48px)]'
+        )}
         onClick={handleContentClick}
       >
-        <Component compact={isDocked} />
+        <Component compact={!isDocked} />
       </CardContent>
     </Card>
   );

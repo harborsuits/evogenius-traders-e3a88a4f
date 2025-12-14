@@ -2,27 +2,31 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Generation } from '@/types/evotrader';
-import { Clock, Activity, TrendingDown, Calendar } from 'lucide-react';
+import { Clock, Activity, TrendingDown } from 'lucide-react';
 
 interface GenerationProgressProps {
   generation: Generation;
   maxTrades: number;
   maxDays: number;
   maxDrawdown: number;
+  liveOrdersCount?: number; // Live count from paper_orders
 }
 
 export function GenerationProgress({ 
   generation, 
   maxTrades,
   maxDays,
-  maxDrawdown 
+  maxDrawdown,
+  liveOrdersCount
 }: GenerationProgressProps) {
   const startDate = new Date(generation.start_time);
   const now = new Date();
   const daysElapsed = Math.floor((now.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
   const hoursRemaining = Math.max(0, (maxDays * 24) - Math.floor((now.getTime() - startDate.getTime()) / (60 * 60 * 1000)));
   
-  const tradesProgress = (generation.total_trades / maxTrades) * 100;
+  // Use live orders count if provided, otherwise fall back to generation.total_trades
+  const currentTrades = liveOrdersCount ?? generation.total_trades;
+  const tradesProgress = (currentTrades / maxTrades) * 100;
   const timeProgress = (daysElapsed / maxDays) * 100;
   const drawdownProgress = (generation.max_drawdown / (maxDrawdown * 100)) * 100;
 
@@ -66,9 +70,14 @@ export function GenerationProgress({
             <div className="flex items-center gap-2 text-muted-foreground">
               <Activity className="h-4 w-4" />
               <span>Trades</span>
+              {liveOrdersCount !== undefined && (
+                <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 text-success/80">
+                  LIVE
+                </Badge>
+              )}
             </div>
             <span className="font-mono text-foreground">
-              {generation.total_trades} / {maxTrades}
+              {currentTrades} / {maxTrades}
             </span>
           </div>
           <Progress value={tradesProgress} className="h-2" />

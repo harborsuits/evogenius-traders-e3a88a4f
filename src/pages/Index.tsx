@@ -23,6 +23,7 @@ import {
   useSystemConfig,
   useRealtimeSubscriptions,
 } from '@/hooks/useEvoTraderData';
+import { useGenOrdersCount, useCohortCount } from '@/hooks/useGenOrders';
 import { 
   DollarSign, 
   Users, 
@@ -32,7 +33,7 @@ import {
   Shield,
   Loader2
 } from 'lucide-react';
-import { Generation, Agent, SystemStatus } from '@/types/evotrader';
+import { Generation, SystemStatus } from '@/types/evotrader';
 
 const Index = () => {
   // Get trade mode
@@ -48,13 +49,16 @@ const Index = () => {
   const { data: marketData = [], isLoading: loadingMarket } = useMarketData();
   const { data: generationHistory = [] } = useGenerationHistory();
   const { data: config } = useSystemConfig();
+  
+  // Live metrics from database
+  const { data: genOrdersCount = 0 } = useGenOrdersCount(systemState?.current_generation_id ?? null);
+  const { data: cohortCount = 0 } = useCohortCount(systemState?.current_generation_id ?? null);
 
   const isLoading = loadingState || loadingAgents || loadingTrades || loadingMarket;
 
   // Extract current generation from system state
   const currentGeneration = systemState?.generations as Generation | null;
   const status = (systemState?.status ?? 'stopped') as SystemStatus;
-  const eliteCount = agents.filter((a: Agent) => a.is_elite).length;
 
   // Default config values - always use this structure
   const defaultConfig = {
@@ -126,27 +130,31 @@ const Index = () => {
             value={`$${(systemState?.total_capital ?? 0).toLocaleString()}`}
             icon={Wallet}
             variant="stat"
+            badge="CONFIG"
           />
           <MetricCard
             label="Active Pool"
             value={`$${(systemState?.active_pool ?? 0).toLocaleString()}`}
             subValue={systemState?.total_capital ? `${((systemState.active_pool / systemState.total_capital) * 100).toFixed(0)}%` : '0%'}
             icon={DollarSign}
+            badge="CONFIG"
           />
           <MetricCard
             label="Reserve"
             value={`$${(systemState?.reserve ?? 0).toLocaleString()}`}
             icon={Shield}
+            badge="CONFIG"
           />
           <MetricCard
-            label="Agents"
-            value={agents.length}
-            subValue={`${eliteCount} elite`}
+            label="Cohort Agents"
+            value={cohortCount}
+            subValue="LIVE"
             icon={Users}
           />
           <MetricCard
-            label="Today Trades"
-            value={systemState?.today_trades ?? 0}
+            label="Gen Orders"
+            value={genOrdersCount}
+            subValue="LIVE"
             icon={Activity}
           />
           <MetricCard
@@ -169,6 +177,7 @@ const Index = () => {
                   maxTrades={activeConfig.generation.max_trades}
                   maxDays={activeConfig.generation.max_days}
                   maxDrawdown={activeConfig.generation.max_drawdown_pct}
+                  liveOrdersCount={genOrdersCount}
                 />
               )}
               <div className="bg-card border border-border rounded-lg p-6">

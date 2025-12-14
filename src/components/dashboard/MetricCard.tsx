@@ -1,4 +1,5 @@
 import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { LucideIcon } from 'lucide-react';
 
@@ -9,6 +10,7 @@ interface MetricCardProps {
   icon?: LucideIcon;
   trend?: 'up' | 'down' | 'neutral';
   variant?: 'default' | 'glow' | 'stat';
+  badge?: string;
 }
 
 export function MetricCard({ 
@@ -17,15 +19,23 @@ export function MetricCard({
   subValue, 
   icon: Icon,
   trend,
-  variant = 'default'
+  variant = 'default',
+  badge
 }: MetricCardProps) {
   return (
     <Card variant={variant} className="p-4">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            {label}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              {label}
+            </p>
+            {badge && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-muted-foreground/70">
+                {badge}
+              </Badge>
+            )}
+          </div>
           <div className="flex items-baseline gap-2">
             <span className={cn(
               'font-mono text-2xl font-bold',

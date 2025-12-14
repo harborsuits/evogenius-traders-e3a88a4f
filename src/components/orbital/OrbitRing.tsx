@@ -2,38 +2,45 @@ import React, { useRef, useCallback, useEffect, useState } from 'react';
 import { useOrbital } from '@/contexts/OrbitalContext';
 import { OrbitalCardComponent } from './OrbitalCard';
 import { cn } from '@/lib/utils';
+import { DOCK_HEIGHT, DOCK_HEIGHT_EMPTY } from './DockZone';
 
 // Fixed uniform dimensions for ALL orbit cards
 const ORBIT_CARD_W = 380;
 const ORBIT_CARD_H = 300;
 const PERSPECTIVE = 1500;
+const CARD_MARGIN = 12;
+const MIN_RADIUS = 100;
+const MAX_RADIUS = 400;
 
 export function OrbitRing() {
-  const { orbitCards, rotationAngle, rotateOrbit, getCardById, isDragging } = useOrbital();
+  const { orbitCards, rotationAngle, rotateOrbit, getCardById, isDragging, dockState } = useOrbital();
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const isDraggingOrbit = useRef(false);
   const lastX = useRef(0);
-  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const [safeArea, setSafeArea] = useState({ width: 0, height: 0, radius: MIN_RADIUS });
 
-  // Track container dimensions for responsive radius
+  // Calculate safe area and radius based on container and dock state
   useEffect(() => {
-    const updateDimensions = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        setDimensions({ width: rect.width, height: rect.height });
-      }
+    const updateSafeArea = () => {
+      if (!containerRef.current) return;
+      
+      const rect = containerRef.current.getBoundingClientRect();
+      const safeWidth = rect.width;
+      const safeHeight = rect.height;
+      
+      // Clamp radius so full card never exits safe box
+      const radiusXMax = (safeWidth / 2) - (ORBIT_CARD_W / 2) - CARD_MARGIN;
+      const radiusYMax = (safeHeight / 2) - (ORBIT_CARD_H / 2) - CARD_MARGIN;
+      const radius = Math.max(MIN_RADIUS, Math.min(radiusXMax, radiusYMax, MAX_RADIUS));
+      
+      setSafeArea({ width: safeWidth, height: safeHeight, radius });
     };
     
-    updateDimensions();
-    window.addEventListener('resize', updateDimensions);
-    return () => window.removeEventListener('resize', updateDimensions);
-  }, []);
-
-  // Fill available vertical space - orbit should take up most of the container
-  const verticalSpace = dimensions.height - ORBIT_CARD_H;
-  const horizontalSpace = dimensions.width - ORBIT_CARD_W;
-  const safeRadius = Math.max(120, Math.min(verticalSpace / 2 - 10, horizontalSpace / 2 - 10, 320));
+    updateSafeArea();
+    window.addEventListener('resize', updateSafeArea);
+    return () => window.removeEventListener('resize', updateSafeArea);
+  }, [dockState]); // Recompute when dock state changes
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     // Don't start orbit drag if clicking on a card
@@ -83,13 +90,13 @@ export function OrbitRing() {
       onWheel={handleWheel}
       style={{ perspective: `${PERSPECTIVE}px` }}
     >
-      {/* Orbit Stage - no translateZ, just centered */}
+      {/* Orbit Stage - sized to fit cards at current radius */}
       <div 
         ref={stageRef}
         className="relative"
         style={{
-          width: safeRadius * 2 + ORBIT_CARD_W,
-          height: safeRadius * 2 + ORBIT_CARD_H,
+          width: safeArea.radius * 2 + ORBIT_CARD_W,
+          height: safeArea.radius * 2 + ORBIT_CARD_H,
           transformStyle: 'preserve-3d',
         }}
       >
@@ -106,8 +113,8 @@ export function OrbitRing() {
         <div 
           className="absolute left-1/2 top-1/2 border border-border/30 rounded-full pointer-events-none"
           style={{
-            width: safeRadius * 2,
-            height: safeRadius * 2,
+            width: safeArea.radius * 2,
+            height: safeArea.radius * 2,
             transform: 'translate(-50%, -50%)',
           }}
         />
@@ -124,14 +131,12 @@ export function OrbitRing() {
           // True circular 3D positioning:
           // x = cos(angle) * radius (left-right)
           // z = sin(angle) * radius (depth)
-          const x = Math.cos(angleRad) * safeRadius;
-          const z = Math.sin(angleRad) * safeRadius;
+          const x = Math.cos(angleRad) * safeArea.radius;
+          const z = Math.sin(angleRad) * safeArea.radius;
           
           // Depth effect: z-index ordering only, NO size scaling
-          const normalizedDepth = (z + safeRadius) / (safeRadius * 2); // 0 = back, 1 = front
+          const normalizedDepth = (z + safeArea.radius) / (safeArea.radius * 2); // 0 = back, 1 = front
           
-          // UNIFORM scale - all cards identical size
-          const scale = 1.0;
           // Subtle opacity for depth hint only
           const opacity = 0.8 + 0.2 * normalizedDepth;
           // Z-index based on depth (front cards layer above back cards)

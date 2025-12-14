@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { TradeModeProvider } from "@/contexts/TradeModeContext";
+import { useAlertNotifications } from "@/hooks/useAlertNotifications";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import PortfolioPage from "./pages/PortfolioPage";
@@ -20,6 +21,12 @@ import AlertsPage from "./pages/AlertsPage";
 
 const queryClient = new QueryClient();
 
+function AlertNotificationsRoot() {
+  // Toast only (safe default)
+  useAlertNotifications({ enabled: true, toast: true, desktop: false, sound: false });
+  return null;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TradeModeProvider>
@@ -27,6 +34,7 @@ const App = () => (
         <Toaster />
         <Sonner />
         <BrowserRouter>
+          <AlertNotificationsRoot />
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/portfolio" element={<PortfolioPage />} />

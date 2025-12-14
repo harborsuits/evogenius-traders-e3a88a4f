@@ -8,8 +8,9 @@ interface DockZoneProps {
   zone: 'top' | 'bottom';
 }
 
-const DOCK_HEIGHT = 320;
-const DOCK_HEIGHT_EMPTY = 8;
+// Export for use in orbit calculations
+export const DOCK_HEIGHT = 280;
+export const DOCK_HEIGHT_EMPTY = 8;
 
 const DOCK_CONFIG = {
   top: { maxCards: 3 },
@@ -25,15 +26,19 @@ export function DockZone({ zone }: DockZoneProps) {
   const isEmpty = dockedCardIds.length === 0;
   const cardCount = dockedCardIds.length;
 
+  // Calculate actual height - this reserves layout space (NOT overlay)
+  const actualHeight = isEmpty ? DOCK_HEIGHT_EMPTY : DOCK_HEIGHT;
+
   return (
     <div
       className={cn(
-        'relative w-full border-border/30 transition-all duration-300',
+        'relative w-full border-border/30 transition-all duration-300 shrink-0 z-50 bg-background',
         zone === 'top' ? 'border-b' : 'border-t',
         isActive && 'bg-primary/5 border-primary/50',
       )}
       style={{ 
-        height: isEmpty ? DOCK_HEIGHT_EMPTY : DOCK_HEIGHT,
+        height: actualHeight,
+        minHeight: actualHeight,
         // Dock containers don't capture pointer events except on docked cards
         pointerEvents: 'none',
       }}

@@ -72,7 +72,7 @@ export function OrbitRing() {
     <div
       ref={containerRef}
       className={cn(
-        'relative w-full h-full flex items-center justify-center pt-8',
+        'relative w-full h-full flex items-center justify-center',
         'touch-none select-none cursor-grab',
         isDragging && 'cursor-default'
       )}
@@ -143,12 +143,17 @@ export function OrbitRing() {
               data-orbital-card
               className="absolute"
               style={{
+                // HARD FIXED dimensions - no exceptions
                 width: ORBIT_CARD_W,
                 height: ORBIT_CARD_H,
+                maxWidth: ORBIT_CARD_W,
+                maxHeight: ORBIT_CARD_H,
+                minWidth: ORBIT_CARD_W,
+                minHeight: ORBIT_CARD_H,
                 left: '50%',
                 top: '50%',
-                // translate3d(x, 0, z) for true 3D ring
-                transform: `translate(-50%, -50%) translate3d(${x}px, 0px, ${z}px) scale(${scale})`,
+                // translate3d(x, 0, z) for true 3D ring - scale is ALWAYS 1.0
+                transform: `translate(-50%, -50%) translate3d(${x}px, 0px, ${z}px)`,
                 zIndex,
                 opacity,
                 transformStyle: 'preserve-3d',

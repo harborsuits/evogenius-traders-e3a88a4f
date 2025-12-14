@@ -7,6 +7,7 @@ import { GripHorizontal, X, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const DOCK_THRESHOLD = 150;
+const HEADER_HEIGHT = 40; // Fixed header height in pixels
 
 interface OrbitalCardProps {
   card: OrbitalCardType;
@@ -200,6 +201,19 @@ export function OrbitalCardComponent({
     }
   }, [card, handleDrilldown]);
 
+  // For orbit cards: enforce exact dimensions from props
+  // For docked cards: use h-full to fill dock container
+  const cardStyle = isDocked 
+    ? { touchAction: 'none' as const }
+    : { 
+        width: cardWidth, 
+        height: cardHeight, 
+        touchAction: 'none' as const 
+      };
+
+  // Body height for orbit cards = total height - header height
+  const bodyHeight = isDocked ? undefined : cardHeight - HEADER_HEIGHT;
+
   return (
     <>
       {/* Main card */}
@@ -208,21 +222,23 @@ export function OrbitalCardComponent({
         variant="terminal"
         className={cn(
           'relative transition-shadow duration-200 overflow-hidden flex flex-col',
-          isDocked ? 'h-full' : '',
+          isDocked ? 'h-full w-full' : '',
           card.type === 'drillable' && !isDraggingRef.current && 'hover:border-primary/40 cursor-pointer',
           isBeingDragged && 'opacity-30'
         )}
-        style={{ touchAction: 'none' }}
+        style={cardStyle}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
       >
+        {/* Fixed height sticky header */}
         <CardHeader 
           className={cn(
-            'py-2 px-3 flex flex-row items-center justify-between select-none shrink-0',
+            'flex flex-row items-center justify-between select-none shrink-0',
             'cursor-grab active:cursor-grabbing',
             'border-b border-border/30 bg-muted/20'
           )}
+          style={{ height: HEADER_HEIGHT, minHeight: HEADER_HEIGHT, padding: '0 12px' }}
         >
           <div className="flex items-center gap-2">
             <GripHorizontal className="h-3 w-3 text-muted-foreground/50" />
@@ -253,13 +269,16 @@ export function OrbitalCardComponent({
             )}
           </div>
         </CardHeader>
-        {/* Scrollable body container */}
+        
+        {/* Scrollable body container with fixed height for orbit cards */}
         <div 
           ref={bodyRef}
           className={cn(
-            "flex-1 min-h-0 overflow-y-auto px-3 py-2",
-            "scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent"
+            "overflow-y-auto overflow-x-hidden px-3 py-2",
+            "scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent",
+            isDocked && "flex-1 min-h-0"
           )}
+          style={isDocked ? undefined : { height: bodyHeight }}
           onClick={handleContentClick}
           onScroll={handleBodyScroll}
         >

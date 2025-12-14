@@ -19,7 +19,8 @@ import {
   ShoppingCart,
   Trophy,
   History,
-  Activity
+  Activity,
+  Bell
 } from 'lucide-react';
 
 // Portfolio Card Content
@@ -336,6 +337,67 @@ export function GenerationsCardContent({ compact }: { compact?: boolean }) {
       
       <div className="text-xs text-muted-foreground pt-2 border-t border-border/50">
         Click to view all generations →
+      </div>
+    </div>
+  );
+}
+
+// Alerts Card Content
+export function AlertsCardContent({ compact }: { compact?: boolean }) {
+  const { data: alerts = [] } = useQuery({
+    queryKey: ['alerts-summary'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('performance_alerts')
+        .select('*')
+        .eq('is_ack', false)
+        .order('created_at', { ascending: false })
+        .limit(5);
+      return data ?? [];
+    },
+  });
+
+  const critCount = alerts.filter((a: any) => a.severity === 'crit').length;
+  const warnCount = alerts.filter((a: any) => a.severity === 'warn').length;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <Bell className="h-4 w-4 text-yellow-500" />
+        <span className="text-xs">Performance Alerts</span>
+        {alerts.length > 0 && (
+          <Badge variant={critCount > 0 ? 'destructive' : 'warning'} className="text-[10px] ml-auto">
+            {alerts.length}
+          </Badge>
+        )}
+      </div>
+      
+      {alerts.length === 0 ? (
+        <div className="text-xs text-muted-foreground text-center py-4">
+          No active alerts
+        </div>
+      ) : (
+        <ScrollArea className="max-h-[100px]">
+          <div className="space-y-1">
+            {alerts.map((alert: any) => (
+              <div key={alert.id} className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <Badge 
+                    variant={alert.severity === 'crit' ? 'destructive' : alert.severity === 'warn' ? 'warning' : 'secondary'} 
+                    className="text-[10px] px-1"
+                  >
+                    {alert.severity.toUpperCase()}
+                  </Badge>
+                  <span className="font-mono truncate max-w-[140px]">{alert.title}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+      )}
+      
+      <div className="text-xs text-muted-foreground pt-2 border-t border-border/50">
+        Click to view all alerts →
       </div>
     </div>
   );

@@ -13,8 +13,10 @@ import FillsPage from "./pages/FillsPage";
 import TradesPage from "./pages/TradesPage";
 import AgentsPage from "./pages/AgentsPage";
 import AgentDetailPage from "./pages/AgentDetailPage";
+import AgentComparePage from "./pages/AgentComparePage";
 import GenerationsPage from "./pages/GenerationsPage";
 import GenerationDetailPage from "./pages/GenerationDetailPage";
+import AlertsPage from "./pages/AlertsPage";
 
 const queryClient = new QueryClient();
 
@@ -33,9 +35,11 @@ const App = () => (
             <Route path="/fills" element={<FillsPage />} />
             <Route path="/trades" element={<TradesPage />} />
             <Route path="/agents" element={<AgentsPage />} />
+            <Route path="/agents/compare" element={<AgentComparePage />} />
             <Route path="/agents/:agentId" element={<AgentDetailPage />} />
             <Route path="/generations" element={<GenerationsPage />} />
             <Route path="/generations/:genId" element={<GenerationDetailPage />} />
+            <Route path="/alerts" element={<AlertsPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

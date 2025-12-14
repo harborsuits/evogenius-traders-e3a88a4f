@@ -8,9 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Sparkline } from '@/components/ui/sparkline';
-import { ArrowLeft, Users, ToggleLeft, ToggleRight } from 'lucide-react';
+import { ArrowLeft, Users } from 'lucide-react';
 
 type Timeframe = 'all' | '30d' | '7d';
+type Position = { qty: number; costBasis: number };
 
 export default function AgentComparePage() {
   const navigate = useNavigate();
@@ -79,7 +80,8 @@ export default function AgentComparePage() {
       const { data: fills } = await supabase
         .from('paper_fills')
         .select('order_id, price, qty, side, timestamp')
-        .in('order_id', orders.map(o => o.id));
+        .in('order_id', orders.map(o => o.id))
+        .order('timestamp', { ascending: true }); // Fix E: Order fills
 
       return { orders: orders || [], fills: fills || [] };
     },
@@ -88,7 +90,7 @@ export default function AgentComparePage() {
 
   // Compute stats with timeframe filtering
   const agentStats = useMemo(() => {
-    if (!fillsData) return new Map();
+    if (!fillsData) return new Map<string, { wins: number; losses: number; pnlSeries: number[]; totalPnl: number; trades: number }>();
     const { orders, fills } = fillsData;
     const timeframeStart = getTimeframeFilter();
     
@@ -111,20 +113,21 @@ export default function AgentComparePage() {
     const filteredOrderIds = new Set(filteredFills.map(f => f.order_id));
     const filteredOrders = orders.filter(o => filteredOrderIds.has(o.id));
 
-    // Build per-agent position tracking
-    const agentPositions = new Map<string, Map<string, { qty: number; costBasis: number }>>();
+    // Fix B: Build order lookup map for O(1) access
+    const orderById = new Map<string, typeof orders[0]>(filteredOrders.map(o => [o.id, o]));
+
+    // Build per-agent position tracking with explicit types (Fix A)
+    const agentPositions = new Map<string, Map<string, Position>>();
     const agentPnLPoints = new Map<string, number[]>();
 
     filteredFills.forEach(fill => {
-      const order = filteredOrders.find(o => o.id === fill.order_id);
+      const order = orderById.get(fill.order_id); // Fix B: O(1) lookup
       if (!order?.agent_id) return;
 
       const agentId = order.agent_id;
       const symbol = order.symbol;
       const agentStat = stats.get(agentId);
       if (!agentStat) return;
-
-      agentStat.trades++;
 
       if (!agentPositions.has(agentId)) {
         agentPositions.set(agentId, new Map());
@@ -147,8 +150,9 @@ export default function AgentComparePage() {
         pnlPoints.push(prevPnl);
       } else {
         const avgEntry = pos.qty > 0 ? pos.costBasis / pos.qty : 0;
-        const realizedPnL = (fill.price - avgEntry) * fill.qty;
-        const soldQty = Math.min(fill.qty, pos.qty);
+        const soldQty = Math.min(fill.qty, pos.qty); // Fix D: Calculate soldQty first
+        const realizedPnL = (fill.price - avgEntry) * soldQty; // Fix D: Use soldQty for PnL
+        
         pos.qty -= soldQty;
         pos.costBasis = Math.max(0, pos.costBasis - avgEntry * soldQty);
         
@@ -156,8 +160,12 @@ export default function AgentComparePage() {
         pnlPoints.push(newPnl);
         agentStat.totalPnl = newPnl;
 
-        if (realizedPnL > 0) agentStat.wins++;
-        else if (realizedPnL < 0) agentStat.losses++;
+        // Fix C: Only count as trade when we actually close a position
+        if (soldQty > 0) {
+          agentStat.trades += 1;
+          if (realizedPnL > 0) agentStat.wins++;
+          else if (realizedPnL < 0) agentStat.losses++;
+        }
       }
     });
 
@@ -274,7 +282,7 @@ export default function AgentComparePage() {
                   {/* Stats Grid */}
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="bg-muted/30 rounded p-2">
-                      <div className="text-muted-foreground">Trades</div>
+                      <div className="text-muted-foreground">Closed Trades</div>
                       <div className="font-mono font-bold">{stat?.trades ?? perf?.total_trades ?? 0}</div>
                     </div>
                     <div className="bg-muted/30 rounded p-2">

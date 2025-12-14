@@ -50,7 +50,9 @@ export default function AgentsPage() {
 
   const goToCompare = () => {
     if (selectedAgents.size >= 1) {
-      navigate(`/agents/compare?ids=${Array.from(selectedAgents).join(',')}`);
+      // Fix A: Sort IDs for stable/deterministic URLs
+      const sortedIds = Array.from(selectedAgents).sort();
+      navigate(`/agents/compare?ids=${sortedIds.join(',')}`);
     }
   };
   

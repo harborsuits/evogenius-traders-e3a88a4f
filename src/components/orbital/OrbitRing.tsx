@@ -1,18 +1,31 @@
 import React, { useRef, useCallback, useEffect, useState } from 'react';
 import { useOrbital } from '@/contexts/OrbitalContext';
-import { OrbitalCardComponent } from './OrbitalCard';
+import { OrbitCapsule } from './OrbitCapsule';
 import { cn } from '@/lib/utils';
-
-const ORBIT_RADIUS = 400;
-const PERSPECTIVE = 2500;
-const CARD_WIDTH = 300;
-const CARD_HEIGHT = 200;
 
 export function OrbitRing() {
   const { orbitCards, rotationAngle, rotateOrbit, getCardById, isDragging } = useOrbital();
   const containerRef = useRef<HTMLDivElement>(null);
   const isDraggingOrbit = useRef(false);
   const lastX = useRef(0);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+  // Responsive radius calculation
+  useEffect(() => {
+    const updateDimensions = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        setDimensions({ width: rect.width, height: rect.height });
+      }
+    };
+    
+    updateDimensions();
+    window.addEventListener('resize', updateDimensions);
+    return () => window.removeEventListener('resize', updateDimensions);
+  }, []);
+
+  // Responsive radius: clamp(420, min(viewportW, viewportH)*0.45, 720)
+  const radius = Math.max(320, Math.min(Math.min(dimensions.width, dimensions.height) * 0.42, 580));
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     // Don't start orbit drag if clicking on a card
@@ -30,8 +43,7 @@ export function OrbitRing() {
     const deltaX = e.clientX - lastX.current;
     lastX.current = e.clientX;
     
-    // Rotate based on horizontal movement
-    rotateOrbit(deltaX * 0.3);
+    rotateOrbit(deltaX * 0.4);
   }, [rotateOrbit]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
@@ -42,7 +54,7 @@ export function OrbitRing() {
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
-    rotateOrbit(e.deltaY * 0.15);
+    rotateOrbit(e.deltaY * 0.2);
   }, [rotateOrbit]);
 
   const cardCount = orbitCards.length;
@@ -54,8 +66,7 @@ export function OrbitRing() {
       className={cn(
         'relative w-full h-full flex items-center justify-center',
         'touch-none select-none cursor-grab',
-        isDragging && 'pointer-events-none',
-        isDraggingOrbit.current && 'cursor-grabbing'
+        isDragging && 'cursor-default'
       )}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -63,101 +74,80 @@ export function OrbitRing() {
       onPointerLeave={handlePointerUp}
       onWheel={handleWheel}
     >
-      {/* Perspective container */}
-      <div 
-        className="relative"
-        style={{
-          perspective: `${PERSPECTIVE}px`,
-          perspectiveOrigin: 'center center',
-        }}
-      >
-        {/* Orbit stage - pushed back for depth */}
-        <div
-          className="relative"
-          style={{
-            transformStyle: 'preserve-3d',
-            transform: `translateZ(-${ORBIT_RADIUS * 0.5}px)`,
-          }}
-        >
-          {/* Center anchor point (glowing dot) */}
-          <div 
-            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10"
-            style={{ transformStyle: 'preserve-3d' }}
-          >
-            <div className="relative">
-              {/* Outer glow */}
-              <div className="absolute -inset-8 rounded-full bg-primary/10 blur-xl animate-pulse" />
-              {/* Inner glow */}
-              <div className="absolute -inset-4 rounded-full bg-primary/20 blur-md" />
-              {/* Center dot */}
-              <div className="w-3 h-3 rounded-full bg-primary shadow-[0_0_20px_4px] shadow-primary/50" />
-            </div>
-          </div>
-
-          {/* Orbit ring visual (flat circle) */}
-          <div 
-            className="absolute left-1/2 top-1/2 border border-border/20 rounded-full pointer-events-none"
-            style={{
-              width: ORBIT_RADIUS * 2,
-              height: ORBIT_RADIUS * 2,
-              transform: 'translate(-50%, -50%) rotateX(75deg)',
-              transformStyle: 'preserve-3d',
-            }}
-          />
-
-          {/* Cards arranged around orbit ring */}
-          {orbitCards.map((cardId, index) => {
-            const card = getCardById(cardId);
-            if (!card) return null;
-
-            // Calculate angle for this card
-            const angle = (index * angleStep) + rotationAngle;
-            const angleRad = (angle * Math.PI) / 180;
-            
-            // Position on circle: x = cos(angle)*radius, z = sin(angle)*radius
-            const x = Math.cos(angleRad) * ORBIT_RADIUS;
-            const z = Math.sin(angleRad) * ORBIT_RADIUS;
-            
-            // Scale based on z position (front = larger, back = smaller)
-            const normalizedZ = (z + ORBIT_RADIUS) / (2 * ORBIT_RADIUS); // 0 to 1
-            const scale = 0.6 + 0.4 * normalizedZ;
-            const opacity = 0.5 + 0.5 * normalizedZ;
-            const zIndex = Math.round(normalizedZ * 100);
-
-            return (
-              <div
-                key={cardId}
-                data-orbital-card
-                className="absolute transition-opacity duration-150"
-                style={{
-                  width: CARD_WIDTH,
-                  left: '50%',
-                  top: '50%',
-                  transform: `
-                    translate(-50%, -50%)
-                    translate3d(${x}px, 0, ${z}px)
-                    scale(${scale})
-                  `,
-                  transformStyle: 'preserve-3d',
-                  zIndex,
-                  opacity,
-                }}
-              >
-                <OrbitalCardComponent card={card} />
-              </div>
-            );
-          })}
+      {/* Center anchor point (glowing dot) */}
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-none">
+        <div className="relative">
+          <div className="absolute -inset-12 rounded-full bg-primary/5 blur-2xl" />
+          <div className="absolute -inset-6 rounded-full bg-primary/10 blur-lg" />
+          <div className="w-4 h-4 rounded-full bg-primary/80 shadow-[0_0_24px_6px] shadow-primary/40" />
         </div>
       </div>
+
+      {/* Orbit ring visual (subtle circle) */}
+      <div 
+        className="absolute left-1/2 top-1/2 border border-border/20 rounded-full pointer-events-none"
+        style={{
+          width: radius * 2,
+          height: radius * 2,
+          transform: 'translate(-50%, -50%)',
+        }}
+      />
+      
+      {/* Secondary inner ring */}
+      <div 
+        className="absolute left-1/2 top-1/2 border border-border/10 rounded-full pointer-events-none"
+        style={{
+          width: radius * 1.2,
+          height: radius * 1.2,
+          transform: 'translate(-50%, -50%)',
+        }}
+      />
+
+      {/* Capsules arranged around orbit ring */}
+      {orbitCards.map((cardId, index) => {
+        const card = getCardById(cardId);
+        if (!card) return null;
+
+        // Calculate angle for this card
+        const angle = (index * angleStep) + rotationAngle;
+        const angleRad = (angle * Math.PI) / 180;
+        
+        // Position on circle
+        const x = Math.cos(angleRad) * radius;
+        const y = Math.sin(angleRad) * radius;
+        
+        // Subtle depth effect (clamped tightly for visibility)
+        // Front (bottom of screen) = angle ~90deg, back (top) = angle ~270deg
+        const normalizedDepth = (Math.sin(angleRad) + 1) / 2; // 0 = back, 1 = front
+        const scale = 0.88 + 0.12 * normalizedDepth; // 0.88 to 1.0
+        const opacity = 0.88 + 0.12 * normalizedDepth; // 0.88 to 1.0
+        const zIndex = Math.round(normalizedDepth * 100);
+
+        return (
+          <div
+            key={cardId}
+            className="absolute transition-transform duration-75"
+            style={{
+              left: '50%',
+              top: '50%',
+              transform: `translate(-50%, -50%) translate(${x}px, ${y}px) scale(${scale})`,
+              zIndex,
+              opacity,
+            }}
+          >
+            <OrbitCapsule card={card} />
+          </div>
+        );
+      })}
 
       {/* Rotation indicator */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2 rounded-full bg-card/80 backdrop-blur border border-border/50">
         <span className="text-xs text-muted-foreground font-mono">
-          {Math.round(rotationAngle % 360)}°
+          {Math.round(((rotationAngle % 360) + 360) % 360)}°
         </span>
         <span className="w-px h-3 bg-border" />
         <span className="text-xs text-muted-foreground font-mono">
-          {cardCount} cards
+          {cardCount} modules
         </span>
       </div>
     </div>

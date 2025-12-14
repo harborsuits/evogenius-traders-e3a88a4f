@@ -6,7 +6,19 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const SYMBOLS = ['BTC-USD', 'ETH-USD'];
+// DYNAMIC UNIVERSE CONFIGURATION
+// Minimum 24h volume in USD to qualify as liquid
+const MIN_VOLUME_USD = 1_000_000; // $1M floor for validation (raise to $5M for production)
+// Max symbols to poll per cycle (performance/rate limit guard)
+const MAX_SYMBOLS = 20;
+
+interface CoinbaseProduct {
+  id: string;
+  base_currency: string;
+  quote_currency: string;
+  status: string;
+  trading_disabled: boolean;
+}
 
 interface CoinbaseTicker {
   price: string;
@@ -14,26 +26,59 @@ interface CoinbaseTicker {
   time: string;
 }
 
+// Fetch all eligible Coinbase spot USD products
+async function fetchEligibleProducts(): Promise<string[]> {
+  try {
+    console.log('[market-poll] Fetching Coinbase products...');
+    
+    const response = await fetch('https://api.exchange.coinbase.com/products', {
+      headers: { 'Accept': 'application/json' }
+    });
+    
+    if (!response.ok) {
+      console.error(`[market-poll] Products API error: ${response.status}`);
+      return ['BTC-USD', 'ETH-USD']; // Fallback to core pairs
+    }
+    
+    const products: CoinbaseProduct[] = await response.json();
+    
+    // Filter for eligible spot USD pairs
+    const eligible = products.filter(p => 
+      p.status === 'online' &&
+      !p.trading_disabled &&
+      p.quote_currency === 'USD' &&
+      p.base_currency !== 'USD'
+    );
+    
+    console.log(`[market-poll] Found ${eligible.length} eligible USD pairs`);
+    
+    // Return product IDs (e.g., 'BTC-USD', 'ETH-USD')
+    return eligible.map(p => p.id);
+  } catch (error) {
+    console.error('[market-poll] Error fetching products:', error);
+    return ['BTC-USD', 'ETH-USD']; // Fallback
+  }
+}
+
 async function fetchCoinbasePrice(symbol: string): Promise<{ price: number; volume_24h: number } | null> {
   try {
-    console.log(`[market-poll] Fetching ${symbol} from Coinbase...`);
-    
     const response = await fetch(`https://api.exchange.coinbase.com/products/${symbol}/ticker`, {
       headers: { 'Accept': 'application/json' }
     });
     
     if (!response.ok) {
-      console.error(`[market-poll] Coinbase API error for ${symbol}: ${response.status}`);
+      // Don't log 404s as errors - some products may be temporarily unavailable
+      if (response.status !== 404) {
+        console.error(`[market-poll] Coinbase API error for ${symbol}: ${response.status}`);
+      }
       return null;
     }
     
     const data: CoinbaseTicker = await response.json();
-    console.log(`[market-poll] ${symbol}: $${data.price}`);
+    const price = parseFloat(data.price);
+    const volume_24h = parseFloat(data.volume) * price;
     
-    return {
-      price: parseFloat(data.price),
-      volume_24h: parseFloat(data.volume) * parseFloat(data.price),
-    };
+    return { price, volume_24h };
   } catch (error) {
     console.error(`[market-poll] Error fetching ${symbol}:`, error);
     return null;
@@ -115,9 +160,43 @@ serve(async (req) => {
       );
     }
 
+    // DYNAMIC UNIVERSE: Fetch all eligible products from Coinbase
+    const allEligibleProducts = await fetchEligibleProducts();
+    
+    // Get price data for all eligible products to filter by volume
+    const productsWithVolume: { symbol: string; volume: number }[] = [];
+    
+    // Fetch in batches to avoid rate limits (max 10 req/sec on public endpoints)
+    const batchSize = 5;
+    for (let i = 0; i < allEligibleProducts.length; i += batchSize) {
+      const batch = allEligibleProducts.slice(i, i + batchSize);
+      const batchResults = await Promise.all(
+        batch.map(async (symbol) => {
+          const data = await fetchCoinbasePrice(symbol);
+          return data ? { symbol, volume: data.volume_24h } : null;
+        })
+      );
+      
+      for (const result of batchResults) {
+        if (result && result.volume >= MIN_VOLUME_USD) {
+          productsWithVolume.push(result);
+        }
+      }
+    }
+    
+    // Sort by volume and take top N
+    productsWithVolume.sort((a, b) => b.volume - a.volume);
+    const symbols = productsWithVolume.slice(0, MAX_SYMBOLS).map(p => p.symbol);
+    
+    // Always ensure BTC-USD and ETH-USD are included (core pairs)
+    if (!symbols.includes('BTC-USD')) symbols.unshift('BTC-USD');
+    if (!symbols.includes('ETH-USD')) symbols.splice(1, 0, 'ETH-USD');
+    
+    console.log(`[market-poll] Polling ${symbols.length} symbols: ${symbols.slice(0, 5).join(', ')}...`);
+
     const results: { symbol: string; price: number; change_24h: number; volume_24h: number }[] = [];
 
-    for (const symbol of SYMBOLS) {
+    for (const symbol of symbols) {
       const priceData = await fetchCoinbasePrice(symbol);
       
       if (priceData) {

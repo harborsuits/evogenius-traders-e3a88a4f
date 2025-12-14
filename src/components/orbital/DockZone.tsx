@@ -38,19 +38,6 @@ export function DockZone({ zone }: DockZoneProps) {
         pointerEvents: 'none',
       }}
     >
-      {/* Zone label - always visible */}
-      <div 
-        className={cn(
-          'absolute left-4 flex items-center gap-2 text-xs font-mono text-muted-foreground/60 z-10',
-          zone === 'top' ? 'top-2' : 'bottom-2'
-        )}
-        style={{ pointerEvents: 'none' }}
-      >
-        <Dock className="h-3 w-3" />
-        <span>
-          {zone === 'top' ? 'TOP' : 'BOTTOM'} DOCK ({cardCount}/{config.maxCards})
-        </span>
-      </div>
 
       {isEmpty ? (
         // Empty state with drop hint

@@ -1,82 +1,42 @@
+import { OrbitalCommandCenter } from '@/components/orbital';
+import { OrbitalCard } from '@/contexts/OrbitalContext';
 import { Header } from '@/components/layout/Header';
 import { SafetyBanner } from '@/components/dashboard/SafetyBanner';
-import { MarketTicker } from '@/components/dashboard/MarketTicker';
-import { MetricCard } from '@/components/dashboard/MetricCard';
-import { GenerationProgress } from '@/components/dashboard/GenerationProgress';
-import { GenerationHealth } from '@/components/dashboard/GenerationHealth';
-import { TopAgentsLeaderboard } from '@/components/dashboard/TopAgentsLeaderboard';
-import { TradeLog } from '@/components/dashboard/TradeLog';
-import { GenerationHistory } from '@/components/dashboard/GenerationHistory';
-import { ControlPanel } from '@/components/dashboard/ControlPanel';
-import { PollingHealth } from '@/components/dashboard/PollingHealth';
-import { PaperPortfolio } from '@/components/dashboard/PaperPortfolio';
-import { SecondaryPanelTabs } from '@/components/dashboard/SecondaryPanelTabs';
-import { TradeCycleStatus } from '@/components/dashboard/TradeCycleStatus';
 import { LiveLockedWorkspace } from '@/components/dashboard/LiveLockedWorkspace';
 import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
-import { 
-  useSystemState,
-  useTrades,
-  useMarketData,
-  useGenerationHistory,
-  useSystemConfig,
-  useRealtimeSubscriptions,
-} from '@/hooks/useEvoTraderData';
-import { useGenOrdersCount, useCohortCount } from '@/hooks/useGenOrders';
-import { 
-  DollarSign, 
-  Users, 
-  Activity, 
-  TrendingUp,
-  Wallet,
-  Shield,
-  Loader2
-} from 'lucide-react';
-import { Generation, SystemStatus } from '@/types/evotrader';
+import { useSystemState, useRealtimeSubscriptions } from '@/hooks/useEvoTraderData';
+import { SystemStatus, Generation } from '@/types/evotrader';
+import { Loader2 } from 'lucide-react';
+
+// Cockpit tiles
+import { TradeCycleTile, GenHealthTile, PollingHealthTile, SystemControlTile, CapitalOverviewTile } from '@/components/orbital/tiles/CockpitTiles';
+// Drillable cards
+import { PortfolioCardContent, PositionsCardContent, OrdersCardContent, TradesCardContent, AgentsCardContent, GenerationsCardContent } from '@/components/orbital/tiles/DrillableCards';
+
+// Define all orbital cards
+const orbitalCards: OrbitalCard[] = [
+  // Cockpit tiles (not drillable)
+  { id: 'trade-cycle', title: 'Trade Cycle', type: 'cockpit', component: TradeCycleTile },
+  { id: 'gen-health', title: 'Generation Health', type: 'cockpit', component: GenHealthTile },
+  { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
+  { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
+  { id: 'capital', title: 'Capital Overview', type: 'cockpit', component: CapitalOverviewTile },
+  // Drillable cards
+  { id: 'portfolio', title: 'Portfolio', type: 'drillable', drilldownPath: '/portfolio', component: PortfolioCardContent },
+  { id: 'positions', title: 'Positions', type: 'drillable', drilldownPath: '/positions', component: PositionsCardContent },
+  { id: 'orders', title: 'Orders', type: 'drillable', drilldownPath: '/orders', component: OrdersCardContent },
+  { id: 'trades', title: 'Trades', type: 'drillable', drilldownPath: '/fills', component: TradesCardContent },
+  { id: 'agents', title: 'Agents', type: 'drillable', drilldownPath: '/agents', component: AgentsCardContent },
+  { id: 'generations', title: 'Generations', type: 'drillable', drilldownPath: '/generations', component: GenerationsCardContent },
+];
 
 const Index = () => {
-  // Get trade mode
   const { isLive, isLiveArmed } = useCurrentTradeMode();
-
-  // Enable real-time subscriptions
   useRealtimeSubscriptions();
-
-  // Fetch all data from database
-  const { data: systemState, isLoading: loadingState } = useSystemState();
-  const { data: trades = [], isLoading: loadingTrades } = useTrades(systemState?.current_generation_id ?? null);
-  const { data: marketData = [], isLoading: loadingMarket } = useMarketData();
-  const { data: generationHistory = [] } = useGenerationHistory();
-  const { data: config } = useSystemConfig();
+  const { data: systemState, isLoading } = useSystemState();
   
-  // Live metrics from database
-  const { data: genOrdersCount = 0 } = useGenOrdersCount(systemState?.current_generation_id ?? null);
-  const { data: cohortCount = 0 } = useCohortCount(systemState?.current_generation_id ?? null);
-
-  const isLoading = loadingState || loadingTrades || loadingMarket;
-
-  // Extract current generation from system state
   const currentGeneration = systemState?.generations as Generation | null;
   const status = (systemState?.status ?? 'stopped') as SystemStatus;
-
-  // Default config values - always use this structure
-  const defaultConfig = {
-    trading: { symbols: ['BTC-USD', 'ETH-USD'], decision_interval_minutes: 60 },
-    capital: { total: 10000, active_pool_pct: 0.40 },
-    population: { size: 100, elite_count: 10, parent_count: 15 },
-    generation: { max_days: 7, max_trades: 100, max_drawdown_pct: 0.15 },
-    risk: { max_trades_per_agent_per_day: 5, max_trades_per_symbol_per_day: 50 },
-  };
-
-  // Merge with defaults to ensure all properties exist
-  const activeConfig = {
-    ...defaultConfig,
-    ...config,
-    generation: { ...defaultConfig.generation, ...(config?.generation ?? {}) },
-    trading: { ...defaultConfig.trading, ...(config?.trading ?? {}) },
-    capital: { ...defaultConfig.capital, ...(config?.capital ?? {}) },
-    population: { ...defaultConfig.population, ...(config?.population ?? {}) },
-    risk: { ...defaultConfig.risk, ...(config?.risk ?? {}) },
-  };
 
   if (isLoading) {
     return (
@@ -89,15 +49,10 @@ const Index = () => {
     );
   }
 
-  // If in Live mode (not armed), show the locked workspace instead
   if (isLive && !isLiveArmed) {
     return (
       <div className="min-h-screen bg-background bg-grid">
-        <Header 
-          status={status} 
-          generationNumber={currentGeneration?.generation_number} 
-        />
-        
+        <Header status={status} generationNumber={currentGeneration?.generation_number} />
         <main className="container px-4 md:px-6 py-6 max-w-3xl mx-auto">
           <LiveLockedWorkspace />
         </main>
@@ -106,128 +61,12 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background bg-grid">
-      <Header 
-        status={status} 
-        generationNumber={currentGeneration?.generation_number} 
-      />
-      
-      <main className="container px-4 md:px-6 py-6 space-y-6">
-        {/* Safety Banner - Always Visible */}
-        <SafetyBanner />
-
-        {/* Market Ticker */}
-        <section className="animate-fade-in">
-          <MarketTicker markets={marketData} />
-        </section>
-
-        {/* Key Metrics */}
-        <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 animate-fade-in" style={{ animationDelay: '100ms' }}>
-          <MetricCard
-            label="Total Capital"
-            value={`$${(systemState?.total_capital ?? 0).toLocaleString()}`}
-            icon={Wallet}
-            variant="stat"
-            badge="CONFIG"
-          />
-          <MetricCard
-            label="Active Pool"
-            value={`$${(systemState?.active_pool ?? 0).toLocaleString()}`}
-            subValue={systemState?.total_capital ? `${((systemState.active_pool / systemState.total_capital) * 100).toFixed(0)}%` : '0%'}
-            icon={DollarSign}
-            badge="CONFIG"
-          />
-          <MetricCard
-            label="Reserve"
-            value={`$${(systemState?.reserve ?? 0).toLocaleString()}`}
-            icon={Shield}
-            badge="CONFIG"
-          />
-          <MetricCard
-            label="Cohort Agents"
-            value={cohortCount}
-            subValue="LIVE"
-            icon={Users}
-          />
-          <MetricCard
-            label="Gen Orders"
-            value={genOrdersCount}
-            subValue="LIVE"
-            icon={Activity}
-          />
-          <MetricCard
-            label="Today P&L"
-            value={`$${(systemState?.today_pnl ?? 0).toFixed(2)}`}
-            trend={(systemState?.today_pnl ?? 0) >= 0 ? 'up' : 'down'}
-            icon={TrendingUp}
-          />
-        </section>
-
-        {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column - Generation & Agents */}
-          <div className="lg:col-span-8 space-y-6">
-            {/* Generation Progress + Agent Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in" style={{ animationDelay: '200ms' }}>
-              {currentGeneration && (
-                <GenerationProgress
-                  generation={currentGeneration}
-                  maxTrades={activeConfig.generation.max_trades}
-                  maxDays={activeConfig.generation.max_days}
-                  maxDrawdown={activeConfig.generation.max_drawdown_pct}
-                  liveOrdersCount={genOrdersCount}
-                />
-              )}
-              <div className="bg-card border border-border rounded-lg p-6">
-                <TopAgentsLeaderboard generationId={systemState?.current_generation_id ?? null} />
-              </div>
-            </div>
-
-            {/* Trade Log */}
-            <div className="animate-fade-in" style={{ animationDelay: '300ms' }}>
-              <TradeLog trades={trades} maxHeight="350px" />
-            </div>
-
-            {/* Generation History */}
-            <div className="animate-fade-in" style={{ animationDelay: '400ms' }}>
-              <GenerationHistory generations={generationHistory} />
-            </div>
-          </div>
-
-          {/* Right Column - Cockpit (Always Visible) + Tabbed Panels */}
-          <div className="lg:col-span-4 space-y-6">
-            {/* Always Visible - Cockpit Instruments */}
-            <div className="space-y-4 animate-fade-in" style={{ animationDelay: '200ms' }}>
-              <ControlPanel 
-                status={status}
-                generationId={systemState?.current_generation_id}
-                onStart={() => console.log('Start')}
-                onPause={() => console.log('Pause')}
-                onStop={() => console.log('Stop')}
-              />
-              <GenerationHealth generationId={systemState?.current_generation_id ?? null} />
-              <PaperPortfolio />
-              <TradeCycleStatus />
-              <PollingHealth />
-            </div>
-
-            {/* Tabbed Secondary Panels */}
-            <div className="animate-fade-in" style={{ animationDelay: '300ms' }}>
-              <SecondaryPanelTabs config={activeConfig} />
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <footer className="py-8 text-center">
-          <p className="text-xs text-muted-foreground font-mono">
-            EvoTrader v1.0 • Evolutionary Crypto Trading System • Coinbase Advanced Trade API
-          </p>
-          <p className="text-xs text-muted-foreground/50 font-mono mt-1">
-            Risk Warning: Trading cryptocurrencies involves significant risk. Start small. Validate thoroughly.
-          </p>
-        </footer>
-      </main>
+    <div className="h-screen flex flex-col overflow-hidden">
+      <Header status={status} generationNumber={currentGeneration?.generation_number} />
+      <SafetyBanner />
+      <div className="flex-1 overflow-hidden">
+        <OrbitalCommandCenter cards={orbitalCards} />
+      </div>
     </div>
   );
 };

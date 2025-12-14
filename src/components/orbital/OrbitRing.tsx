@@ -5,9 +5,9 @@ import { cn } from '@/lib/utils';
 
 const CARD_WIDTH = 380;
 const CARD_HEIGHT = 300;
-const SAFE_MARGIN = 16;
+const SAFE_MARGIN = 8;
 const PERSPECTIVE = 3000;
-const ORBIT_SCALE = 0.75;
+const ORBIT_SCALE = 0.78;
 
 export function OrbitRing() {
   const { orbitCards, rotationAngle, rotateOrbit, getCardById, isDragging } = useOrbital();

@@ -143,9 +143,7 @@ export function Header({ status, generationNumber }: HeaderProps) {
 
         {/* Right: Toggle + Kill + Coinbase */}
         <div className="flex items-center gap-1.5 shrink-0">
-          <div className="hidden md:block">
-            <TradeModeToggle compact />
-          </div>
+          <TradeModeToggle compact />
 
           <Button
             variant="destructive"

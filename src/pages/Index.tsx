@@ -16,16 +16,16 @@ import { PortfolioCardContent, PositionsCardContent, OrdersCardContent, TradesCa
 const orbitalCards: OrbitalCard[] = [
   // Cockpit tiles (not drillable)
   { id: 'trade-cycle', title: 'Trade Cycle', type: 'cockpit', component: TradeCycleTile },
-  { id: 'gen-health', title: 'Generation Health', type: 'cockpit', component: GenHealthTile },
   { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
   { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
   { id: 'capital', title: 'Capital Overview', type: 'cockpit', component: CapitalOverviewTile },
-  // Drillable cards
-  { id: 'portfolio', title: 'Portfolio', type: 'drillable', drilldownPath: '/portfolio', component: PortfolioCardContent },
+  // Drillable cards - these navigate to full pages
+  { id: 'gen-health', title: 'GEN_010 Health', type: 'drillable', drilldownPath: '/generations', component: GenHealthTile },
+  { id: 'trades', title: 'Trades & Fills', type: 'drillable', drilldownPath: '/fills', component: TradesCardContent },
+  { id: 'agents', title: 'Agent Leaderboard', type: 'drillable', drilldownPath: '/agents', component: AgentsCardContent },
+  { id: 'portfolio', title: 'Portfolio & Positions', type: 'drillable', drilldownPath: '/portfolio', component: PortfolioCardContent },
   { id: 'positions', title: 'Positions', type: 'drillable', drilldownPath: '/positions', component: PositionsCardContent },
   { id: 'orders', title: 'Orders', type: 'drillable', drilldownPath: '/orders', component: OrdersCardContent },
-  { id: 'trades', title: 'Trades', type: 'drillable', drilldownPath: '/fills', component: TradesCardContent },
-  { id: 'agents', title: 'Agents', type: 'drillable', drilldownPath: '/agents', component: AgentsCardContent },
   { id: 'generations', title: 'Generations', type: 'drillable', drilldownPath: '/generations', component: GenerationsCardContent },
 ];
 

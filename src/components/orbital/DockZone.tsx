@@ -60,20 +60,19 @@ export function DockZone({ zone }: DockZoneProps) {
       ) : (
         // Docked cards - minimal padding
         <div 
-          className="h-full px-1 py-0.5 flex gap-1 justify-center"
+          className="h-full px-2 py-1 flex gap-2 justify-center items-stretch"
           style={{ pointerEvents: 'none' }}
         >
           {dockedCardIds.map((cardId) => {
             const card = getCardById(cardId);
             if (!card) return null;
             
-            const widthPercent = zone === 'bottom' 
+            // Full width cards, split evenly
+            const widthPercent = cardCount === 1 
               ? '100%' 
-              : cardCount === 1 
+              : cardCount === 2 
                 ? '50%' 
-                : cardCount === 2 
-                  ? '45%' 
-                  : '32%';
+                : '33.33%';
             
             return (
               <div 
@@ -81,7 +80,7 @@ export function DockZone({ zone }: DockZoneProps) {
                 className="h-full"
                 style={{ 
                   width: widthPercent,
-                  maxWidth: cardCount === 1 ? 600 : 450,
+                  flex: 1,
                   pointerEvents: 'auto',
                 }}
               >

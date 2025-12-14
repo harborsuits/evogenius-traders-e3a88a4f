@@ -126,14 +126,14 @@ export function OrbitRing() {
           const x = Math.cos(angleRad) * safeRadius;
           const z = Math.sin(angleRad) * safeRadius;
           
-          // Depth effect: normalize z position for scale/opacity
+          // Depth effect: normalize z position for opacity only
           // z ranges from -radius (back) to +radius (front)
           const normalizedDepth = (z + safeRadius) / (safeRadius * 2); // 0 = back, 1 = front
           
-          // Clamped scale: 0.85 to 1.0
-          const scale = 0.85 + 0.15 * normalizedDepth;
-          // Clamped opacity: 0.7 to 1.0
-          const opacity = 0.7 + 0.3 * normalizedDepth;
+          // Uniform scale - all cards same size
+          const scale = 1;
+          // Clamped opacity: 0.75 to 1.0 for subtle depth hint
+          const opacity = 0.75 + 0.25 * normalizedDepth;
           // Z-index based on depth (front cards on top)
           const zIndex = Math.round(normalizedDepth * 100);
 

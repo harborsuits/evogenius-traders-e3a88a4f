@@ -166,8 +166,10 @@ function makeDecision(
   
   // Trend Pullback Strategy
   if (strategy === 'trend_pullback') {
-    const emaTrending = Math.abs(market.ema_50_slope) > thresholds.trend_threshold;
-    const pullback = Math.abs(market.change_24h) < thresholds.pullback_pct;
+    // Use >= for slope comparison to catch edge cases
+    const emaTrending = Math.abs(market.ema_50_slope) >= thresholds.trend_threshold;
+    // FIX: Use absolute value for pullback - negative change IS a pullback in uptrend
+    const pullback = Math.abs(market.change_24h) <= thresholds.pullback_pct;
     
     if (emaTrending && market.ema_50_slope > 0 && pullback && !hasPosition) {
       reasons.push('ema_trending_up', 'pullback_detected');
@@ -255,6 +257,7 @@ Deno.serve(async (req) => {
   const cycleId = crypto.randomUUID();
   
   console.log(`[trade-cycle] Starting cycle ${cycleId}`);
+  console.log(`[trade-cycle] THRESHOLDS: trend=${BASELINE_THRESHOLDS.trend_threshold}, pullback=${BASELINE_THRESHOLDS.pullback_pct}, rsi=${BASELINE_THRESHOLDS.rsi_threshold}, vol_contraction=${BASELINE_THRESHOLDS.vol_contraction}`);
 
   try {
     // 1. Check system state

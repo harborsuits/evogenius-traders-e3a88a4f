@@ -3,8 +3,9 @@ import { useOrbital } from '@/contexts/OrbitalContext';
 import { OrbitalCardComponent } from './OrbitalCard';
 import { cn } from '@/lib/utils';
 
-const CARD_WIDTH = 340;
-const CARD_HEIGHT = 260;
+// Fixed uniform dimensions for ALL orbit cards
+const ORBIT_CARD_W = 380;
+const ORBIT_CARD_H = 300;
 const PERSPECTIVE = 1500;
 
 export function OrbitRing() {
@@ -30,8 +31,8 @@ export function OrbitRing() {
   }, []);
 
   // Fill available vertical space - orbit should take up most of the container
-  const verticalSpace = dimensions.height - CARD_HEIGHT;
-  const horizontalSpace = dimensions.width - CARD_WIDTH;
+  const verticalSpace = dimensions.height - ORBIT_CARD_H;
+  const horizontalSpace = dimensions.width - ORBIT_CARD_W;
   const safeRadius = Math.max(120, Math.min(verticalSpace / 2 - 10, horizontalSpace / 2 - 10, 320));
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
@@ -87,8 +88,8 @@ export function OrbitRing() {
         ref={stageRef}
         className="relative"
         style={{
-          width: safeRadius * 2 + CARD_WIDTH,
-          height: safeRadius * 2 + CARD_HEIGHT,
+          width: safeRadius * 2 + ORBIT_CARD_W,
+          height: safeRadius * 2 + ORBIT_CARD_H,
           transformStyle: 'preserve-3d',
         }}
       >
@@ -126,25 +127,24 @@ export function OrbitRing() {
           const x = Math.cos(angleRad) * safeRadius;
           const z = Math.sin(angleRad) * safeRadius;
           
-          // Depth effect: normalize z position for opacity only
-          // z ranges from -radius (back) to +radius (front)
+          // Depth effect: z-index ordering only, NO size scaling
           const normalizedDepth = (z + safeRadius) / (safeRadius * 2); // 0 = back, 1 = front
           
-          // Uniform scale - all cards same size
-          const scale = 1;
-          // Clamped opacity: 0.75 to 1.0 for subtle depth hint
-          const opacity = 0.75 + 0.25 * normalizedDepth;
-          // Z-index based on depth (front cards on top)
+          // UNIFORM scale - all cards identical size
+          const scale = 1.0;
+          // Subtle opacity for depth hint only
+          const opacity = 0.8 + 0.2 * normalizedDepth;
+          // Z-index based on depth (front cards layer above back cards)
           const zIndex = Math.round(normalizedDepth * 100);
 
           return (
             <div
               key={cardId}
               data-orbital-card
-              className="absolute transition-transform duration-75 ease-out"
+              className="absolute"
               style={{
-                width: CARD_WIDTH,
-                height: CARD_HEIGHT,
+                width: ORBIT_CARD_W,
+                height: ORBIT_CARD_H,
                 left: '50%',
                 top: '50%',
                 // translate3d(x, 0, z) for true 3D ring
@@ -156,8 +156,8 @@ export function OrbitRing() {
             >
               <OrbitalCardComponent 
                 card={card} 
-                cardWidth={CARD_WIDTH}
-                cardHeight={CARD_HEIGHT}
+                cardWidth={ORBIT_CARD_W}
+                cardHeight={ORBIT_CARD_H}
               />
             </div>
           );

@@ -1,7 +1,7 @@
-import React, { useRef, useCallback, useState } from 'react';
+import React, { useRef, useCallback, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useOrbital, OrbitalCard as OrbitalCardType } from '@/contexts/OrbitalContext';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { GripHorizontal, X, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -26,14 +26,43 @@ export function OrbitalCardComponent({
   const navigate = useNavigate();
   const { startDrag, endDrag, dockCard, undockCard, setHoverZone } = useOrbital();
   const cardRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const [isBeingDragged, setIsBeingDragged] = useState(false);
   const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
+  const [hasOverflow, setHasOverflow] = useState(false);
+  const [isScrolledToBottom, setIsScrolledToBottom] = useState(false);
   const startPosRef = useRef({ x: 0, y: 0 });
   const initialRectRef = useRef<DOMRect | null>(null);
   const isDraggingRef = useRef(false);
   const hasDraggedRef = useRef(false);
   
   const Component = card.component;
+
+  // Check for content overflow
+  useEffect(() => {
+    const checkOverflow = () => {
+      if (bodyRef.current) {
+        const hasScroll = bodyRef.current.scrollHeight > bodyRef.current.clientHeight;
+        setHasOverflow(hasScroll);
+        
+        // Check if scrolled to bottom
+        const atBottom = bodyRef.current.scrollTop + bodyRef.current.clientHeight >= bodyRef.current.scrollHeight - 5;
+        setIsScrolledToBottom(atBottom);
+      }
+    };
+    
+    checkOverflow();
+    // Recheck on resize
+    window.addEventListener('resize', checkOverflow);
+    return () => window.removeEventListener('resize', checkOverflow);
+  }, [isDocked]);
+
+  const handleBodyScroll = useCallback(() => {
+    if (bodyRef.current) {
+      const atBottom = bodyRef.current.scrollTop + bodyRef.current.clientHeight >= bodyRef.current.scrollHeight - 5;
+      setIsScrolledToBottom(atBottom);
+    }
+  }, []);
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     // Don't start drag on interactive elements
@@ -224,14 +253,25 @@ export function OrbitalCardComponent({
             )}
           </div>
         </CardHeader>
-        <CardContent 
+        {/* Scrollable body container */}
+        <div 
+          ref={bodyRef}
           className={cn(
-            "pt-2 flex-1 min-h-0 overflow-auto"
+            "flex-1 min-h-0 overflow-y-auto px-3 py-2",
+            "scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent"
           )}
           onClick={handleContentClick}
+          onScroll={handleBodyScroll}
         >
           <Component compact={!isDocked} />
-        </CardContent>
+        </div>
+        
+        {/* Overflow hint gradient - shows when content is scrollable and not at bottom */}
+        {hasOverflow && !isScrolledToBottom && (
+          <div 
+            className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-card to-transparent pointer-events-none"
+          />
+        )}
       </Card>
 
       {/* Dragged ghost (fixed, clamped to viewport) */}
@@ -253,9 +293,9 @@ export function OrbitalCardComponent({
               {card.title}
             </CardTitle>
           </CardHeader>
-          <CardContent className="pt-3 overflow-hidden h-[calc(100%-48px)]">
+          <div className="pt-3 px-3 overflow-hidden h-[calc(100%-48px)]">
             <Component compact={!isDocked} />
-          </CardContent>
+          </div>
         </Card>
       )}
     </>

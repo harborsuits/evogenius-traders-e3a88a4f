@@ -3,23 +3,25 @@ import { useNavigate } from 'react-router-dom';
 import { useOrbital, OrbitalCard as OrbitalCardType } from '@/contexts/OrbitalContext';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { GripHorizontal, X, Maximize2, ExternalLink } from 'lucide-react';
+import { GripHorizontal, X, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const DOCK_THRESHOLD = 150;
-const CARD_WIDTH = 340;
-const CARD_MIN_HEIGHT = 200;
 
 interface OrbitalCardProps {
   card: OrbitalCardType;
   isDocked?: boolean;
   dockZone?: 'top' | 'bottom';
+  cardWidth?: number;
+  cardHeight?: number;
 }
 
 export function OrbitalCardComponent({ 
   card, 
   isDocked = false,
   dockZone,
+  cardWidth = 340,
+  cardHeight = 260,
 }: OrbitalCardProps) {
   const navigate = useNavigate();
   const { startDrag, endDrag, dockCard, undockCard, setHoverZone } = useOrbital();
@@ -63,14 +65,17 @@ export function OrbitalCardComponent({
     const deltaX = e.clientX - startPosRef.current.x;
     const deltaY = e.clientY - startPosRef.current.y;
     
-    // Calculate new position with viewport clamping
-    const margin = 12;
+    // Calculate new position from initial rect
     let newX = initialRectRef.current.left + deltaX;
     let newY = initialRectRef.current.top + deltaY;
     
-    // Clamp to viewport bounds
-    newX = Math.max(margin, Math.min(newX, window.innerWidth - CARD_WIDTH - margin));
-    newY = Math.max(margin, Math.min(newY, window.innerHeight - CARD_MIN_HEIGHT - margin));
+    // Clamp to viewport bounds using actual card dimensions
+    const margin = 12;
+    const actualWidth = initialRectRef.current.width;
+    const actualHeight = initialRectRef.current.height;
+    
+    newX = Math.max(margin, Math.min(newX, window.innerWidth - actualWidth - margin));
+    newY = Math.max(margin, Math.min(newY, window.innerHeight - actualHeight - margin));
     
     setDragPos({ x: newX, y: newY });
     
@@ -130,16 +135,16 @@ export function OrbitalCardComponent({
     }
   }, [card, handleDrilldown]);
 
-  // Render full docked card
   return (
     <>
+      {/* Main card (dims when dragging) */}
       <Card
         ref={cardRef}
         variant="terminal"
         className={cn(
           'relative transition-shadow duration-200 overflow-hidden h-full',
-          card.type === 'drillable' && 'hover:border-primary/40',
-          isBeingDragged && 'opacity-40'
+          card.type === 'drillable' && 'hover:border-primary/40 cursor-pointer',
+          isBeingDragged && 'opacity-30'
         )}
       >
         <CardHeader 
@@ -183,21 +188,24 @@ export function OrbitalCardComponent({
           </div>
         </CardHeader>
         <CardContent 
-          className="pt-3 overflow-auto h-[calc(100%-48px)]"
+          className={cn(
+            'pt-3 overflow-auto',
+            isDocked ? 'h-[calc(100%-48px)]' : 'h-[calc(100%-48px)]'
+          )}
           onClick={handleContentClick}
         >
-          <Component compact={false} />
+          <Component compact={!isDocked} />
         </CardContent>
       </Card>
 
       {/* Dragged ghost (fixed, clamped to viewport) */}
-      {isBeingDragged && (
+      {isBeingDragged && initialRectRef.current && (
         <Card
           variant="terminal"
           className="fixed z-[1000] border-2 border-primary/60 shadow-2xl shadow-primary/20 pointer-events-none overflow-hidden"
           style={{
-            width: CARD_WIDTH,
-            minHeight: CARD_MIN_HEIGHT,
+            width: initialRectRef.current.width,
+            height: initialRectRef.current.height,
             left: dragPos.x,
             top: dragPos.y,
           }}
@@ -208,8 +216,8 @@ export function OrbitalCardComponent({
               {card.title}
             </CardTitle>
           </CardHeader>
-          <CardContent className="pt-3">
-            <Component compact={false} />
+          <CardContent className="pt-3 overflow-hidden h-[calc(100%-48px)]">
+            <Component compact={!isDocked} />
           </CardContent>
         </Card>
       )}

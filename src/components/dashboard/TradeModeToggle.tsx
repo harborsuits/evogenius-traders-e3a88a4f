@@ -67,15 +67,18 @@ export function TradeModeToggle({ compact = false }: TradeModeToggleProps) {
   if (compact) {
     return (
       <>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 bg-card/50 rounded-full px-2 py-1 border border-border/50">
+          <span className={`text-[10px] font-mono ${isPaper ? 'text-primary' : 'text-muted-foreground'}`}>
+            Paper
+          </span>
           <Switch
             checked={!isPaper}
             onCheckedChange={handleToggle}
             disabled={switching}
             className="data-[state=checked]:bg-destructive h-4 w-7"
           />
-          <span className={`text-[10px] font-mono ${!isPaper ? 'text-destructive' : 'text-muted-foreground'}`}>
-            {isPaper ? 'P' : 'L'}
+          <span className={`text-[10px] font-mono ${!isPaper ? 'text-destructive font-bold' : 'text-muted-foreground'}`}>
+            Live
           </span>
         </div>
         <ConfirmDialog showConfirm={showConfirm} setShowConfirm={setShowConfirm} switchMode={switchMode} />

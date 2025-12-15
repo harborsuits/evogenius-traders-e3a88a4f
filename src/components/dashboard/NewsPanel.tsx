@@ -72,32 +72,36 @@ interface NewsLaneProps {
   items: NewsItem[];
   emptyMessage: string;
   showSymbols?: boolean;
-  maxHeight?: string;
 }
 
-function NewsLane({ title, icon, items, emptyMessage, showSymbols = true, maxHeight = "280px" }: NewsLaneProps) {
+function NewsLane({ title, icon, items, emptyMessage, showSymbols = true }: NewsLaneProps) {
   return (
-    <div className="flex flex-col flex-1 min-w-0">
-      <div className="flex items-center gap-1.5 mb-2 px-1">
-        {icon}
-        <span className="text-xs font-medium text-muted-foreground">{title}</span>
-        <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4 ml-auto">
+    <div className="w-full min-w-0 flex flex-col min-h-0 rounded-lg border border-border/30 bg-muted/10">
+      {/* lane header */}
+      <div className="px-4 py-3 flex items-center justify-between gap-3 border-b border-border/20">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="shrink-0">{icon}</span>
+          <span className="font-medium text-sm truncate text-foreground/90">{title}</span>
+        </div>
+        <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 shrink-0">
           {items.length}
         </Badge>
       </div>
-      <ScrollArea style={{ height: maxHeight }} className="flex-1">
+
+      {/* scroll region - flex-1 min-h-0 prevents overflow */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 pt-2">
         {items.length === 0 ? (
-          <div className="text-xs text-muted-foreground text-center py-4 italic">
+          <div className="px-1 py-6 text-xs text-muted-foreground text-center italic">
             {emptyMessage}
           </div>
         ) : (
-          <div className="flex flex-col gap-2 w-full min-w-0 pr-2">
+          <div className="flex flex-col gap-2 w-full min-w-0">
             {items.map((item) => (
               <NewsItemRow key={item.id} item={item} showSymbols={showSymbols} />
             ))}
           </div>
         )}
-      </ScrollArea>
+      </div>
     </div>
   );
 }
@@ -150,8 +154,8 @@ export function NewsPanel() {
     .slice(0, 5);
 
   return (
-    <Card className="h-full">
-      <CardHeader className="pb-2">
+    <Card className="h-full w-full flex flex-col min-h-0 min-w-0">
+      <CardHeader className="pb-2 shrink-0">
         <CardTitle className="text-sm flex items-center gap-2">
           <Newspaper className="h-4 w-4" />
           News Feed
@@ -170,8 +174,8 @@ export function NewsPanel() {
           )}
         </CardTitle>
       </CardHeader>
-      <CardContent className="pt-0 h-[calc(100%-3rem)]">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 w-full h-full">
+      <CardContent className="pt-0 flex-1 min-h-0 min-w-0">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 w-full h-full min-h-0 min-w-0">
           <NewsLane
             title="Market / Macro"
             icon={<Newspaper className="h-3 w-3 text-muted-foreground" />}

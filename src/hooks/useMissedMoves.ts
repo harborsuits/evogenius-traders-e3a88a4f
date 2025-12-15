@@ -11,9 +11,16 @@ export interface MissedMove {
   decision_time: string | null;
   move_type: 'pump' | 'dump';
 }
+export interface MonitoredSymbol {
+  symbol: string;
+  change_24h: number;
+  price: number;
+  last_decision: string | null;
+}
 
-interface MissedMovesResponse {
+export interface MissedMovesResponse {
   missed_moves: MissedMove[];
+  all_monitored: MonitoredSymbol[];
   thresholds: { pump: number; dump: number };
   monitored_count: number;
 }

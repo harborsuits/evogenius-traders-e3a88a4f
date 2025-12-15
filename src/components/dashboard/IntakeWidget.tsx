@@ -77,20 +77,19 @@ export function IntakeWidget() {
     .sort(([, a], [, b]) => b - a)
     .slice(0, 4);
 
-  // Bot lane = news about symbols we touched (relevant catalysts) - show more items
-  const relevantNews = (newsData?.bot_lane || []).slice(0, 12);
+  // Section A: Catalyst Watch (strict monitored symbols with event tags)
+  const catalystNews = (newsData?.bot_lane || []).slice(0, 8);
   
-  // Market lane = general/macro news (fallback) - show more items
-  const macroNews = (newsData?.market_lane || [])
-    .filter(n => {
-      // Filter to BTC/ETH/macro only
-      const symbols = n.symbols || [];
-      return symbols.length === 0 || 
-             symbols.some(s => ['BTC-USD', 'ETH-USD'].includes(s));
-    })
-    .slice(0, 6);
+  // Section B: Market Context (fallback macro/general news)
+  const marketNews = (newsData?.market_lane || [])
+    .filter(n => !catalystNews.some(c => c.id === n.id))
+    .slice(0, 8);
   
-  const hasRelevantNews = relevantNews.length > 0;
+  // Target: fill card with labeled sections
+  const TARGET_ITEMS = 10;
+  const catalystCount = catalystNews.length;
+  const contextCount = Math.max(0, TARGET_ITEMS - catalystCount);
+  const displayContextNews = marketNews.slice(0, contextCount);
   
   return (
     <Card className="w-full h-full max-h-full flex flex-col bg-card/95 backdrop-blur-sm border-border/50 shadow-lg overflow-hidden">
@@ -124,97 +123,115 @@ export function IntakeWidget() {
           </div>
         ) : (
           <ScrollArea className="h-full">
-            <div className="px-3 pb-3">
-              {hasRelevantNews ? (
-                <div className="grid grid-cols-1 min-[360px]:grid-cols-2 gap-2">
-                  {relevantNews.map((n) => {
-                    const eventType = detectEventType(n.title);
-                    const symbols = n.symbols || [];
-                    const timeAgo = formatTimeAgo(n.published_at);
-                    
-                    return (
-                      <a
-                        key={n.id}
-                        href={n.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex flex-col gap-1.5 p-2.5 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors group border border-transparent hover:border-border/50"
-                      >
-                        {/* Header: symbols + event tag + time */}
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {symbols.slice(0, 2).map((s) => (
-                            <Badge 
-                              key={s} 
-                              variant="secondary"
-                              className="text-[10px] px-1.5 py-0 h-4 font-mono font-semibold"
-                            >
-                              {s.replace('-USD', '')}
-                            </Badge>
-                          ))}
-                          {eventType && (
-                            <span className={`flex items-center gap-0.5 text-[9px] ${eventType.color}`}>
-                              {eventType.icon}
-                              <span>{eventType.label}</span>
-                            </span>
-                          )}
-                          <span className="text-[9px] text-muted-foreground/60 ml-auto">
-                            {timeAgo}
-                          </span>
-                        </div>
-                        
-                        {/* Title - allow 2 lines */}
-                        <p className="text-[12px] leading-snug text-foreground/80 line-clamp-2 group-hover:text-primary transition-colors">
-                          {n.title}
-                        </p>
-                        
-                        {/* Source */}
-                        <span className="text-[9px] text-muted-foreground/50">
-                          {n.outlet || n.source}
-                        </span>
-                      </a>
-                    );
-                  })}
+            <div className="px-3 pb-3 space-y-3">
+              {/* Section A: Catalyst Watch (Strict) */}
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5 text-[10px] text-primary/80 uppercase tracking-wide font-medium px-1 border-b border-border/30 pb-1">
+                  <Eye className="h-3 w-3" />
+                  <span>Catalyst Watch</span>
+                  <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-primary/30">
+                    {catalystCount} found
+                  </Badge>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {/* No monitored catalysts message */}
-                  <div className="text-center py-3 px-2 bg-muted/20 rounded-md">
-                    <div className="text-[11px] text-muted-foreground font-medium">
-                      No monitored-coin catalysts
-                    </div>
-                    {botSymbols.length > 0 && (
-                      <div className="text-[10px] text-muted-foreground/60 mt-1">
-                        Watching: {botSymbols.slice(0, 6).map(s => s.replace('-USD', '')).join(', ')}
-                        {botSymbols.length > 6 && ` +${botSymbols.length - 6}`}
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* Market/Macro fallback lane */}
-                  {macroNews.length > 0 && (
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 px-1">
-                        <Globe className="h-3 w-3" />
-                        <span>Market / Macro</span>
-                      </div>
-                      {macroNews.map((n) => (
+                
+                {catalystNews.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {catalystNews.map((n) => {
+                      const eventType = detectEventType(n.title);
+                      const symbols = n.symbols || [];
+                      const timeAgo = formatTimeAgo(n.published_at);
+                      
+                      return (
                         <a
                           key={n.id}
                           href={n.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="block p-2 rounded bg-muted/20 hover:bg-muted/30 transition-colors"
+                          className="flex flex-col gap-1 p-2 rounded-md bg-primary/5 hover:bg-primary/10 transition-colors group border border-primary/10 hover:border-primary/20"
                         >
-                          <p className="text-[11px] leading-snug text-foreground/60 line-clamp-2 hover:text-foreground/80">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {symbols.slice(0, 2).map((s) => (
+                              <Badge 
+                                key={s} 
+                                variant="secondary"
+                                className="text-[10px] px-1.5 py-0 h-4 font-mono font-semibold"
+                              >
+                                {s.replace('-USD', '')}
+                              </Badge>
+                            ))}
+                            {eventType && (
+                              <span className={`flex items-center gap-0.5 text-[9px] ${eventType.color}`}>
+                                {eventType.icon}
+                                <span>{eventType.label}</span>
+                              </span>
+                            )}
+                            <span className="text-[9px] text-muted-foreground/60 ml-auto">
+                              {timeAgo}
+                            </span>
+                          </div>
+                          <p className="text-[11px] leading-snug text-foreground/80 line-clamp-2 group-hover:text-primary transition-colors">
                             {n.title}
                           </p>
-                          <span className="text-[9px] text-muted-foreground/40">
-                            {formatTimeAgo(n.published_at)} • {n.outlet || n.source}
-                          </span>
                         </a>
-                      ))}
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-2 px-2 bg-muted/20 rounded-md">
+                    <div className="text-[10px] text-muted-foreground/60">
+                      No monitored-coin catalysts detected
                     </div>
-                  )}
+                    {botSymbols.length > 0 && (
+                      <div className="text-[9px] text-muted-foreground/40 mt-0.5">
+                        Watching: {botSymbols.slice(0, 5).map(s => s.replace('-USD', '')).join(', ')}
+                        {botSymbols.length > 5 && ` +${botSymbols.length - 5}`}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              
+              {/* Section B: Market Context (Fallback) */}
+              {displayContextNews.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 uppercase tracking-wide px-1 border-b border-border/20 pb-1">
+                    <Globe className="h-3 w-3" />
+                    <span>Market Context</span>
+                    <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-muted-foreground/20">
+                      fallback
+                    </Badge>
+                  </div>
+                  
+                  <div className="space-y-1">
+                    {displayContextNews.map((n) => {
+                      const timeAgo = formatTimeAgo(n.published_at);
+                      const symbols = n.symbols || [];
+                      
+                      return (
+                        <a
+                          key={n.id}
+                          href={n.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex flex-col gap-0.5 p-1.5 rounded bg-muted/20 hover:bg-muted/30 transition-colors"
+                        >
+                          <div className="flex items-center gap-1">
+                            {symbols.slice(0, 1).map((s) => (
+                              <span key={s} className="text-[9px] font-mono text-muted-foreground/60">
+                                {s.replace('-USD', '')}
+                              </span>
+                            ))}
+                            <span className="text-[9px] text-muted-foreground/40 ml-auto">
+                              {timeAgo}
+                            </span>
+                          </div>
+                          <p className="text-[10px] leading-snug text-foreground/60 line-clamp-1 hover:text-foreground/80">
+                            {n.title}
+                          </p>
+                        </a>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>

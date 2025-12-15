@@ -268,6 +268,77 @@ export type Database = {
         }
         Relationships: []
       }
+      news_items: {
+        Row: {
+          created_at: string
+          id: string
+          importance: number | null
+          outlet: string | null
+          published_at: string
+          raw: Json | null
+          source: string
+          symbols: string[] | null
+          title: string
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          id: string
+          importance?: number | null
+          outlet?: string | null
+          published_at: string
+          raw?: Json | null
+          source: string
+          symbols?: string[] | null
+          title: string
+          url: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          importance?: number | null
+          outlet?: string | null
+          published_at?: string
+          raw?: Json | null
+          source?: string
+          symbols?: string[] | null
+          title?: string
+          url?: string
+        }
+        Relationships: []
+      }
+      news_mentions: {
+        Row: {
+          bucket_start: string
+          created_at: string
+          id: string
+          news_id: string
+          symbol: string
+        }
+        Insert: {
+          bucket_start: string
+          created_at?: string
+          id?: string
+          news_id: string
+          symbol: string
+        }
+        Update: {
+          bucket_start?: string
+          created_at?: string
+          id?: string
+          news_id?: string
+          symbol?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "news_mentions_news_id_fkey"
+            columns: ["news_id"]
+            isOneToOne: false
+            referencedRelation: "news_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       paper_accounts: {
         Row: {
           base_currency: string

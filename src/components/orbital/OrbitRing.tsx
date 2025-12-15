@@ -4,11 +4,11 @@ import { OrbitalCardComponent } from './OrbitalCard';
 import { cn } from '@/lib/utils';
 import { DOCK_HEIGHT, DOCK_HEIGHT_EMPTY } from './DockZone';
 
-// Fixed uniform dimensions for ALL orbit cards - reduced height for better fit
+// Fixed uniform dimensions for ALL orbit cards
 const ORBIT_CARD_W = 340;
-const ORBIT_CARD_H = 220;
+const ORBIT_CARD_H = 280;
 const PERSPECTIVE = 1500;
-const CARD_MARGIN = 24; // Increased margin for more drag space
+const CARD_MARGIN = 16;
 const MIN_RADIUS = 120;
 const MAX_RADIUS = 450;
 

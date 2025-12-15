@@ -48,3 +48,6 @@ verify_jwt = false
 
 [functions.news-feed]
 verify_jwt = false
+
+[functions.price-feed]
+verify_jwt = false

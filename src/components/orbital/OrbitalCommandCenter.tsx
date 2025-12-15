@@ -6,7 +6,9 @@ import { Button } from '@/components/ui/button';
 import { RotateCcw } from 'lucide-react';
 import { useOrbital } from '@/contexts/OrbitalContext';
 import { PriceTicker } from '@/components/dashboard/PriceTicker';
-import { NewsWidget } from '@/components/dashboard/NewsWidget';
+import { IntakeWidget } from '@/components/dashboard/IntakeWidget';
+import { AutopsyWidget } from '@/components/dashboard/AutopsyWidget';
+
 // Inner component that uses the context
 function OrbitalLayout() {
   const { setRotationAngle } = useOrbital();
@@ -24,9 +26,14 @@ function OrbitalLayout() {
       <div className="flex-1 relative overflow-hidden min-h-0 z-10">
         <OrbitRing />
         
-        {/* News Widget - left negative space */}
+        {/* Intake Widget - LEFT (speculative, forward-looking) */}
         <div className="absolute left-3 top-1/2 -translate-y-1/2 z-40">
-          <NewsWidget />
+          <IntakeWidget />
+        </div>
+        
+        {/* Autopsy Widget - RIGHT (ground truth, backward-looking) */}
+        <div className="absolute right-3 top-1/2 -translate-y-1/2 z-40">
+          <AutopsyWidget />
         </div>
         
         {/* Reset View Button */}

@@ -35,12 +35,16 @@ function OrbitalLayout() {
       {/* TOP NEWS DOCK SLOT */}
       {hasTopDocked && (
         <div className="w-full flex gap-3 px-3 pt-2 shrink-0">
-          <div className="flex-1 min-w-0 h-[280px]">
-            {intakeDock === "top" ? Intake : null}
-          </div>
-          <div className="flex-1 min-w-0 h-[280px]">
-            {autopsyDock === "top" ? Autopsy : null}
-          </div>
+          {intakeDock === "top" && (
+            <div className="flex-1 min-w-0 h-[280px]">
+              {Intake}
+            </div>
+          )}
+          {autopsyDock === "top" && (
+            <div className="flex-1 min-w-0 h-[280px]">
+              {Autopsy}
+            </div>
+          )}
         </div>
       )}
       
@@ -80,12 +84,16 @@ function OrbitalLayout() {
       {/* BOTTOM NEWS DOCK SLOT */}
       {hasBottomDocked && (
         <div className="w-full flex gap-3 px-3 pb-2 shrink-0">
-          <div className="flex-1 min-w-0 h-[280px]">
-            {intakeDock === "bottom" ? Intake : null}
-          </div>
-          <div className="flex-1 min-w-0 h-[280px]">
-            {autopsyDock === "bottom" ? Autopsy : null}
-          </div>
+          {intakeDock === "bottom" && (
+            <div className="flex-1 min-w-0 h-[280px]">
+              {Intake}
+            </div>
+          )}
+          {autopsyDock === "bottom" && (
+            <div className="flex-1 min-w-0 h-[280px]">
+              {Autopsy}
+            </div>
+          )}
         </div>
       )}
       

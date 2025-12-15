@@ -255,13 +255,19 @@ function ExpandableDecision({ decision }: { decision: TradeDecision }) {
 }
 
 export function DecisionLog() {
+  const [showHolds, setShowHolds] = useState(false);
+  
   const { data: decisions = [], isLoading } = useQuery({
-    queryKey: ['trade-decisions'],
+    queryKey: ['trade-decisions', showHolds],
     queryFn: async () => {
+      const actions = showHolds 
+        ? ['trade_decision', 'trade_blocked', 'trade_executed']
+        : ['trade_blocked', 'trade_executed'];
+      
       const { data, error } = await supabase
         .from('control_events')
         .select('*')
-        .in('action', ['trade_decision', 'trade_blocked', 'trade_executed'])
+        .in('action', actions)
         .order('triggered_at', { ascending: false })
         .limit(30);
 
@@ -279,9 +285,22 @@ export function DecisionLog() {
           <CardTitle className="font-mono text-sm text-muted-foreground uppercase tracking-wider">
             Decision Reasoning
           </CardTitle>
-          <Badge variant="outline" className="ml-auto text-xs font-mono">
-            {decisions.length}
-          </Badge>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setShowHolds(!showHolds)}
+              className={cn(
+                'text-[10px] px-2 py-0.5 rounded transition-colors font-mono',
+                showHolds 
+                  ? 'bg-primary/20 text-primary' 
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
+              )}
+            >
+              {showHolds ? 'All' : 'Trades Only'}
+            </button>
+            <Badge variant="outline" className="text-xs font-mono">
+              {decisions.length}
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -291,7 +310,9 @@ export function DecisionLog() {
           </div>
         ) : decisions.length === 0 ? (
           <div className="text-center py-4 text-xs text-muted-foreground font-mono">
-            No trade decisions yet. Start the system to generate decisions.
+            {showHolds 
+              ? 'No trade decisions yet. Start the system to generate decisions.'
+              : 'No executed/blocked trades yet. Toggle "All" to see HOLD decisions.'}
           </div>
         ) : (
           <ScrollArea className="h-[280px]">

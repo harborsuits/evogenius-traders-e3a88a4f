@@ -4,13 +4,13 @@ import { OrbitalCardComponent } from './OrbitalCard';
 import { cn } from '@/lib/utils';
 import { DOCK_HEIGHT, DOCK_HEIGHT_EMPTY } from './DockZone';
 
-// Fixed uniform dimensions for ALL orbit cards
-const ORBIT_CARD_W = 380;
-const ORBIT_CARD_H = 300;
+// Fixed uniform dimensions for ALL orbit cards - reduced height for better fit
+const ORBIT_CARD_W = 340;
+const ORBIT_CARD_H = 220;
 const PERSPECTIVE = 1500;
-const CARD_MARGIN = 12;
-const MIN_RADIUS = 100;
-const MAX_RADIUS = 400;
+const CARD_MARGIN = 24; // Increased margin for more drag space
+const MIN_RADIUS = 120;
+const MAX_RADIUS = 450;
 
 export function OrbitRing() {
   const { orbitCards, rotationAngle, rotateOrbit, getCardById, isDragging, dockState } = useOrbital();

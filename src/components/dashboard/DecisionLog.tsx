@@ -3,8 +3,24 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { Brain, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Brain, CheckCircle, XCircle, Clock, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Activity } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { useState } from 'react';
+import { cn } from '@/lib/utils';
+
+interface SymbolEvaluation {
+  symbol: string;
+  decision: 'buy' | 'sell' | 'hold';
+  reasons: string[];
+  confidence: number;
+  market: {
+    price: number;
+    change_24h: number;
+    ema_slope: number;
+    atr: number;
+    regime: string;
+  };
+}
 
 interface TradeDecision {
   id: string;
@@ -14,6 +30,7 @@ interface TradeDecision {
     symbol?: string;
     side?: string;
     qty?: number;
+    decision?: string;
     decision_type?: 'trade' | 'hold' | 'blocked';
     block_reason?: string;
     market_age_seconds?: number;
@@ -24,7 +41,184 @@ interface TradeDecision {
     agent_id?: string;
     generation_id?: string;
     mode?: 'paper' | 'live';
+    strategy_template?: string;
+    evaluations?: SymbolEvaluation[];
+    thresholds_used?: {
+      trend: number;
+      pullback: number;
+      rsi: number;
+      vol_contraction: number;
+    };
+    entry_reason?: string[];
+    confidence?: number;
+    market_snapshot?: {
+      price: number;
+      change_24h: number;
+      ema_50_slope: number;
+      atr_ratio: number;
+    };
   } | null;
+}
+
+function ExpandableDecision({ decision }: { decision: TradeDecision }) {
+  const [expanded, setExpanded] = useState(false);
+  const metadata = decision.metadata;
+  const evaluations = metadata?.evaluations || [];
+  
+  const getDecisionIcon = () => {
+    if (decision.action === 'trade_blocked') {
+      return <XCircle className="h-3.5 w-3.5 text-destructive" />;
+    }
+    if (decision.action === 'trade_executed') {
+      return <CheckCircle className="h-3.5 w-3.5 text-primary" />;
+    }
+    if (metadata?.decision === 'buy' || metadata?.decision === 'sell') {
+      return <Activity className="h-3.5 w-3.5 text-primary" />;
+    }
+    return <Clock className="h-3.5 w-3.5 text-muted-foreground" />;
+  };
+
+  const getDecisionBadge = () => {
+    if (decision.action === 'trade_blocked') {
+      return <Badge variant="destructive" className="text-[10px] px-1.5">BLOCKED</Badge>;
+    }
+    if (decision.action === 'trade_executed') {
+      return <Badge variant="default" className="text-[10px] px-1.5">EXECUTED</Badge>;
+    }
+    if (metadata?.decision === 'buy') {
+      return <Badge className="text-[10px] px-1.5 bg-primary">BUY</Badge>;
+    }
+    if (metadata?.decision === 'sell') {
+      return <Badge variant="destructive" className="text-[10px] px-1.5">SELL</Badge>;
+    }
+    return <Badge variant="secondary" className="text-[10px] px-1.5">HOLD</Badge>;
+  };
+
+  const getStrategyBadge = () => {
+    const strategy = metadata?.strategy_template;
+    if (!strategy) return null;
+    const colors: Record<string, string> = {
+      trend_pullback: 'bg-blue-500/20 text-blue-400',
+      mean_reversion: 'bg-purple-500/20 text-purple-400',
+      breakout: 'bg-orange-500/20 text-orange-400',
+    };
+    return (
+      <Badge className={cn('text-[9px] px-1', colors[strategy] || 'bg-muted')}>
+        {strategy.replace('_', ' ')}
+      </Badge>
+    );
+  };
+
+  return (
+    <div className="rounded bg-muted/30 text-xs overflow-hidden">
+      <div 
+        className="flex items-center gap-2 p-2 cursor-pointer hover:bg-muted/50 transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        {evaluations.length > 0 ? (
+          expanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />
+        ) : (
+          <span className="w-3" />
+        )}
+        
+        {getDecisionIcon()}
+        
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            {metadata?.symbol && (
+              <span className="font-mono font-medium">{metadata.symbol}</span>
+            )}
+            {getStrategyBadge()}
+            {metadata?.entry_reason && (
+              <span className="text-muted-foreground text-[10px]">
+                {metadata.entry_reason.filter(r => r !== 'test_mode').join(', ')}
+              </span>
+            )}
+            {metadata?.confidence && metadata.decision !== 'hold' && (
+              <span className="text-muted-foreground text-[10px]">
+                conf: {(metadata.confidence * 100).toFixed(0)}%
+              </span>
+            )}
+          </div>
+          {metadata?.block_reason && (
+            <div className="text-destructive text-[10px] mt-0.5 truncate">
+              {metadata.block_reason}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col items-end gap-1">
+          {getDecisionBadge()}
+          <span className="text-[10px] text-muted-foreground">
+            {formatDistanceToNow(new Date(decision.triggered_at), { addSuffix: true })}
+          </span>
+        </div>
+      </div>
+      
+      {/* Expanded per-symbol evaluations */}
+      {expanded && evaluations.length > 0 && (
+        <div className="border-t border-border/50 bg-background/50 p-2 space-y-1.5">
+          <div className="text-[10px] text-muted-foreground mb-2">
+            Per-symbol evaluation:
+          </div>
+          {evaluations.map((ev, idx) => (
+            <div 
+              key={idx} 
+              className={cn(
+                'flex items-center gap-2 p-1.5 rounded text-[10px]',
+                ev.decision === 'buy' && 'bg-primary/10 border border-primary/20',
+                ev.decision === 'sell' && 'bg-destructive/10 border border-destructive/20',
+                ev.decision === 'hold' && 'bg-muted/50'
+              )}
+            >
+              <div className="flex items-center gap-1 min-w-[80px]">
+                {ev.decision === 'buy' && <TrendingUp className="h-3 w-3 text-primary" />}
+                {ev.decision === 'sell' && <TrendingDown className="h-3 w-3 text-destructive" />}
+                {ev.decision === 'hold' && <Clock className="h-3 w-3 text-muted-foreground" />}
+                <span className="font-mono font-medium">{ev.symbol}</span>
+              </div>
+              
+              <Badge 
+                variant={ev.decision === 'buy' ? 'default' : ev.decision === 'sell' ? 'destructive' : 'secondary'}
+                className="text-[9px] px-1"
+              >
+                {ev.decision.toUpperCase()}
+              </Badge>
+              
+              <div className="flex-1 text-muted-foreground truncate">
+                {ev.reasons.join(', ')}
+              </div>
+              
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <span className={cn(
+                  ev.market.change_24h > 0 ? 'text-primary' : ev.market.change_24h < 0 ? 'text-destructive' : ''
+                )}>
+                  {ev.market.change_24h > 0 ? '+' : ''}{ev.market.change_24h.toFixed(2)}%
+                </span>
+                <span>slope: {ev.market.ema_slope.toFixed(4)}</span>
+                <span>atr: {ev.market.atr.toFixed(2)}</span>
+              </div>
+              
+              {ev.confidence > 0.5 && (
+                <span className="text-primary">{(ev.confidence * 100).toFixed(0)}%</span>
+              )}
+            </div>
+          ))}
+          
+          {/* Thresholds used */}
+          {metadata?.thresholds_used && (
+            <div className="mt-2 pt-2 border-t border-border/30 text-[9px] text-muted-foreground">
+              <span className="opacity-70">Thresholds: </span>
+              trend={metadata.thresholds_used.trend}, 
+              pullback={metadata.thresholds_used.pullback}%, 
+              rsi={metadata.thresholds_used.rsi}, 
+              vol={metadata.thresholds_used.vol_contraction}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function DecisionLog() {
@@ -36,7 +230,7 @@ export function DecisionLog() {
         .select('*')
         .in('action', ['trade_decision', 'trade_blocked', 'trade_executed'])
         .order('triggered_at', { ascending: false })
-        .limit(20);
+        .limit(30);
 
       if (error) throw error;
       return data as TradeDecision[];
@@ -44,36 +238,13 @@ export function DecisionLog() {
     refetchInterval: 5000,
   });
 
-  const getDecisionIcon = (action: string, metadata: TradeDecision['metadata']) => {
-    if (action === 'trade_blocked') {
-      return <XCircle className="h-3.5 w-3.5 text-destructive" />;
-    }
-    if (action === 'trade_executed') {
-      return <CheckCircle className="h-3.5 w-3.5 text-primary" />;
-    }
-    return <Clock className="h-3.5 w-3.5 text-muted-foreground" />;
-  };
-
-  const getDecisionBadge = (action: string, metadata: TradeDecision['metadata']) => {
-    if (action === 'trade_blocked') {
-      return <Badge variant="destructive" className="text-[10px] px-1.5">BLOCKED</Badge>;
-    }
-    if (action === 'trade_executed') {
-      return <Badge variant="default" className="text-[10px] px-1.5">EXECUTED</Badge>;
-    }
-    if (metadata?.decision_type === 'hold') {
-      return <Badge variant="secondary" className="text-[10px] px-1.5">HOLD</Badge>;
-    }
-    return <Badge variant="outline" className="text-[10px] px-1.5">DECISION</Badge>;
-  };
-
   return (
     <Card variant="default">
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
           <Brain className="h-4 w-4 text-primary" />
           <CardTitle className="font-mono text-sm text-muted-foreground uppercase tracking-wider">
-            Trade Decisions
+            Decision Reasoning
           </CardTitle>
           <Badge variant="outline" className="ml-auto text-xs font-mono">
             {decisions.length}
@@ -90,63 +261,10 @@ export function DecisionLog() {
             No trade decisions yet. Start the system to generate decisions.
           </div>
         ) : (
-          <ScrollArea className="h-[200px]">
-            <div className="space-y-2">
+          <ScrollArea className="h-[280px]">
+            <div className="space-y-1.5 pr-3">
               {decisions.map((decision) => (
-                <div
-                  key={decision.id}
-                  className="flex items-center gap-2 p-2 rounded bg-muted/30 text-xs"
-                >
-                  {getDecisionIcon(decision.action, decision.metadata)}
-                  
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      {decision.metadata?.symbol && (
-                        <span className="font-mono font-medium">
-                          {decision.metadata.symbol}
-                        </span>
-                      )}
-                      {decision.metadata?.side && (
-                        <Badge 
-                          variant={decision.metadata.side === 'buy' ? 'default' : 'destructive'}
-                          className="text-[10px] px-1"
-                        >
-                          {decision.metadata.side.toUpperCase()}
-                        </Badge>
-                      )}
-                      {decision.metadata?.qty && (
-                        <span className="text-muted-foreground">
-                          {decision.metadata.qty.toFixed(6)}
-                        </span>
-                      )}
-                    </div>
-                    
-                    {decision.metadata?.block_reason && (
-                      <div className="text-destructive text-[10px] mt-0.5 truncate">
-                        {decision.metadata.block_reason}
-                        {decision.metadata.market_age_seconds && (
-                          <span className="ml-1 opacity-75">({decision.metadata.market_age_seconds}s old)</span>
-                        )}
-                        {decision.metadata.trades_today !== undefined && (
-                          <span className="ml-1 opacity-75">({decision.metadata.trades_today}/{decision.metadata.max_allowed})</span>
-                        )}
-                      </div>
-                    )}
-                    
-                    {decision.metadata?.fill_price && (
-                      <div className="text-muted-foreground text-[10px] mt-0.5">
-                        Filled @ ${decision.metadata.fill_price.toLocaleString()}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col items-end gap-1">
-                    {getDecisionBadge(decision.action, decision.metadata)}
-                    <span className="text-[10px] text-muted-foreground">
-                      {formatDistanceToNow(new Date(decision.triggered_at), { addSuffix: true })}
-                    </span>
-                  </div>
-                </div>
+                <ExpandableDecision key={decision.id} decision={decision} />
               ))}
             </div>
           </ScrollArea>

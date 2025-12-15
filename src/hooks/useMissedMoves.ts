@@ -15,6 +15,7 @@ export interface MissedMove {
 interface MissedMovesResponse {
   missed_moves: MissedMove[];
   thresholds: { pump: number; dump: number };
+  monitored_count: number;
 }
 
 export function useMissedMoves() {

@@ -11,7 +11,7 @@ interface MissedMove {
   change_24h: number;
   price: number;
   had_signal: boolean;
-  last_decision: string | null; // 'BUY' | 'SELL' | 'HOLD' | null
+  last_decision: string | null;
   last_decision_reason: string | null;
   decision_time: string | null;
   move_type: 'pump' | 'dump';
@@ -26,10 +26,55 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Config: what counts as a "significant" move
-    const PUMP_THRESHOLD = 5; // +5% or more
-    const DUMP_THRESHOLD = -5; // -5% or more
+    const PUMP_THRESHOLD = 5;
+    const DUMP_THRESHOLD = -5;
 
-    // 1) Get market data with significant moves
+    // 1) Get the valid exchange universe (symbols in market_data with proper format)
+    const { data: universeData, error: universeError } = await supabase
+      .from("market_data")
+      .select("symbol")
+      .like("symbol", "%-USD");
+    
+    if (universeError) throw universeError;
+    
+    const validUniverse = new Set((universeData || []).map(u => u.symbol));
+    console.log(`[missed-moves] Valid universe: ${validUniverse.size} symbols`);
+    
+    // 2) Get monitored symbols (positions + recent decisions + top volume)
+    const [positionsResult, decisionsResult, volumeResult] = await Promise.all([
+      supabase
+        .from("paper_positions")
+        .select("symbol")
+        .neq("qty", 0),
+      supabase
+        .from("control_events")
+        .select("metadata")
+        .eq("action", "trade_decision")
+        .gte("triggered_at", new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString())
+        .limit(100),
+      supabase
+        .from("market_data")
+        .select("symbol, volume_24h")
+        .order("volume_24h", { ascending: false })
+        .limit(20),
+    ]);
+    
+    const positionSymbols = (positionsResult.data || []).map(p => p.symbol);
+    const decisionSymbols = (decisionsResult.data || [])
+      .map(d => (d.metadata as { symbol?: string } | null)?.symbol)
+      .filter((s): s is string => Boolean(s));
+    const topVolumeSymbols = (volumeResult.data || []).map(m => m.symbol);
+    
+    // Combine and validate against universe
+    const monitoredSymbols = new Set([
+      ...positionSymbols,
+      ...decisionSymbols,
+      ...topVolumeSymbols.slice(0, 10), // Top 10 by volume
+    ].filter(s => validUniverse.has(s)));
+    
+    console.log(`[missed-moves] Monitored symbols: ${monitoredSymbols.size}`);
+
+    // 3) Get market data with significant moves - ONLY for monitored + validated symbols
     const { data: marketData, error: mdError } = await supabase
       .from("market_data")
       .select("symbol, price, change_24h, updated_at")
@@ -40,12 +85,16 @@ serve(async (req) => {
 
     if (!marketData || marketData.length === 0) {
       console.log("[missed-moves] No significant moves detected");
-      return new Response(JSON.stringify({ missed_moves: [], thresholds: { pump: PUMP_THRESHOLD, dump: DUMP_THRESHOLD } }), {
+      return new Response(JSON.stringify({ 
+        missed_moves: [], 
+        thresholds: { pump: PUMP_THRESHOLD, dump: DUMP_THRESHOLD },
+        monitored_count: monitoredSymbols.size
+      }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // 2) Get recent trade decisions (last 6 hours)
+    // 4) Get recent trade decisions (last 6 hours)
     const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
     const { data: decisions, error: decError } = await supabase
       .from("control_events")
@@ -71,7 +120,7 @@ serve(async (req) => {
       }
     }
 
-    // 3) Get recent fills (last 6 hours) to check if we actually traded
+    // 5) Get recent fills (last 6 hours) to check if we actually traded
     const { data: fills, error: fillError } = await supabase
       .from("paper_fills")
       .select("symbol, side, timestamp")
@@ -81,25 +130,31 @@ serve(async (req) => {
 
     const filledSymbols = new Set((fills || []).map(f => f.symbol));
 
-    // 4) Build missed moves list
+    // 6) Build missed moves list - ONLY for monitored and valid symbols
     const missedMoves: MissedMove[] = [];
 
     for (const md of marketData) {
+      // Skip if not in valid universe
+      if (!validUniverse.has(md.symbol)) {
+        console.log(`[missed-moves] Skipping invalid symbol: ${md.symbol}`);
+        continue;
+      }
+      
+      // Skip if not in monitored symbols
+      if (!monitoredSymbols.has(md.symbol)) {
+        continue;
+      }
+
       const change = md.change_24h;
       const moveType: 'pump' | 'dump' = change >= PUMP_THRESHOLD ? 'pump' : 'dump';
       
       const recentDecision = decisionMap.get(md.symbol);
       const hadFill = filledSymbols.has(md.symbol);
       
-      // Determine if we "missed" it:
-      // - For pumps: missed if we didn't BUY (or had no signal)
-      // - For dumps: missed if we were holding and didn't SELL (or had no signal)
-      // Simplified: if there was a big move and we didn't fill on that symbol, it's a "miss"
-      
       const hadSignal = recentDecision?.decision === 'BUY' || recentDecision?.decision === 'SELL';
       
       // Only flag as missed if:
-      // 1. Big move happened
+      // 1. Big move happened on a monitored symbol
       // 2. We didn't trade it (no fill)
       // 3. Either no decision at all, or decision was HOLD
       const isMissed = !hadFill && (!hadSignal || recentDecision?.decision === 'HOLD');
@@ -124,8 +179,9 @@ serve(async (req) => {
     console.log(`[missed-moves] Found ${missedMoves.length} missed moves out of ${marketData.length} significant movers`);
 
     return new Response(JSON.stringify({ 
-      missed_moves: missedMoves.slice(0, 10), // Top 10
-      thresholds: { pump: PUMP_THRESHOLD, dump: DUMP_THRESHOLD }
+      missed_moves: missedMoves.slice(0, 10),
+      thresholds: { pump: PUMP_THRESHOLD, dump: DUMP_THRESHOLD },
+      monitored_count: monitoredSymbols.size
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

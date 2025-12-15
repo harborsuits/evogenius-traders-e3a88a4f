@@ -16,10 +16,10 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
     
-    // Get symbols from:
+    // Get monitored symbols from:
     // 1. Current positions
-    // 2. Recent trade decisions (last 2 hours)
-    // 3. Top volume symbols
+    // 2. Recent trade decisions (last 6 hours)
+    // 3. Top volume symbols (as fallback)
     
     const [positionsResult, decisionsResult, marketResult] = await Promise.all([
       supabase
@@ -30,47 +30,81 @@ serve(async (req) => {
         .from('control_events')
         .select('metadata')
         .eq('action', 'trade_decision')
-        .gte('triggered_at', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())
-        .limit(50),
+        .gte('triggered_at', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString())
+        .limit(100),
       supabase
         .from('market_data')
         .select('symbol, volume_24h')
+        .like('symbol', '%-USD')
         .order('volume_24h', { ascending: false })
-        .limit(10),
+        .limit(20),
     ]);
     
     // Extract bot's active symbols
     const positionSymbols = (positionsResult.data || []).map(p => p.symbol);
     const decisionSymbols = (decisionsResult.data || [])
-      .map(d => d.metadata?.symbol)
-      .filter(Boolean);
+      .map(d => (d.metadata as { symbol?: string } | null)?.symbol)
+      .filter((s): s is string => Boolean(s));
     const topVolumeSymbols = (marketResult.data || []).map(m => m.symbol);
     
+    // Monitored = positions + evaluated + top 10 volume
+    const monitoredSymbols = [...new Set([
+      ...positionSymbols, 
+      ...decisionSymbols,
+      ...topVolumeSymbols.slice(0, 10)
+    ])];
+    
+    // Bot symbols = just positions + evaluated (what we actively touched)
     const botSymbols = [...new Set([...positionSymbols, ...decisionSymbols])];
     
     console.log(`[news-feed] Bot symbols: ${botSymbols.length}, Top volume: ${topVolumeSymbols.length}`);
     
-    // Fetch market lane - general high-quality news
-    const { data: marketNews } = await supabase
+    // Fetch news from last 12 hours (extend to 24h if sparse)
+    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    
+    // Get all recent news
+    const { data: allNews } = await supabase
       .from('news_items')
       .select('*')
-      .gte('published_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .gte('published_at', twentyFourHoursAgo)
       .order('published_at', { ascending: false })
-      .limit(12);
+      .limit(100);
     
-    // Fetch bot lane - news matching bot's symbols
-    let botNews: typeof marketNews = [];
-    if (botSymbols.length > 0) {
-      const { data } = await supabase
-        .from('news_items')
-        .select('*')
-        .gte('published_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-        .overlaps('symbols', botSymbols)
-        .order('published_at', { ascending: false })
-        .limit(20);
-      
-      botNews = data || [];
-    }
+    const newsItems = allNews || [];
+    
+    // Score and filter news for bot lane (relevant catalysts)
+    const scoredBotNews = newsItems
+      .map(n => {
+        const symbols: string[] = n.symbols || [];
+        // Count how many of our monitored symbols this news mentions
+        const overlapCount = symbols.filter((s: string) => monitoredSymbols.includes(s)).length;
+        
+        // Skip if no overlap with monitored symbols
+        if (overlapCount === 0) return null;
+        
+        // Score by: overlap count + recency + importance
+        const ageHours = (Date.now() - new Date(n.published_at).getTime()) / (1000 * 60 * 60);
+        const recencyScore = Math.max(0, 1 - (ageHours / 12)); // 1.0 at 0h, 0 at 12h
+        const importanceScore = (n.importance || 3) / 5; // Normalize to 0-1
+        
+        const score = (overlapCount * 2) + recencyScore + importanceScore;
+        
+        return { ...n, score, overlapCount };
+      })
+      .filter((n): n is NonNullable<typeof n> => n !== null)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 20);
+    
+    // Get market lane (general/macro news for fallback)
+    const marketNews = newsItems
+      .filter(n => {
+        const symbols: string[] = n.symbols || [];
+        // Include if: no symbols (general), or mentions BTC/ETH
+        return symbols.length === 0 || 
+               symbols.some((s: string) => ['BTC-USD', 'ETH-USD'].includes(s));
+      })
+      .slice(0, 12);
     
     // Get recent fills for correlation (last 6 hours)
     const { data: recentFills } = await supabase
@@ -92,9 +126,10 @@ serve(async (req) => {
     }
     
     return new Response(JSON.stringify({
-      market_lane: marketNews || [],
-      bot_lane: botNews || [],
+      market_lane: marketNews,
+      bot_lane: scoredBotNews,
       bot_symbols: botSymbols,
+      monitored_symbols: monitoredSymbols,
       recent_fills: recentFills || [],
       news_intensity: intensityMap,
       top_volume_symbols: topVolumeSymbols,

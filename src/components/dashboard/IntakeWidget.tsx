@@ -93,7 +93,7 @@ export function IntakeWidget() {
   const hasRelevantNews = relevantNews.length > 0;
   
   return (
-    <Card className="w-full bg-card/95 backdrop-blur-sm border-border/50 shadow-lg">
+    <Card className="w-full h-full max-h-full flex flex-col bg-card/95 backdrop-blur-sm border-border/50 shadow-lg overflow-hidden">
       <CardHeader className="py-2.5 px-4">
         <CardTitle className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
           <Eye className="h-3.5 w-3.5" />
@@ -117,13 +117,13 @@ export function IntakeWidget() {
           )}
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-0">
+      <CardContent className="p-0 flex-1 min-h-0 overflow-hidden">
         {isLoading ? (
           <div className="px-4 py-6 text-xs text-muted-foreground animate-pulse text-center">
             Loading catalysts…
           </div>
         ) : (
-          <ScrollArea className="h-[280px]">
+          <ScrollArea className="h-full">
             <div className="px-3 pb-3">
               {hasRelevantNews ? (
                 <div className="grid grid-cols-1 min-[360px]:grid-cols-2 gap-2">

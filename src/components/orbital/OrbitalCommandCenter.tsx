@@ -27,12 +27,12 @@ function OrbitalLayout() {
         <OrbitRing />
         
         {/* Intake Widget - LEFT (speculative, forward-looking) */}
-        <div className="absolute left-4 top-1/2 -translate-y-1/2 z-40 w-[420px] max-w-[32vw]">
+        <div className="absolute left-4 top-1/2 -translate-y-1/2 z-40 w-[420px] max-w-[32vw] max-h-[calc(100%-2rem)]">
           <IntakeWidget />
         </div>
         
         {/* Autopsy Widget - RIGHT (ground truth, backward-looking) */}
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 z-40 w-[420px] max-w-[32vw]">
+        <div className="absolute right-4 top-1/2 -translate-y-1/2 z-40 w-[420px] max-w-[32vw] max-h-[calc(100%-2rem)]">
           <AutopsyWidget />
         </div>
         

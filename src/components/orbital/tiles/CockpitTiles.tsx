@@ -3,6 +3,7 @@ import { TradeCycleStatus } from '@/components/dashboard/TradeCycleStatus';
 import { GenerationHealth } from '@/components/dashboard/GenerationHealth';
 import { PollingHealth } from '@/components/dashboard/PollingHealth';
 import { ControlPanel } from '@/components/dashboard/ControlPanel';
+import { NewsPanel } from '@/components/dashboard/NewsPanel';
 import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
 import { usePaperAccount, usePaperPositions, usePaperRealtimeSubscriptions } from '@/hooks/usePaperTrading';
 import { SystemStatus } from '@/types/evotrader';
@@ -145,4 +146,9 @@ export function CapitalOverviewTile({ compact }: { compact?: boolean }) {
       </div>
     </div>
   );
+}
+
+// News Feed Tile
+export function NewsTile({ compact }: { compact?: boolean }) {
+  return <NewsPanel />;
 }

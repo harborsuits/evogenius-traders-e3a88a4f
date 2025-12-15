@@ -43,6 +43,9 @@ interface TradeDecision {
     mode?: 'paper' | 'live';
     strategy_template?: string;
     evaluations?: SymbolEvaluation[];
+    symbols_evaluated?: number | string[]; // Can be count or array
+    top_hold_reasons?: string[]; // For minimal HOLD logging
+    all_hold?: boolean;
     thresholds_used?: {
       trend: number;
       pullback: number;
@@ -64,6 +67,12 @@ function ExpandableDecision({ decision }: { decision: TradeDecision }) {
   const [expanded, setExpanded] = useState(false);
   const metadata = decision.metadata;
   const evaluations = metadata?.evaluations || [];
+  const isMinimalHold = metadata?.all_hold && evaluations.length === 0;
+  const symbolCount = typeof metadata?.symbols_evaluated === 'number' 
+    ? metadata.symbols_evaluated 
+    : Array.isArray(metadata?.symbols_evaluated) 
+      ? metadata.symbols_evaluated.length 
+      : 0;
   
   const getDecisionIcon = () => {
     if (decision.action === 'trade_blocked') {
@@ -115,7 +124,7 @@ function ExpandableDecision({ decision }: { decision: TradeDecision }) {
         className="flex items-center gap-2 p-2 cursor-pointer hover:bg-muted/50 transition-colors"
         onClick={() => setExpanded(!expanded)}
       >
-        {evaluations.length > 0 ? (
+        {(evaluations.length > 0 || isMinimalHold) ? (
           expanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />
         ) : (
           <span className="w-3" />
@@ -155,11 +164,11 @@ function ExpandableDecision({ decision }: { decision: TradeDecision }) {
         </div>
       </div>
       
-      {/* Expanded per-symbol evaluations */}
+      {/* Expanded per-symbol evaluations (full details for trades) */}
       {expanded && evaluations.length > 0 && (
         <div className="border-t border-border/50 bg-background/50 p-2 space-y-1.5">
           <div className="text-[10px] text-muted-foreground mb-2">
-            Per-symbol evaluation:
+            Per-symbol evaluation (top {evaluations.length}):
           </div>
           {evaluations.map((ev, idx) => (
             <div 
@@ -208,6 +217,30 @@ function ExpandableDecision({ decision }: { decision: TradeDecision }) {
           {/* Thresholds used */}
           {metadata?.thresholds_used && (
             <div className="mt-2 pt-2 border-t border-border/30 text-[9px] text-muted-foreground">
+              <span className="opacity-70">Thresholds: </span>
+              trend={metadata.thresholds_used.trend}, 
+              pullback={metadata.thresholds_used.pullback}%, 
+              rsi={metadata.thresholds_used.rsi}, 
+              vol={metadata.thresholds_used.vol_contraction}
+            </div>
+          )}
+        </div>
+      )}
+      
+      {/* Minimal HOLD summary (lightweight) */}
+      {expanded && isMinimalHold && (
+        <div className="border-t border-border/50 bg-background/50 p-2 text-[10px]">
+          <div className="text-muted-foreground mb-1">
+            Evaluated {symbolCount} symbols — all HOLD
+          </div>
+          {metadata?.top_hold_reasons && metadata.top_hold_reasons.length > 0 && (
+            <div className="text-muted-foreground">
+              <span className="opacity-70">Top reasons: </span>
+              {metadata.top_hold_reasons.join(', ')}
+            </div>
+          )}
+          {metadata?.thresholds_used && (
+            <div className="mt-1.5 pt-1.5 border-t border-border/30 text-[9px] text-muted-foreground">
               <span className="opacity-70">Thresholds: </span>
               trend={metadata.thresholds_used.trend}, 
               pullback={metadata.thresholds_used.pullback}%, 

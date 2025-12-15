@@ -461,24 +461,21 @@ Deno.serve(async (req) => {
     const actionableCandidates = candidates.filter(c => c.decision !== 'hold');
     const bestCandidate = actionableCandidates.sort((a, b) => b.confidence - a.confidence)[0];
     
-    // If no actionable candidates, log HOLD and return
+    // If no actionable candidates, log HOLD with minimal summary (reduces DB payload)
     if (!bestCandidate) {
       console.log(`[trade-cycle] All ${symbolsToEvaluate.length} symbols HOLD`);
       
-      // Build per-symbol evaluation summary for transparency
-      const evaluations = candidates.map(c => ({
-        symbol: c.symbol,
-        decision: c.decision,
-        reasons: c.reasons,
-        confidence: c.confidence,
-        market: {
-          price: c.market.price,
-          change_24h: c.market.change_24h,
-          ema_slope: c.market.ema_50_slope,
-          atr: c.market.atr_ratio,
-          regime: getRegime(c.market),
-        },
-      }));
+      // Summarize hold reasons (avoid logging full market data for every HOLD)
+      const holdReasons: Record<string, number> = {};
+      for (const c of candidates) {
+        for (const r of c.reasons) {
+          holdReasons[r] = (holdReasons[r] || 0) + 1;
+        }
+      }
+      const topHoldReasons = Object.entries(holdReasons)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([reason, count]) => `${reason}:${count}`);
       
       await supabase.from('control_events').insert({
         action: 'trade_decision',
@@ -487,11 +484,11 @@ Deno.serve(async (req) => {
           agent_id: agent.id,
           generation_id: systemState.current_generation_id,
           strategy_template: agent.strategy_template,
-          symbols_evaluated: symbolsToEvaluate,
+          symbols_evaluated: symbolsToEvaluate.length,
           decision: 'hold',
           all_hold: true,
+          top_hold_reasons: topHoldReasons,
           mode: 'paper',
-          evaluations, // Per-symbol reasoning
           thresholds_used: {
             trend: BASELINE_THRESHOLDS.trend_threshold,
             pullback: BASELINE_THRESHOLDS.pullback_pct,
@@ -541,22 +538,25 @@ Deno.serve(async (req) => {
       },
     };
 
-    // Build per-symbol evaluation summary for transparency
-    const evaluations = candidates.map(c => ({
-      symbol: c.symbol,
-      decision: c.decision,
-      reasons: c.reasons,
-      confidence: c.confidence,
-      market: {
-        price: c.market.price,
-        change_24h: c.market.change_24h,
-        ema_slope: c.market.ema_50_slope,
-        atr: c.market.atr_ratio,
-        regime: getRegime(c.market),
-      },
-    }));
+    // Build per-symbol evaluation summary (only for actionable trades, capped to top 5)
+    const evaluations = candidates
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 5)
+      .map(c => ({
+        symbol: c.symbol,
+        decision: c.decision,
+        reasons: c.reasons,
+        confidence: c.confidence,
+        market: {
+          price: c.market.price,
+          change_24h: c.market.change_24h,
+          ema_slope: c.market.ema_50_slope,
+          atr: c.market.atr_ratio,
+          regime: getRegime(c.market),
+        },
+      }));
 
-    // Log decision to control_events
+    // Log decision to control_events (full details only for actual trades)
     await supabase.from('control_events').insert({
       action: 'trade_decision',
       metadata: {
@@ -566,8 +566,8 @@ Deno.serve(async (req) => {
         symbol,
         decision,
         qty: plannedQty,
-        symbols_evaluated: symbolsToEvaluate,
-        evaluations, // Per-symbol reasoning
+        symbols_evaluated: symbolsToEvaluate.length,
+        evaluations, // Top 5 candidates only
         ...tags,
         mode: 'paper',
         thresholds_used: {

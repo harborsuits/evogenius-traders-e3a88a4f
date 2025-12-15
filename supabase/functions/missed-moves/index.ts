@@ -74,19 +74,33 @@ serve(async (req) => {
     
     console.log(`[missed-moves] Monitored symbols: ${monitoredSymbols.size}`);
 
-    // 3) Get market data with significant moves - ONLY for monitored + validated symbols
-    const { data: marketData, error: mdError } = await supabase
+    // 3) Get ALL market data for monitored symbols (for informational movers section)
+    const monitoredArray = Array.from(monitoredSymbols);
+    const { data: allMarketData, error: allMdError } = await supabase
       .from("market_data")
       .select("symbol, price, change_24h, updated_at")
-      .or(`change_24h.gte.${PUMP_THRESHOLD},change_24h.lte.${DUMP_THRESHOLD}`)
-      .order("change_24h", { ascending: false });
+      .in("symbol", monitoredArray.length > 0 ? monitoredArray : ['NONE']);
 
-    if (mdError) throw mdError;
+    if (allMdError) throw allMdError;
+
+    // Build all_monitored list with price data
+    const allMonitored = (allMarketData || []).map(md => ({
+      symbol: md.symbol,
+      change_24h: md.change_24h,
+      price: md.price,
+      last_decision: null as string | null,
+    }));
+
+    // 3b) Filter to significant moves only for missed moves detection
+    const marketData = (allMarketData || []).filter(
+      md => md.change_24h >= PUMP_THRESHOLD || md.change_24h <= DUMP_THRESHOLD
+    );
 
     if (!marketData || marketData.length === 0) {
       console.log("[missed-moves] No significant moves detected");
       return new Response(JSON.stringify({ 
         missed_moves: [], 
+        all_monitored: allMonitored,
         thresholds: { pump: PUMP_THRESHOLD, dump: DUMP_THRESHOLD },
         monitored_count: monitoredSymbols.size
       }), {
@@ -178,8 +192,15 @@ serve(async (req) => {
 
     console.log(`[missed-moves] Found ${missedMoves.length} missed moves out of ${marketData.length} significant movers`);
 
+    // Add decision info to all_monitored for display
+    const allMonitoredWithDecisions = allMonitored.map(m => ({
+      ...m,
+      last_decision: decisionMap.get(m.symbol)?.decision || null,
+    }));
+
     return new Response(JSON.stringify({ 
       missed_moves: missedMoves.slice(0, 10),
+      all_monitored: allMonitoredWithDecisions,
       thresholds: { pump: PUMP_THRESHOLD, dump: DUMP_THRESHOLD },
       monitored_count: monitoredSymbols.size
     }), {

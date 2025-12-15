@@ -77,10 +77,10 @@ export function IntakeWidget() {
     .sort(([, a], [, b]) => b - a)
     .slice(0, 4);
 
-  // Bot lane = news about symbols we touched (relevant catalysts)
-  const relevantNews = (newsData?.bot_lane || []).slice(0, 8);
+  // Bot lane = news about symbols we touched (relevant catalysts) - show more items
+  const relevantNews = (newsData?.bot_lane || []).slice(0, 12);
   
-  // Market lane = general/macro news (fallback)
+  // Market lane = general/macro news (fallback) - show more items
   const macroNews = (newsData?.market_lane || [])
     .filter(n => {
       // Filter to BTC/ETH/macro only
@@ -88,7 +88,7 @@ export function IntakeWidget() {
       return symbols.length === 0 || 
              symbols.some(s => ['BTC-USD', 'ETH-USD'].includes(s));
     })
-    .slice(0, 3);
+    .slice(0, 6);
   
   const hasRelevantNews = relevantNews.length > 0;
   

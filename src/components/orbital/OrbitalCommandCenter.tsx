@@ -26,13 +26,13 @@ function OrbitalLayout() {
       <div className="flex-1 relative overflow-hidden min-h-0 z-10">
         <OrbitRing />
         
-        {/* Intake Widget - LEFT (speculative, forward-looking) */}
-        <div className="absolute left-4 top-1/2 -translate-y-1/2 z-40 w-[420px] max-w-[32vw] max-h-[calc(100%-2rem)]">
+        {/* Intake Widget - LEFT (speculative, forward-looking) - extend to screen edge */}
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 z-40 w-[380px] max-w-[28vw] max-h-[70vh]">
           <IntakeWidget />
         </div>
         
-        {/* Autopsy Widget - RIGHT (ground truth, backward-looking) */}
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 z-40 w-[420px] max-w-[32vw] max-h-[calc(100%-2rem)]">
+        {/* Autopsy Widget - RIGHT (ground truth, backward-looking) - extend to screen edge */}
+        <div className="absolute right-3 top-1/2 -translate-y-1/2 z-40 w-[380px] max-w-[28vw] max-h-[70vh]">
           <AutopsyWidget />
         </div>
         

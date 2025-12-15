@@ -18,33 +18,33 @@ function NewsItemRow({ item, showSymbols = true }: NewsItemRowProps) {
       href={item.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="group block p-2 rounded-md hover:bg-muted/50 transition-colors border-b border-border/30 last:border-b-0"
+      className="group block w-full min-w-0 p-3 rounded-md hover:bg-muted/50 transition-colors border border-border/30 bg-muted/20"
     >
-      <div className="flex items-start gap-2">
+      <div className="flex items-start gap-2 w-full min-w-0">
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium text-foreground/90 leading-tight line-clamp-2 group-hover:text-primary transition-colors">
+          <p className="text-[13px] font-medium text-foreground/90 leading-snug line-clamp-2 group-hover:text-primary transition-colors">
             {item.title}
           </p>
-          <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
+          <div className="flex items-center gap-2 mt-1.5 text-[10px] text-muted-foreground truncate">
             <span className="font-mono">{item.outlet || item.source}</span>
             <span className="opacity-50">•</span>
-            <Clock className="h-2.5 w-2.5" />
+            <Clock className="h-2.5 w-2.5 flex-shrink-0" />
             <span>{timeAgo}</span>
             {item.importance > 0 && (
               <>
                 <span className="opacity-50">•</span>
-                <TrendingUp className="h-2.5 w-2.5 text-green-500" />
+                <TrendingUp className="h-2.5 w-2.5 text-green-500 flex-shrink-0" />
                 <span className="text-green-500">+{item.importance}</span>
               </>
             )}
           </div>
           {showSymbols && item.symbols.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1">
+            <div className="flex flex-wrap gap-1 mt-1.5">
               {item.symbols.slice(0, 3).map((symbol) => (
                 <Badge 
                   key={symbol} 
                   variant="outline" 
-                  className="text-[9px] px-1 py-0 h-4 font-mono"
+                  className="text-[9px] px-1.5 py-0 h-4 font-mono"
                 >
                   {symbol.replace('-USD', '')}
                 </Badge>
@@ -52,7 +52,7 @@ function NewsItemRow({ item, showSymbols = true }: NewsItemRowProps) {
               {item.symbols.length > 3 && (
                 <Badge 
                   variant="outline" 
-                  className="text-[9px] px-1 py-0 h-4 opacity-50"
+                  className="text-[9px] px-1.5 py-0 h-4 opacity-50"
                 >
                   +{item.symbols.length - 3}
                 </Badge>
@@ -77,7 +77,7 @@ interface NewsLaneProps {
 
 function NewsLane({ title, icon, items, emptyMessage, showSymbols = true, maxHeight = "280px" }: NewsLaneProps) {
   return (
-    <div className="flex-1 min-w-0">
+    <div className="flex flex-col flex-1 min-w-0">
       <div className="flex items-center gap-1.5 mb-2 px-1">
         {icon}
         <span className="text-xs font-medium text-muted-foreground">{title}</span>
@@ -85,13 +85,13 @@ function NewsLane({ title, icon, items, emptyMessage, showSymbols = true, maxHei
           {items.length}
         </Badge>
       </div>
-      <ScrollArea style={{ height: maxHeight }}>
+      <ScrollArea style={{ height: maxHeight }} className="flex-1">
         {items.length === 0 ? (
           <div className="text-xs text-muted-foreground text-center py-4 italic">
             {emptyMessage}
           </div>
         ) : (
-          <div className="space-y-0.5">
+          <div className="flex flex-col gap-2 w-full min-w-0 pr-2">
             {items.map((item) => (
               <NewsItemRow key={item.id} item={item} showSymbols={showSymbols} />
             ))}
@@ -170,8 +170,8 @@ export function NewsPanel() {
           )}
         </CardTitle>
       </CardHeader>
-      <CardContent className="pt-0">
-        <div className="flex gap-4">
+      <CardContent className="pt-0 h-[calc(100%-3rem)]">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 w-full h-full">
           <NewsLane
             title="Market / Macro"
             icon={<Newspaper className="h-3 w-3 text-muted-foreground" />}
@@ -179,7 +179,6 @@ export function NewsPanel() {
             emptyMessage="No recent market news"
             showSymbols={true}
           />
-          <div className="w-px bg-border/50" />
           <NewsLane
             title="Your Bot's World"
             icon={<Bot className="h-3 w-3 text-primary" />}

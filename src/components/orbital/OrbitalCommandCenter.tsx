@@ -5,8 +5,8 @@ import { DockZone } from './DockZone';
 import { Button } from '@/components/ui/button';
 import { RotateCcw } from 'lucide-react';
 import { useOrbital } from '@/contexts/OrbitalContext';
-import { NewsTicker } from '@/components/dashboard/NewsTicker';
-
+import { PriceTicker } from '@/components/dashboard/PriceTicker';
+import { NewsWidget } from '@/components/dashboard/NewsWidget';
 // Inner component that uses the context
 function OrbitalLayout() {
   const { setRotationAngle } = useOrbital();
@@ -24,6 +24,11 @@ function OrbitalLayout() {
       <div className="flex-1 relative overflow-hidden min-h-0 z-10">
         <OrbitRing />
         
+        {/* News Widget - left negative space */}
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 z-40">
+          <NewsWidget />
+        </div>
+        
         {/* Reset View Button */}
         <Button
           variant="outline"
@@ -36,8 +41,8 @@ function OrbitalLayout() {
         </Button>
       </div>
       
-      {/* News Ticker Area */}
-      <NewsTicker />
+      {/* Price Ticker Area */}
+      <PriceTicker />
       
       {/* Bottom Dock Zone - reserves layout space when cards docked */}
       <DockZone zone="bottom" />

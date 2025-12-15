@@ -8,12 +8,14 @@ import {
   TrendingDown,
   AlertCircle,
   HelpCircle,
-  ArrowUp,
-  ArrowDown,
-  ArrowLeftRight
+  GripHorizontal
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { NewsDock } from "@/components/orbital/OrbitalCommandCenter";
+import { useRef, useState, useCallback } from "react";
+import { cn } from "@/lib/utils";
+
+const DOCK_THRESHOLD = 150;
 
 function formatTimeAgo(dateStr: string | null): string {
   if (!dateStr) return '';
@@ -44,6 +46,71 @@ interface AutopsyWidgetProps {
 
 export function AutopsyWidget({ dock = "side", onDockChange }: AutopsyWidgetProps) {
   const { data: missedData, isLoading } = useMissedMoves();
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [isBeingDragged, setIsBeingDragged] = useState(false);
+  const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
+  const startPosRef = useRef({ x: 0, y: 0 });
+  const initialRectRef = useRef<DOMRect | null>(null);
+  const isDraggingRef = useRef(false);
+  
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const rect = headerRef.current?.parentElement?.getBoundingClientRect();
+    if (!rect) return;
+    
+    initialRectRef.current = rect;
+    startPosRef.current = { x: e.clientX, y: e.clientY };
+    isDraggingRef.current = true;
+    
+    setIsBeingDragged(true);
+    setDragPos({ x: rect.left, y: rect.top });
+    
+    headerRef.current?.setPointerCapture(e.pointerId);
+  }, []);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!isDraggingRef.current || !initialRectRef.current) return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const deltaX = e.clientX - startPosRef.current.x;
+    const deltaY = e.clientY - startPosRef.current.y;
+    
+    const newX = initialRectRef.current.left + deltaX;
+    const newY = initialRectRef.current.top + deltaY;
+    
+    setDragPos({ x: newX, y: newY });
+  }, []);
+
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    if (!isDraggingRef.current) return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    isDraggingRef.current = false;
+    setIsBeingDragged(false);
+    
+    headerRef.current?.releasePointerCapture(e.pointerId);
+    
+    // Check dock zones
+    const y = e.clientY;
+    const deltaY = e.clientY - startPosRef.current.y;
+    
+    if (onDockChange) {
+      if (y < DOCK_THRESHOLD || deltaY < -DOCK_THRESHOLD) {
+        onDockChange("top");
+      } else if (y > window.innerHeight - DOCK_THRESHOLD || deltaY > DOCK_THRESHOLD) {
+        onDockChange("bottom");
+      } else if (dock !== "side") {
+        // If dragged away from dock zones and currently docked, return to side
+        onDockChange("side");
+      }
+    }
+  }, [dock, onDockChange]);
   
   const missedMoves = missedData?.missed_moves || [];
   const pumpThreshold = missedData?.thresholds?.pump || 5;
@@ -63,62 +130,35 @@ export function AutopsyWidget({ dock = "side", onDockChange }: AutopsyWidgetProp
     .slice(0, 6);
 
   return (
-    <Card className="w-full h-full max-h-full flex flex-col bg-card/95 backdrop-blur-sm border-border/50 shadow-lg overflow-hidden">
-      <CardHeader className="py-2 px-3">
-        <CardTitle className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
-          <Skull className="h-3.5 w-3.5" />
-          <span>Autopsy</span>
-          <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 font-normal border-muted-foreground/30">
-            ground truth
-          </Badge>
-          {strictMisses.length > 0 && (
-            <Badge 
-              variant="destructive" 
-              className="text-[9px] px-1.5 py-0 h-4 font-mono"
-            >
-              {strictMisses.length} miss{strictMisses.length !== 1 ? 'es' : ''}
+    <>
+      <Card className={cn(
+        "w-full h-full max-h-full flex flex-col bg-card/95 backdrop-blur-sm border-border/50 shadow-lg overflow-hidden",
+        isBeingDragged && "opacity-40"
+      )}>
+        <CardHeader 
+          ref={headerRef}
+          className="py-2 px-3 cursor-grab active:cursor-grabbing select-none"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+        >
+          <CardTitle className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
+            <GripHorizontal className="h-3.5 w-3.5 text-muted-foreground/50" />
+            <Skull className="h-3.5 w-3.5" />
+            <span>Autopsy</span>
+            <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 font-normal border-muted-foreground/30">
+              ground truth
             </Badge>
-          )}
-          {/* Dock controls */}
-          {onDockChange && (
-            <div className="flex items-center gap-0.5 ml-auto shrink-0">
-              <button
-                onClick={() => onDockChange("top")}
-                className={`p-1 rounded text-[10px] border transition-colors ${
-                  dock === "top" 
-                    ? "bg-primary/20 border-primary/40 text-primary" 
-                    : "border-border/50 text-muted-foreground hover:bg-muted/50"
-                }`}
-                title="Dock to top"
+            {strictMisses.length > 0 && (
+              <Badge 
+                variant="destructive" 
+                className="text-[9px] px-1.5 py-0 h-4 font-mono ml-auto"
               >
-                <ArrowUp className="h-3 w-3" />
-              </button>
-              <button
-                onClick={() => onDockChange("bottom")}
-                className={`p-1 rounded text-[10px] border transition-colors ${
-                  dock === "bottom" 
-                    ? "bg-primary/20 border-primary/40 text-primary" 
-                    : "border-border/50 text-muted-foreground hover:bg-muted/50"
-                }`}
-                title="Dock to bottom"
-              >
-                <ArrowDown className="h-3 w-3" />
-              </button>
-              <button
-                onClick={() => onDockChange("side")}
-                className={`p-1 rounded text-[10px] border transition-colors ${
-                  dock === "side" 
-                    ? "bg-primary/20 border-primary/40 text-primary" 
-                    : "border-border/50 text-muted-foreground hover:bg-muted/50"
-                }`}
-                title="Dock to side"
-              >
-                <ArrowLeftRight className="h-3 w-3" />
-              </button>
-            </div>
-          )}
-        </CardTitle>
-      </CardHeader>
+                {strictMisses.length} miss{strictMisses.length !== 1 ? 'es' : ''}
+              </Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
       <CardContent className="p-0 flex-1 min-h-0 overflow-hidden">
         {isLoading ? (
           <div className="px-4 py-6 text-xs text-muted-foreground animate-pulse text-center">
@@ -261,6 +301,21 @@ export function AutopsyWidget({ dock = "side", onDockChange }: AutopsyWidgetProp
         )}
       </CardContent>
     </Card>
+
+    {/* Dragged ghost */}
+    {isBeingDragged && (
+      <div
+        className="fixed z-[1000] w-[300px] h-[200px] rounded-lg bg-card border-2 border-primary/60 shadow-2xl shadow-primary/20 pointer-events-none flex items-center justify-center"
+        style={{ left: dragPos.x, top: dragPos.y }}
+      >
+        <div className="flex items-center gap-2 text-foreground">
+          <GripHorizontal className="h-4 w-4 text-primary/60" />
+          <Skull className="h-4 w-4" />
+          <span className="font-mono text-sm">Autopsy</span>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

@@ -11,7 +11,7 @@ import { SystemStatus, Generation } from '@/types/evotrader';
 import { Loader2 } from 'lucide-react';
 
 // Cockpit tiles
-import { TradeCycleTile, GenHealthTile, PollingHealthTile, SystemControlTile, CapitalOverviewTile } from '@/components/orbital/tiles/CockpitTiles';
+import { TradeCycleTile, GenHealthTile, PollingHealthTile, SystemControlTile, CapitalOverviewTile, NewsTile } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PortfolioCardContent, PositionsCardContent, OrdersCardContent, TradesCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
 
@@ -22,6 +22,7 @@ const staticCards: OrbitalCard[] = [
   { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
   { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
   { id: 'capital', title: 'Capital Overview', type: 'cockpit', component: CapitalOverviewTile },
+  { id: 'news', title: 'News Feed', type: 'cockpit', component: NewsTile },
   // Drillable cards - static paths
   { id: 'trades', title: 'Trades & Fills', type: 'drillable', drilldownPath: '/trades', component: TradesCardContent },
   { id: 'agents', title: 'Agent Leaderboard', type: 'drillable', drilldownPath: '/agents', component: AgentsCardContent },

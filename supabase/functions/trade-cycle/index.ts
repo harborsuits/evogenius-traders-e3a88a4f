@@ -365,63 +365,44 @@ Deno.serve(async (req) => {
     const agentIndex = Math.floor(Date.now() / 60000) % agents.length;
     const agent = agents[agentIndex] as Agent;
     
-    // 7. Pick symbol using deterministic rotation
-    // CRITICAL: Each agent evaluates only 1 symbol per cycle to prevent noise
+    // 7. Pick symbols using deterministic rotation
+    // Each agent evaluates SYMBOLS_PER_AGENT symbols per cycle for faster opportunity discovery
     // Symbol selection rotates based on agent ID hash + time bucket
-    // This ensures full universe coverage without 100 agents × 20 symbols = 2000 evals/cycle
-    const SYMBOLS_PER_AGENT = 1; // Keep it focused
+    const SYMBOLS_PER_AGENT = 3; // Increased for faster validation
     const TIME_BUCKET_MINS = 5; // Rotate every 5 minutes
     
     // Simple deterministic hash from agent ID (sum of char codes)
     const agentHash = agent.id.split('').reduce((sum, c) => sum + c.charCodeAt(0), 0);
     const timeBucket = Math.floor(Date.now() / (TIME_BUCKET_MINS * 60000));
     
-    // Rotate through available symbols deterministically
-    const symbolIndex = (agentHash + timeBucket) % availableSymbols.length;
-    const symbol = availableSymbols[symbolIndex];
-    const market = marketBySymbol.get(symbol);
-
-    if (!market) {
-      console.log(`[trade-cycle] No market data for ${symbol}`);
-      return new Response(
-        JSON.stringify({ ok: true, skipped: true, reason: 'no_market_for_symbol' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const dataAge = getDataAge(market.updated_at);
-    
-    // === FRESHNESS GATE: Skip if market data is stale ===
-    const MAX_MARKET_AGE_SECONDS = 120;
-    if (dataAge > MAX_MARKET_AGE_SECONDS) {
-      console.log(`[trade-cycle] Market data stale (${dataAge}s old), skipping`);
-      
-      await supabase.from('control_events').insert({
-        action: 'trade_decision',
-        metadata: {
-          cycle_id: cycleId,
-          agent_id: agent.id,
-          generation_id: systemState.current_generation_id,
-          symbol,
-          decision: 'hold',
-          reason: 'stale_market_data_skip',
-          market_age_seconds: dataAge,
-          mode: 'paper',
-        },
-      });
-      
-      return new Response(
-        JSON.stringify({ 
-          ok: true, 
-          skipped: true, 
-          reason: 'stale_market_data_skip',
-          market_age_seconds: dataAge,
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    // Get SYMBOLS_PER_AGENT symbols deterministically (spaced out across universe)
+    const symbolsToEvaluate: string[] = [];
+    for (let i = 0; i < SYMBOLS_PER_AGENT && i < availableSymbols.length; i++) {
+      // Space symbols out across the universe instead of consecutive picks
+      const offset = Math.floor(availableSymbols.length / SYMBOLS_PER_AGENT) * i;
+      const symbolIndex = (agentHash + timeBucket + offset) % availableSymbols.length;
+      const sym = availableSymbols[symbolIndex];
+      if (!symbolsToEvaluate.includes(sym)) {
+        symbolsToEvaluate.push(sym);
+      }
     }
     
-    // 7b. Get system config for test mode flag
+    console.log(`[trade-cycle] Agent ${agent.id.substring(0, 8)} evaluating ${symbolsToEvaluate.length} symbols: ${symbolsToEvaluate.join(', ')}`);
+    
+    // Store all decisions to pick the best actionable one
+    interface DecisionCandidate {
+      symbol: string;
+      market: MarketData;
+      decision: Decision;
+      reasons: string[];
+      confidence: number;
+      exitReason?: string;
+      positionQty: number;
+    }
+    
+    const candidates: DecisionCandidate[] = [];
+    
+    // 7b. Get system config for test mode flag (once, outside loop)
     const { data: configData } = await supabase
       .from('system_config')
       .select('config')
@@ -434,7 +415,7 @@ Deno.serve(async (req) => {
       console.log('[trade-cycle] TEST MODE ACTIVE - using loosened thresholds');
     }
     
-    // 7c. Get agent's trade count for confidence calibration
+    // 7c. Get agent's trade count for confidence calibration (once, outside loop)
     const { data: agentTradeData } = await supabase
       .from('paper_orders')
       .select('id')
@@ -442,16 +423,85 @@ Deno.serve(async (req) => {
       .eq('status', 'filled');
     const agentTradeCount = agentTradeData?.length ?? 0;
     
-    const regime = getRegime(market);
-    const positionQty = positionBySymbol.get(symbol) ?? 0;
-    const hasPosition = positionQty > 0;
-
-    console.log(`[trade-cycle] Agent ${agent.id.substring(0, 8)} | ${agent.strategy_template} | ${symbol} | regime=${regime} | pos=${positionQty} | trades=${agentTradeCount}`);
-
-    // 8. Make decision (pass testMode flag and trade count for confidence calibration)
-    const { decision, reasons, confidence, exitReason } = makeDecision(agent, market, hasPosition, positionQty, testMode, agentTradeCount);
+    const MAX_MARKET_AGE_SECONDS = 120;
     
-    // Calculate qty early so we can log the correct value
+    // Evaluate each symbol and collect candidates
+    for (const sym of symbolsToEvaluate) {
+      const mkt = marketBySymbol.get(sym);
+      if (!mkt) continue;
+      
+      const age = getDataAge(mkt.updated_at);
+      
+      // Skip stale data for this symbol
+      if (age > MAX_MARKET_AGE_SECONDS) {
+        console.log(`[trade-cycle] ${sym} data stale (${age}s), skipping`);
+        continue;
+      }
+      
+      const regime = getRegime(mkt);
+      const posQty = positionBySymbol.get(sym) ?? 0;
+      const hasPos = posQty > 0;
+      
+      const result = makeDecision(agent, mkt, hasPos, posQty, testMode, agentTradeCount);
+      
+      candidates.push({
+        symbol: sym,
+        market: mkt,
+        decision: result.decision,
+        reasons: result.reasons,
+        confidence: result.confidence,
+        exitReason: result.exitReason,
+        positionQty: posQty,
+      });
+      
+      console.log(`[trade-cycle] ${sym}: ${result.decision} (conf=${result.confidence.toFixed(2)}, reasons=${result.reasons.join(',')})`);
+    }
+    
+    // Pick the best actionable candidate (buy/sell with highest confidence)
+    const actionableCandidates = candidates.filter(c => c.decision !== 'hold');
+    const bestCandidate = actionableCandidates.sort((a, b) => b.confidence - a.confidence)[0];
+    
+    // If no actionable candidates, log HOLD and return
+    if (!bestCandidate) {
+      console.log(`[trade-cycle] All ${symbolsToEvaluate.length} symbols HOLD`);
+      
+      await supabase.from('control_events').insert({
+        action: 'trade_decision',
+        metadata: {
+          cycle_id: cycleId,
+          agent_id: agent.id,
+          generation_id: systemState.current_generation_id,
+          symbols_evaluated: symbolsToEvaluate,
+          decision: 'hold',
+          all_hold: true,
+          mode: 'paper',
+          thresholds_used: {
+            trend: BASELINE_THRESHOLDS.trend_threshold,
+            pullback: BASELINE_THRESHOLDS.pullback_pct,
+            rsi: BASELINE_THRESHOLDS.rsi_threshold,
+            vol_contraction: BASELINE_THRESHOLDS.vol_contraction,
+          },
+        },
+      });
+      
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          decision: 'hold',
+          agent_id: agent.id,
+          symbols_evaluated: symbolsToEvaluate,
+          duration_ms: Date.now() - startTime,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // Use the best candidate
+    const { symbol, market, decision, reasons, confidence, exitReason, positionQty } = bestCandidate;
+    const dataAge = getDataAge(market.updated_at);
+    const regime = getRegime(market);
+    
+    // Calculate qty
     const baseQty = symbol === 'BTC-USD' ? 0.0001 : 0.001;
     const plannedQty = decision === 'sell' ? Math.min(baseQty, positionQty) : baseQty;
     
@@ -474,9 +524,7 @@ Deno.serve(async (req) => {
       },
     };
 
-    // 9. Log decision to control_events (even for HOLD)
-    // CRITICAL: Use system_state.current_generation_id, NOT agent.generation_id
-    // Agents table may have stale/placeholder generation_id
+    // Log decision to control_events
     await supabase.from('control_events').insert({
       action: 'trade_decision',
       metadata: {
@@ -485,10 +533,10 @@ Deno.serve(async (req) => {
         generation_id: systemState.current_generation_id,
         symbol,
         decision,
-        qty: decision !== 'hold' ? plannedQty : null,
+        qty: plannedQty,
+        symbols_evaluated: symbolsToEvaluate,
         ...tags,
         mode: 'paper',
-        // Threshold snapshot for deployment verification
         thresholds_used: {
           trend: BASELINE_THRESHOLDS.trend_threshold,
           pullback: BASELINE_THRESHOLDS.pullback_pct,
@@ -498,23 +546,6 @@ Deno.serve(async (req) => {
       },
     });
 
-    // 10. If HOLD, we're done
-    if (decision === 'hold') {
-      console.log(`[trade-cycle] Decision: HOLD | reasons=${reasons.join(',')}`);
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          decision: 'hold',
-          agent_id: agent.id,
-          symbol,
-          reasons,
-          duration_ms: Date.now() - startTime,
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // 11. Use pre-calculated quantity
     const finalQty = plannedQty;
     
     if (finalQty <= 0) {
@@ -532,10 +563,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`[trade-cycle] Decision: ${decision.toUpperCase()} ${finalQty} ${symbol} | conf=${confidence.toFixed(2)} | reasons=${reasons.join(',')}`);
+    console.log(`[trade-cycle] BEST: ${decision.toUpperCase()} ${finalQty} ${symbol} | conf=${confidence.toFixed(2)} | reasons=${reasons.join(',')}`);
 
-    // 12. Submit to trade-execute (which handles all gates)
-    // Use service role key for internal function-to-function calls
+    // Submit to trade-execute
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
     
@@ -566,6 +596,7 @@ Deno.serve(async (req) => {
         agent_id: agent.id,
         symbol,
         qty: finalQty,
+        symbols_evaluated: symbolsToEvaluate,
         execute_result: executeResult,
         duration_ms: Date.now() - startTime,
       }),

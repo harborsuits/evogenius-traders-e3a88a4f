@@ -12,9 +12,13 @@ import {
   Wallet,
   Handshake,
   AlertTriangle,
-  Globe
+  Globe,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeftRight
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { NewsDock } from "@/components/orbital/OrbitalCommandCenter";
 
 // Event type detection with more categories
 function detectEventType(title: string): { icon: React.ReactNode; label: string; color: string } | null {
@@ -64,7 +68,12 @@ function formatTimeAgo(dateStr: string): string {
   }
 }
 
-export function IntakeWidget() {
+interface IntakeWidgetProps {
+  dock?: NewsDock;
+  onDockChange?: (dock: NewsDock) => void;
+}
+
+export function IntakeWidget({ dock = "side", onDockChange }: IntakeWidgetProps) {
   const { data: newsData, isLoading } = useNewsFeed();
   
   const newsIntensity = newsData?.news_intensity || {};
@@ -93,7 +102,7 @@ export function IntakeWidget() {
   
   return (
     <Card className="w-full h-full max-h-full flex flex-col bg-card/95 backdrop-blur-sm border-border/50 shadow-lg overflow-hidden">
-      <CardHeader className="py-2.5 px-4">
+      <CardHeader className="py-2 px-3">
         <CardTitle className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
           <Eye className="h-3.5 w-3.5" />
           <span>Intake</span>
@@ -101,9 +110,9 @@ export function IntakeWidget() {
             catalyst watch
           </Badge>
           {hotSymbols.length > 0 && (
-            <div className="flex items-center gap-1 ml-auto">
+            <div className="flex items-center gap-1">
               <Flame className="h-3.5 w-3.5 text-orange-500" />
-              {hotSymbols.map(([symbol]) => (
+              {hotSymbols.slice(0, 2).map(([symbol]) => (
                 <Badge 
                   key={symbol}
                   variant="outline"
@@ -112,6 +121,44 @@ export function IntakeWidget() {
                   {symbol.replace('-USD', '')}
                 </Badge>
               ))}
+            </div>
+          )}
+          {/* Dock controls */}
+          {onDockChange && (
+            <div className="flex items-center gap-0.5 ml-auto shrink-0">
+              <button
+                onClick={() => onDockChange("top")}
+                className={`p-1 rounded text-[10px] border transition-colors ${
+                  dock === "top" 
+                    ? "bg-primary/20 border-primary/40 text-primary" 
+                    : "border-border/50 text-muted-foreground hover:bg-muted/50"
+                }`}
+                title="Dock to top"
+              >
+                <ArrowUp className="h-3 w-3" />
+              </button>
+              <button
+                onClick={() => onDockChange("bottom")}
+                className={`p-1 rounded text-[10px] border transition-colors ${
+                  dock === "bottom" 
+                    ? "bg-primary/20 border-primary/40 text-primary" 
+                    : "border-border/50 text-muted-foreground hover:bg-muted/50"
+                }`}
+                title="Dock to bottom"
+              >
+                <ArrowDown className="h-3 w-3" />
+              </button>
+              <button
+                onClick={() => onDockChange("side")}
+                className={`p-1 rounded text-[10px] border transition-colors ${
+                  dock === "side" 
+                    ? "bg-primary/20 border-primary/40 text-primary" 
+                    : "border-border/50 text-muted-foreground hover:bg-muted/50"
+                }`}
+                title="Dock to side"
+              >
+                <ArrowLeftRight className="h-3 w-3" />
+              </button>
             </div>
           )}
         </CardTitle>

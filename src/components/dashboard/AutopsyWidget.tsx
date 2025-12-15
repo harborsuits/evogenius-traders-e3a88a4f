@@ -7,9 +7,13 @@ import {
   TrendingUp, 
   TrendingDown,
   AlertCircle,
-  HelpCircle
+  HelpCircle,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeftRight
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { NewsDock } from "@/components/orbital/OrbitalCommandCenter";
 
 function formatTimeAgo(dateStr: string | null): string {
   if (!dateStr) return '';
@@ -33,7 +37,12 @@ function formatDecisionReason(reason: string | null): string {
   return reason;
 }
 
-export function AutopsyWidget() {
+interface AutopsyWidgetProps {
+  dock?: NewsDock;
+  onDockChange?: (dock: NewsDock) => void;
+}
+
+export function AutopsyWidget({ dock = "side", onDockChange }: AutopsyWidgetProps) {
   const { data: missedData, isLoading } = useMissedMoves();
   
   const missedMoves = missedData?.missed_moves || [];
@@ -55,7 +64,7 @@ export function AutopsyWidget() {
 
   return (
     <Card className="w-full h-full max-h-full flex flex-col bg-card/95 backdrop-blur-sm border-border/50 shadow-lg overflow-hidden">
-      <CardHeader className="py-2.5 px-4">
+      <CardHeader className="py-2 px-3">
         <CardTitle className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
           <Skull className="h-3.5 w-3.5" />
           <span>Autopsy</span>
@@ -65,10 +74,48 @@ export function AutopsyWidget() {
           {strictMisses.length > 0 && (
             <Badge 
               variant="destructive" 
-              className="ml-auto text-[9px] px-1.5 py-0 h-4 font-mono"
+              className="text-[9px] px-1.5 py-0 h-4 font-mono"
             >
               {strictMisses.length} miss{strictMisses.length !== 1 ? 'es' : ''}
             </Badge>
+          )}
+          {/* Dock controls */}
+          {onDockChange && (
+            <div className="flex items-center gap-0.5 ml-auto shrink-0">
+              <button
+                onClick={() => onDockChange("top")}
+                className={`p-1 rounded text-[10px] border transition-colors ${
+                  dock === "top" 
+                    ? "bg-primary/20 border-primary/40 text-primary" 
+                    : "border-border/50 text-muted-foreground hover:bg-muted/50"
+                }`}
+                title="Dock to top"
+              >
+                <ArrowUp className="h-3 w-3" />
+              </button>
+              <button
+                onClick={() => onDockChange("bottom")}
+                className={`p-1 rounded text-[10px] border transition-colors ${
+                  dock === "bottom" 
+                    ? "bg-primary/20 border-primary/40 text-primary" 
+                    : "border-border/50 text-muted-foreground hover:bg-muted/50"
+                }`}
+                title="Dock to bottom"
+              >
+                <ArrowDown className="h-3 w-3" />
+              </button>
+              <button
+                onClick={() => onDockChange("side")}
+                className={`p-1 rounded text-[10px] border transition-colors ${
+                  dock === "side" 
+                    ? "bg-primary/20 border-primary/40 text-primary" 
+                    : "border-border/50 text-muted-foreground hover:bg-muted/50"
+                }`}
+                title="Dock to side"
+              >
+                <ArrowLeftRight className="h-3 w-3" />
+              </button>
+            </div>
           )}
         </CardTitle>
       </CardHeader>

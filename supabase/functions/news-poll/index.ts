@@ -126,6 +126,17 @@ async function fetchCoinDesk(): Promise<RSSItem[]> {
   }
 }
 
+// Tag to symbol mapping for Cointelegraph
+const TAG_TO_SYMBOL: Record<string, string> = {
+  bitcoin: 'BTC-USD',
+  ethereum: 'ETH-USD',
+  solana: 'SOL-USD',
+  xrp: 'XRP-USD',
+  dogecoin: 'DOGE-USD',
+  defi: '',       // Not a tradeable symbol
+  regulation: '', // Not a tradeable symbol
+};
+
 // Cointelegraph RSS feeds
 const COINTELEGRAPH_FEEDS = [
   { url: 'https://cointelegraph.com/rss', tag: null },
@@ -194,6 +205,56 @@ async function fetchDecrypt(): Promise<RSSItem[]> {
     return items;
   } catch (error) {
     console.error('[news-poll] Decrypt fetch error:', error);
+    return [];
+  }
+}
+
+async function fetchTheBlock(): Promise<RSSItem[]> {
+  try {
+    const url = 'https://www.theblock.co/rss.xml';
+    console.log('[news-poll] Fetching The Block RSS...');
+    
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NewsBot/1.0)' }
+    });
+    
+    if (!response.ok) {
+      console.error('[news-poll] The Block error:', response.status);
+      return [];
+    }
+    
+    const text = await response.text();
+    const items = parseRSSItems(text, 20);
+    
+    console.log(`[news-poll] The Block returned ${items.length} items`);
+    return items;
+  } catch (error) {
+    console.error('[news-poll] The Block fetch error:', error);
+    return [];
+  }
+}
+
+async function fetchCryptoSlate(): Promise<RSSItem[]> {
+  try {
+    const url = 'https://cryptoslate.com/feed/';
+    console.log('[news-poll] Fetching CryptoSlate RSS...');
+    
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NewsBot/1.0)' }
+    });
+    
+    if (!response.ok) {
+      console.error('[news-poll] CryptoSlate error:', response.status);
+      return [];
+    }
+    
+    const text = await response.text();
+    const items = parseRSSItems(text, 20);
+    
+    console.log(`[news-poll] CryptoSlate returned ${items.length} items`);
+    return items;
+  } catch (error) {
+    console.error('[news-poll] CryptoSlate fetch error:', error);
     return [];
   }
 }
@@ -296,11 +357,11 @@ serve(async (req) => {
     
     for (const item of ctItems) {
       const symbols = extractSymbols(item.title, knownSymbols);
-      // Also map tag to symbol if applicable
+      // Map tag to symbol using explicit mapping
       if (item.tag) {
-        const tagSymbol = `${item.tag.toUpperCase()}-USD`;
-        if (knownSymbols.includes(tagSymbol) && !symbols.includes(tagSymbol)) {
-          symbols.push(tagSymbol);
+        const mappedSymbol = TAG_TO_SYMBOL[item.tag];
+        if (mappedSymbol && knownSymbols.includes(mappedSymbol) && !symbols.includes(mappedSymbol)) {
+          symbols.push(mappedSymbol);
         }
       }
       
@@ -345,6 +406,55 @@ serve(async (req) => {
         } as unknown as Record<string, unknown>,
       });
     }
+    
+    // Fetch from The Block
+    const tbItems = await fetchTheBlock();
+    
+    for (const item of tbItems) {
+      const symbols = extractSymbols(item.title, knownSymbols);
+      
+      newsItems.push({
+        id: hashId('theblock', item.link),
+        source: 'theblock',
+        outlet: 'The Block',
+        title: item.title,
+        url: item.link,
+        published_at: new Date(item.pubDate).toISOString(),
+        symbols,
+        importance: 0,
+        raw: {
+          ...item,
+          source_type: 'rss',
+          ingest_cost: 'free',
+          content_class: 'news',
+        } as unknown as Record<string, unknown>,
+      });
+    }
+    
+    // Fetch from CryptoSlate
+    const csItems = await fetchCryptoSlate();
+    
+    for (const item of csItems) {
+      const symbols = extractSymbols(item.title, knownSymbols);
+      
+      newsItems.push({
+        id: hashId('cryptoslate', item.link),
+        source: 'cryptoslate',
+        outlet: 'CryptoSlate',
+        title: item.title,
+        url: item.link,
+        published_at: new Date(item.pubDate).toISOString(),
+        symbols,
+        importance: 0,
+        raw: {
+          ...item,
+          source_type: 'rss',
+          ingest_cost: 'free',
+          content_class: 'news',
+        } as unknown as Record<string, unknown>,
+      });
+    }
+
     
     console.log(`[news-poll] Total items to upsert: ${newsItems.length}`);
     

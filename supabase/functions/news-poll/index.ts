@@ -234,30 +234,6 @@ async function fetchTheBlock(): Promise<RSSItem[]> {
   }
 }
 
-async function fetchCryptoSlate(): Promise<RSSItem[]> {
-  try {
-    const url = 'https://cryptoslate.com/feed/';
-    console.log('[news-poll] Fetching CryptoSlate RSS...');
-    
-    const response = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NewsBot/1.0)' }
-    });
-    
-    if (!response.ok) {
-      console.error('[news-poll] CryptoSlate error:', response.status);
-      return [];
-    }
-    
-    const text = await response.text();
-    const items = parseRSSItems(text, 20);
-    
-    console.log(`[news-poll] CryptoSlate returned ${items.length} items`);
-    return items;
-  } catch (error) {
-    console.error('[news-poll] CryptoSlate fetch error:', error);
-    return [];
-  }
-}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -431,38 +407,19 @@ serve(async (req) => {
       });
     }
     
-    // Fetch from CryptoSlate
-    const csItems = await fetchCryptoSlate();
+    // Global cap: keep newest 200 items to prevent DB bloat
+    const MAX_ITEMS = 200;
+    const sortedItems = newsItems
+      .sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime())
+      .slice(0, MAX_ITEMS);
     
-    for (const item of csItems) {
-      const symbols = extractSymbols(item.title, knownSymbols);
-      
-      newsItems.push({
-        id: hashId('cryptoslate', item.link),
-        source: 'cryptoslate',
-        outlet: 'CryptoSlate',
-        title: item.title,
-        url: item.link,
-        published_at: new Date(item.pubDate).toISOString(),
-        symbols,
-        importance: 0,
-        raw: {
-          ...item,
-          source_type: 'rss',
-          ingest_cost: 'free',
-          content_class: 'news',
-        } as unknown as Record<string, unknown>,
-      });
-    }
-
-    
-    console.log(`[news-poll] Total items to upsert: ${newsItems.length}`);
+    console.log(`[news-poll] Total items: ${newsItems.length}, capped to: ${sortedItems.length}`);
     
     // Upsert news items
-    if (newsItems.length > 0) {
+    if (sortedItems.length > 0) {
       const { error: upsertError } = await supabase
         .from('news_items')
-        .upsert(newsItems, { onConflict: 'id' });
+        .upsert(sortedItems, { onConflict: 'id' });
       
       if (upsertError) {
         console.error('[news-poll] Upsert error:', upsertError);
@@ -476,7 +433,7 @@ serve(async (req) => {
       bucket_start: string;
     }> = [];
     
-    for (const item of newsItems) {
+    for (const item of sortedItems) {
       const bucket = getBucketStart(new Date(item.published_at));
       
       for (const symbol of item.symbols) {
@@ -502,11 +459,11 @@ serve(async (req) => {
     }
     
     const duration = Date.now() - startTime;
-    console.log(`[news-poll] Complete in ${duration}ms - ${newsItems.length} items, ${mentions.length} mentions`);
+    console.log(`[news-poll] Complete in ${duration}ms - ${sortedItems.length} items, ${mentions.length} mentions`);
     
     return new Response(JSON.stringify({
       success: true,
-      items_count: newsItems.length,
+      items_count: sortedItems.length,
       mentions_count: mentions.length,
       duration_ms: duration,
     }), {

@@ -74,16 +74,38 @@ async function fetchCryptoPanic(apiKey: string): Promise<CryptoPanicItem[]> {
   }
 }
 
-interface CoinDeskItem {
+interface RSSItem {
   title: string;
   link: string;
   pubDate: string;
   description?: string;
+  tag?: string;
 }
 
-async function fetchCoinDesk(): Promise<CoinDeskItem[]> {
+// Generic RSS parser
+function parseRSSItems(text: string, maxItems = 20): RSSItem[] {
+  const items: RSSItem[] = [];
+  const itemMatches = text.match(/<item>[\s\S]*?<\/item>/g) || [];
+  
+  for (const itemXml of itemMatches.slice(0, maxItems)) {
+    const titleMatch = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/);
+    const linkMatch = itemXml.match(/<link>(.*?)<\/link>|<link><!\[CDATA\[(.*?)\]\]><\/link>/);
+    const pubDateMatch = itemXml.match(/<pubDate>(.*?)<\/pubDate>/);
+    
+    if (titleMatch && linkMatch) {
+      items.push({
+        title: (titleMatch[1] || titleMatch[2] || '').trim(),
+        link: (linkMatch[1] || linkMatch[2] || '').trim(),
+        pubDate: pubDateMatch?.[1] || new Date().toISOString(),
+      });
+    }
+  }
+  
+  return items;
+}
+
+async function fetchCoinDesk(): Promise<RSSItem[]> {
   try {
-    // CoinDesk RSS feed
     const url = 'https://www.coindesk.com/arc/outboundfeeds/rss/';
     console.log('[news-poll] Fetching CoinDesk RSS...');
     
@@ -94,29 +116,84 @@ async function fetchCoinDesk(): Promise<CoinDeskItem[]> {
     }
     
     const text = await response.text();
-    
-    // Simple XML parsing for RSS items
-    const items: CoinDeskItem[] = [];
-    const itemMatches = text.match(/<item>[\s\S]*?<\/item>/g) || [];
-    
-    for (const itemXml of itemMatches.slice(0, 20)) {
-      const titleMatch = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/);
-      const linkMatch = itemXml.match(/<link>(.*?)<\/link>/);
-      const pubDateMatch = itemXml.match(/<pubDate>(.*?)<\/pubDate>/);
-      
-      if (titleMatch && linkMatch) {
-        items.push({
-          title: titleMatch[1] || titleMatch[2] || '',
-          link: linkMatch[1] || '',
-          pubDate: pubDateMatch?.[1] || new Date().toISOString(),
-        });
-      }
-    }
+    const items = parseRSSItems(text, 20);
     
     console.log(`[news-poll] CoinDesk returned ${items.length} items`);
     return items;
   } catch (error) {
     console.error('[news-poll] CoinDesk fetch error:', error);
+    return [];
+  }
+}
+
+// Cointelegraph RSS feeds
+const COINTELEGRAPH_FEEDS = [
+  { url: 'https://cointelegraph.com/rss', tag: null },
+  { url: 'https://cointelegraph.com/rss/tag/bitcoin', tag: 'bitcoin' },
+  { url: 'https://cointelegraph.com/rss/tag/ethereum', tag: 'ethereum' },
+  { url: 'https://cointelegraph.com/rss/tag/solana', tag: 'solana' },
+  { url: 'https://cointelegraph.com/rss/tag/xrp', tag: 'xrp' },
+  { url: 'https://cointelegraph.com/rss/tag/defi', tag: 'defi' },
+  { url: 'https://cointelegraph.com/rss/tag/regulation', tag: 'regulation' },
+];
+
+async function fetchCointelegraph(): Promise<RSSItem[]> {
+  const allItems: RSSItem[] = [];
+  const seenUrls = new Set<string>();
+  
+  for (const feed of COINTELEGRAPH_FEEDS) {
+    try {
+      console.log(`[news-poll] Fetching Cointelegraph ${feed.tag || 'global'}...`);
+      
+      const response = await fetch(feed.url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NewsBot/1.0)' }
+      });
+      
+      if (!response.ok) {
+        console.error(`[news-poll] Cointelegraph ${feed.tag || 'global'} error:`, response.status);
+        continue;
+      }
+      
+      const text = await response.text();
+      const items = parseRSSItems(text, 15);
+      
+      for (const item of items) {
+        // Dedupe across tag feeds
+        if (!seenUrls.has(item.link)) {
+          seenUrls.add(item.link);
+          allItems.push({ ...item, tag: feed.tag || undefined });
+        }
+      }
+    } catch (error) {
+      console.error(`[news-poll] Cointelegraph ${feed.tag || 'global'} fetch error:`, error);
+    }
+  }
+  
+  console.log(`[news-poll] Cointelegraph returned ${allItems.length} unique items`);
+  return allItems;
+}
+
+async function fetchDecrypt(): Promise<RSSItem[]> {
+  try {
+    const url = 'https://decrypt.co/feed';
+    console.log('[news-poll] Fetching Decrypt RSS...');
+    
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NewsBot/1.0)' }
+    });
+    
+    if (!response.ok) {
+      console.error('[news-poll] Decrypt error:', response.status);
+      return [];
+    }
+    
+    const text = await response.text();
+    const items = parseRSSItems(text, 20);
+    
+    console.log(`[news-poll] Decrypt returned ${items.length} items`);
+    return items;
+  } catch (error) {
+    console.error('[news-poll] Decrypt fetch error:', error);
     return [];
   }
 }
@@ -205,7 +282,67 @@ serve(async (req) => {
         published_at: new Date(item.pubDate).toISOString(),
         symbols,
         importance: 0,
-        raw: item as unknown as Record<string, unknown>,
+        raw: {
+          ...item,
+          source_type: 'rss',
+          ingest_cost: 'free',
+          content_class: 'news',
+        } as unknown as Record<string, unknown>,
+      });
+    }
+    
+    // Fetch from Cointelegraph
+    const ctItems = await fetchCointelegraph();
+    
+    for (const item of ctItems) {
+      const symbols = extractSymbols(item.title, knownSymbols);
+      // Also map tag to symbol if applicable
+      if (item.tag) {
+        const tagSymbol = `${item.tag.toUpperCase()}-USD`;
+        if (knownSymbols.includes(tagSymbol) && !symbols.includes(tagSymbol)) {
+          symbols.push(tagSymbol);
+        }
+      }
+      
+      newsItems.push({
+        id: hashId('cointelegraph', item.link),
+        source: 'cointelegraph',
+        outlet: 'Cointelegraph',
+        title: item.title,
+        url: item.link,
+        published_at: new Date(item.pubDate).toISOString(),
+        symbols,
+        importance: 0,
+        raw: {
+          ...item,
+          source_type: 'rss',
+          ingest_cost: 'free',
+          content_class: 'news',
+        } as unknown as Record<string, unknown>,
+      });
+    }
+    
+    // Fetch from Decrypt
+    const dcItems = await fetchDecrypt();
+    
+    for (const item of dcItems) {
+      const symbols = extractSymbols(item.title, knownSymbols);
+      
+      newsItems.push({
+        id: hashId('decrypt', item.link),
+        source: 'decrypt',
+        outlet: 'Decrypt',
+        title: item.title,
+        url: item.link,
+        published_at: new Date(item.pubDate).toISOString(),
+        symbols,
+        importance: 0,
+        raw: {
+          ...item,
+          source_type: 'rss',
+          ingest_cost: 'free',
+          content_class: 'news',
+        } as unknown as Record<string, unknown>,
       });
     }
     

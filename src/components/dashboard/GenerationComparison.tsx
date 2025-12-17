@@ -85,9 +85,9 @@ export function GenerationComparison() {
             const ts = order.filled_at ?? order.created_at;
             if (!ts) return;
             const hourBucket = Math.floor((new Date(ts).getTime() - startTs) / 3600000);
-            if (!hourlyData.has(hourBucket)) hourlyData.set(hourBucket, new Set());
+            if (!hourlyData.has(hourBucket)) hourlyData.set(hourBucket, new Set<string>());
             
-            const key = metric === 'agents' ? order.agent_id : order.symbol;
+            const key = metric === 'agents' ? String(order.agent_id) : String(order.symbol);
             hourlyData.get(hourBucket)!.add(key);
           });
 

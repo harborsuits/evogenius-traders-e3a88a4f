@@ -18,6 +18,8 @@ import { formatDistanceToNow } from "date-fns";
 import { NewsDock } from "@/components/orbital/OrbitalCommandCenter";
 import { useRef, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
+import { WidgetControls } from "./WidgetControls";
+import { WidgetPopoutModal } from "./WidgetPopoutModal";
 
 const DOCK_THRESHOLD = 150;
 
@@ -38,7 +40,6 @@ function formatTimeAgo(dateStr: string | null): string {
 
 function formatDecisionReason(reason: string | null): string {
   if (!reason) return '';
-  // Truncate long reasons
   if (reason.length > 40) return reason.slice(0, 37) + '...';
   return reason;
 }
@@ -46,14 +47,287 @@ function formatDecisionReason(reason: string | null): string {
 interface AutopsyWidgetProps {
   dock?: NewsDock;
   onDockChange?: (dock: NewsDock) => void;
+  onCollapse?: () => void;
+  onDockToOrbit?: () => void;
+  onUndock?: () => void;
+  isInOrbit?: boolean;
 }
 
-export function AutopsyWidget({ dock = "side", onDockChange }: AutopsyWidgetProps) {
+// Pure content component for reuse
+function AutopsyContent({ missedData, exitData, isLoading }: { missedData: any; exitData: any; isLoading: boolean }) {
+  const missedMoves = missedData?.missed_moves || [];
+  const pumpThreshold = missedData?.thresholds?.pump || 5;
+  const dumpThreshold = missedData?.thresholds?.dump || -5;
+  const monitoredCount = missedData?.monitored_count || 0;
+  
+  const strictMisses = missedMoves.filter((m: any) => 
+    Math.abs(m.change_24h) >= Math.max(Math.abs(pumpThreshold), Math.abs(dumpThreshold))
+  );
+  
+  const allMonitored = missedData?.all_monitored || [];
+  const largestMovers = allMonitored
+    .filter((m: any) => !strictMisses.some((s: any) => s.symbol === m.symbol))
+    .sort((a: any, b: any) => Math.abs(b.change_24h) - Math.abs(a.change_24h))
+    .slice(0, 6);
+
+  const exits = exitData?.exits || [];
+  const avgMissedPct = exitData?.avg_missed_profit_pct || 0;
+  const exitCount = exitData?.exit_count || 0;
+  
+  const goodExits = exits.filter((e: any) => e.was_profitable_exit);
+  const missedProfitExits = exits.filter((e: any) => !e.was_profitable_exit && e.missed_profit_pct > 1);
+
+  if (isLoading) {
+    return (
+      <div className="px-4 py-6 text-xs text-muted-foreground animate-pulse text-center">
+        Loading misses…
+      </div>
+    );
+  }
+
+  return (
+    <ScrollArea className="h-full">
+      <div className="px-3 pb-3 space-y-3">
+        {/* Section: Exit Efficiency */}
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5 text-[10px] text-amber-400/80 uppercase tracking-wide font-medium px-1 border-b border-amber-500/20 pb-1">
+            <LogOut className="h-3 w-3" />
+            <span>Exit Efficiency (24h)</span>
+            <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-amber-500/30 text-amber-400">
+              {exitCount} exits
+            </Badge>
+          </div>
+          
+          {exitCount > 0 ? (
+            <div className="space-y-1">
+              <div className="flex items-center gap-3 px-2 py-1.5 rounded bg-amber-500/10 border border-amber-500/20">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-muted-foreground">Avg:</span>
+                  <span className={cn(
+                    "text-[11px] font-mono font-medium",
+                    avgMissedPct > 1 ? "text-red-400" : avgMissedPct < -1 ? "text-emerald-400" : "text-muted-foreground"
+                  )}>
+                    {avgMissedPct >= 0 ? '+' : ''}{avgMissedPct.toFixed(1)}%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle className="h-3 w-3 text-emerald-400/60" />
+                  <span className="text-[10px] text-emerald-400/80">{goodExits.length} good</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <XCircle className="h-3 w-3 text-red-400/60" />
+                  <span className="text-[10px] text-red-400/80">{missedProfitExits.length} early</span>
+                </div>
+              </div>
+              
+              {missedProfitExits.slice(0, 4).map((exit: any) => {
+                const timeAgo = formatTimeAgo(exit.exit_time);
+                return (
+                  <div
+                    key={`${exit.symbol}-${exit.exit_time}`}
+                    className="grid grid-cols-[1fr_55px_55px_45px] gap-1.5 items-center px-2 py-1 rounded bg-red-500/5 border border-red-500/10"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <TrendingUp className="h-3 w-3 text-red-400/60 flex-shrink-0" />
+                      <span className="text-[10px] font-semibold text-foreground/80 font-mono">
+                        {exit.symbol.replace('-USD', '')}
+                      </span>
+                    </div>
+                    
+                    <div className="text-right">
+                      <span className="text-[9px] text-muted-foreground/60 block">exit</span>
+                      <span className="text-[10px] font-mono text-muted-foreground">
+                        ${exit.exit_price.toFixed(exit.exit_price < 1 ? 4 : 2)}
+                      </span>
+                    </div>
+                    
+                    <div className="text-right">
+                      <span className="text-[9px] text-muted-foreground/60 block">now</span>
+                      <span className="text-[10px] font-mono text-foreground">
+                        ${exit.current_price.toFixed(exit.current_price < 1 ? 4 : 2)}
+                      </span>
+                    </div>
+                    
+                    <div className="text-right">
+                      <span className="text-[10px] font-mono text-red-400 font-medium">
+                        +{exit.missed_profit_pct.toFixed(1)}%
+                      </span>
+                      <span className="text-[8px] text-muted-foreground/40 block">
+                        {timeAgo}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+              
+              {goodExits.length > 0 && missedProfitExits.length === 0 && (
+                <div className="text-center py-1.5 px-2 bg-emerald-500/10 rounded border border-emerald-500/20">
+                  <div className="flex items-center justify-center gap-1.5">
+                    <CheckCircle className="h-3 w-3 text-emerald-400" />
+                    <span className="text-[10px] text-emerald-400">
+                      All {goodExits.length} exits timed well (price dropped after)
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-2 px-2 bg-muted/20 rounded-md">
+              <div className="text-[10px] text-muted-foreground/60">
+                No exits in last 24h to analyze
+              </div>
+            </div>
+          )}
+        </div>
+        
+        {/* Section A: Missed Moves (Strict) */}
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5 text-[10px] text-red-400/80 uppercase tracking-wide font-medium px-1 border-b border-red-500/20 pb-1">
+            <AlertCircle className="h-3 w-3" />
+            <span>Missed Moves (≥{pumpThreshold}%)</span>
+            <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-red-500/30 text-red-400">
+              {strictMisses.length} found
+            </Badge>
+          </div>
+          
+          {strictMisses.length > 0 ? (
+            <div className="space-y-1">
+              {strictMisses.map((m: any) => {
+                const timeAgo = formatTimeAgo(m.decision_time);
+                const reason = formatDecisionReason(m.last_decision_reason);
+                
+                return (
+                  <div
+                    key={m.symbol}
+                    className="grid grid-cols-[1fr_50px_60px_1fr] gap-2 items-center px-2 py-1.5 rounded bg-red-500/10 border border-red-500/20 group"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      {m.move_type === 'pump' ? (
+                        <TrendingUp className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />
+                      ) : (
+                        <TrendingDown className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
+                      )}
+                      <span className="text-[11px] font-semibold text-foreground font-mono">
+                        {m.symbol.replace('-USD', '')}
+                      </span>
+                    </div>
+                    
+                    <span className={`text-[11px] font-mono text-right font-medium ${
+                      m.move_type === 'pump' ? 'text-emerald-400' : 'text-red-400'
+                    }`}>
+                      {m.change_24h >= 0 ? '+' : ''}{m.change_24h.toFixed(1)}%
+                    </span>
+                    
+                    <div className="flex justify-center">
+                      <Badge 
+                        variant={
+                          m.last_decision === 'BUY' ? 'default' :
+                          m.last_decision === 'SELL' ? 'destructive' :
+                          'secondary'
+                        }
+                        className="text-[9px] px-1.5 py-0 h-4 font-mono"
+                      >
+                        {m.last_decision || 'no eval'}
+                      </Badge>
+                    </div>
+                    
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="text-[9px] text-muted-foreground truncate flex-1" title={m.last_decision_reason || ''}>
+                        {reason || 'not evaluated'}
+                      </span>
+                      <button 
+                        className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded"
+                        title={`Why? (${timeAgo} ago)`}
+                      >
+                        <HelpCircle className="h-3 w-3 text-muted-foreground/60 hover:text-primary" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-2 px-2 bg-muted/20 rounded-md">
+              <div className="text-[10px] text-muted-foreground/60">
+                None detected — no moves ≥{pumpThreshold}% without signal
+              </div>
+            </div>
+          )}
+        </div>
+        
+        {/* Section B: Largest Movers (Informational) */}
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 uppercase tracking-wide px-1 border-b border-border/20 pb-1">
+            <TrendingUp className="h-3 w-3" />
+            <span>Largest Moves (Observed)</span>
+            <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-muted-foreground/20">
+              informational
+            </Badge>
+          </div>
+          
+          {largestMovers.length > 0 ? (
+            <div className="space-y-0.5">
+              {largestMovers.map((m: any) => (
+                <div
+                  key={m.symbol}
+                  className="grid grid-cols-[1fr_50px_1fr] gap-2 items-center px-2 py-1 rounded bg-muted/20"
+                >
+                  <div className="flex items-center gap-1.5">
+                    {m.change_24h >= 0 ? (
+                      <TrendingUp className="h-3 w-3 text-muted-foreground/40 flex-shrink-0" />
+                    ) : (
+                      <TrendingDown className="h-3 w-3 text-muted-foreground/40 flex-shrink-0" />
+                    )}
+                    <span className="text-[10px] text-muted-foreground/80 font-mono">
+                      {m.symbol.replace('-USD', '')}
+                    </span>
+                  </div>
+                  
+                  <span className={`text-[10px] font-mono text-right ${
+                    m.change_24h >= 0 ? 'text-emerald-400/60' : 'text-red-400/60'
+                  }`}>
+                    {m.change_24h >= 0 ? '+' : ''}{m.change_24h.toFixed(1)}%
+                  </span>
+                  
+                  <span className="text-[9px] text-muted-foreground/40">
+                    {m.last_decision ? `${m.last_decision}` : 'no signal'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-2 px-2 bg-muted/20 rounded-md">
+              <div className="text-[9px] text-muted-foreground/40">
+                No monitored symbols with price data
+              </div>
+            </div>
+          )}
+        </div>
+        
+        {/* Footer: thresholds info */}
+        <div className="flex items-center justify-between px-2 pt-1 border-t border-border/30 text-[9px] text-muted-foreground/40">
+          <span>Thresholds: ≥{pumpThreshold}% / ≤{dumpThreshold}%</span>
+          <span>Monitoring: {monitoredCount} symbols</span>
+        </div>
+      </div>
+    </ScrollArea>
+  );
+}
+
+export function AutopsyWidget({ 
+  dock = "side", 
+  onDockChange,
+  onCollapse,
+  onDockToOrbit,
+  onUndock,
+  isInOrbit = false,
+}: AutopsyWidgetProps) {
   const { data: missedData, isLoading: missedLoading } = useMissedMoves();
   const { data: exitData, isLoading: exitLoading } = useExitEfficiency(24);
   const headerRef = useRef<HTMLDivElement>(null);
   const [isBeingDragged, setIsBeingDragged] = useState(false);
   const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
+  const [isPopoutOpen, setIsPopoutOpen] = useState(false);
   const startPosRef = useRef({ x: 0, y: 0 });
   const initialRectRef = useRef<DOMRect | null>(null);
   const isDraggingRef = useRef(false);
@@ -101,7 +375,6 @@ export function AutopsyWidget({ dock = "side", onDockChange }: AutopsyWidgetProp
     
     headerRef.current?.releasePointerCapture(e.pointerId);
     
-    // Check dock zones
     const y = e.clientY;
     const deltaY = e.clientY - startPosRef.current.y;
     
@@ -111,37 +384,14 @@ export function AutopsyWidget({ dock = "side", onDockChange }: AutopsyWidgetProp
       } else if (y > window.innerHeight - DOCK_THRESHOLD || deltaY > DOCK_THRESHOLD) {
         onDockChange("bottom");
       } else if (dock !== "side") {
-        // If dragged away from dock zones and currently docked, return to side
         onDockChange("side");
       }
     }
   }, [dock, onDockChange]);
   
-  const missedMoves = missedData?.missed_moves || [];
-  const pumpThreshold = missedData?.thresholds?.pump || 5;
-  const dumpThreshold = missedData?.thresholds?.dump || -5;
-  const monitoredCount = missedData?.monitored_count || 0;
-  
-  // Section A: Strict missed moves (crossed threshold with no signal)
-  const strictMisses = missedMoves.filter(m => 
-    Math.abs(m.change_24h) >= Math.max(Math.abs(pumpThreshold), Math.abs(dumpThreshold))
+  const strictMisses = (missedData?.missed_moves || []).filter((m: any) => 
+    Math.abs(m.change_24h) >= Math.max(Math.abs(missedData?.thresholds?.pump || 5), Math.abs(missedData?.thresholds?.dump || -5))
   );
-  
-  // Section B: Largest movers below threshold (informational)
-  const allMonitored = missedData?.all_monitored || [];
-  const largestMovers = allMonitored
-    .filter(m => !strictMisses.some(s => s.symbol === m.symbol))
-    .sort((a, b) => Math.abs(b.change_24h) - Math.abs(a.change_24h))
-    .slice(0, 6);
-
-  // Exit efficiency data
-  const exits = exitData?.exits || [];
-  const avgMissedPct = exitData?.avg_missed_profit_pct || 0;
-  const exitCount = exitData?.exit_count || 0;
-  
-  // Separate good vs missed-profit exits
-  const goodExits = exits.filter(e => e.was_profitable_exit);
-  const missedProfitExits = exits.filter(e => !e.was_profitable_exit && e.missed_profit_pct > 1); // >1% missed
 
   const isLoading = missedLoading || exitLoading;
 
@@ -168,264 +418,50 @@ export function AutopsyWidget({ dock = "side", onDockChange }: AutopsyWidgetProp
             {strictMisses.length > 0 && (
               <Badge 
                 variant="destructive" 
-                className="text-[9px] px-1.5 py-0 h-4 font-mono ml-auto"
+                className="text-[9px] px-1.5 py-0 h-4 font-mono"
               >
                 {strictMisses.length} miss{strictMisses.length !== 1 ? 'es' : ''}
               </Badge>
             )}
+            <WidgetControls
+              className="ml-auto"
+              isInOrbit={isInOrbit}
+              onCollapse={onCollapse}
+              onDockToOrbit={onDockToOrbit}
+              onUndock={onUndock}
+              onPopout={() => setIsPopoutOpen(true)}
+            />
           </CardTitle>
         </CardHeader>
-      <CardContent className="p-0 flex-1 min-h-0 overflow-hidden">
-        {isLoading ? (
-          <div className="px-4 py-6 text-xs text-muted-foreground animate-pulse text-center">
-            Loading misses…
-          </div>
-        ) : (
-          <ScrollArea className="h-full">
-            <div className="px-3 pb-3 space-y-3">
-              {/* Section: Exit Efficiency (NEW) */}
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5 text-[10px] text-amber-400/80 uppercase tracking-wide font-medium px-1 border-b border-amber-500/20 pb-1">
-                  <LogOut className="h-3 w-3" />
-                  <span>Exit Efficiency (24h)</span>
-                  <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-amber-500/30 text-amber-400">
-                    {exitCount} exits
-                  </Badge>
-                </div>
-                
-                {exitCount > 0 ? (
-                  <div className="space-y-1">
-                    {/* Summary stats */}
-                    <div className="flex items-center gap-3 px-2 py-1.5 rounded bg-amber-500/10 border border-amber-500/20">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[9px] text-muted-foreground">Avg:</span>
-                        <span className={cn(
-                          "text-[11px] font-mono font-medium",
-                          avgMissedPct > 1 ? "text-red-400" : avgMissedPct < -1 ? "text-emerald-400" : "text-muted-foreground"
-                        )}>
-                          {avgMissedPct >= 0 ? '+' : ''}{avgMissedPct.toFixed(1)}%
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <CheckCircle className="h-3 w-3 text-emerald-400/60" />
-                        <span className="text-[10px] text-emerald-400/80">{goodExits.length} good</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <XCircle className="h-3 w-3 text-red-400/60" />
-                        <span className="text-[10px] text-red-400/80">{missedProfitExits.length} early</span>
-                      </div>
-                    </div>
-                    
-                    {/* Recent exits with missed profit */}
-                    {missedProfitExits.slice(0, 4).map((exit) => {
-                      const timeAgo = formatTimeAgo(exit.exit_time);
-                      return (
-                        <div
-                          key={`${exit.symbol}-${exit.exit_time}`}
-                          className="grid grid-cols-[1fr_55px_55px_45px] gap-1.5 items-center px-2 py-1 rounded bg-red-500/5 border border-red-500/10"
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <TrendingUp className="h-3 w-3 text-red-400/60 flex-shrink-0" />
-                            <span className="text-[10px] font-semibold text-foreground/80 font-mono">
-                              {exit.symbol.replace('-USD', '')}
-                            </span>
-                          </div>
-                          
-                          <div className="text-right">
-                            <span className="text-[9px] text-muted-foreground/60 block">exit</span>
-                            <span className="text-[10px] font-mono text-muted-foreground">
-                              ${exit.exit_price.toFixed(exit.exit_price < 1 ? 4 : 2)}
-                            </span>
-                          </div>
-                          
-                          <div className="text-right">
-                            <span className="text-[9px] text-muted-foreground/60 block">now</span>
-                            <span className="text-[10px] font-mono text-foreground">
-                              ${exit.current_price.toFixed(exit.current_price < 1 ? 4 : 2)}
-                            </span>
-                          </div>
-                          
-                          <div className="text-right">
-                            <span className="text-[10px] font-mono text-red-400 font-medium">
-                              +{exit.missed_profit_pct.toFixed(1)}%
-                            </span>
-                            <span className="text-[8px] text-muted-foreground/40 block">
-                              {timeAgo}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    
-                    {/* Good exits (collapsed) */}
-                    {goodExits.length > 0 && missedProfitExits.length === 0 && (
-                      <div className="text-center py-1.5 px-2 bg-emerald-500/10 rounded border border-emerald-500/20">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <CheckCircle className="h-3 w-3 text-emerald-400" />
-                          <span className="text-[10px] text-emerald-400">
-                            All {goodExits.length} exits timed well (price dropped after)
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-center py-2 px-2 bg-muted/20 rounded-md">
-                    <div className="text-[10px] text-muted-foreground/60">
-                      No exits in last 24h to analyze
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              {/* Section A: Missed Moves (Strict) */}
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5 text-[10px] text-red-400/80 uppercase tracking-wide font-medium px-1 border-b border-red-500/20 pb-1">
-                  <AlertCircle className="h-3 w-3" />
-                  <span>Missed Moves (≥{pumpThreshold}%)</span>
-                  <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-red-500/30 text-red-400">
-                    {strictMisses.length} found
-                  </Badge>
-                </div>
-                
-                {strictMisses.length > 0 ? (
-                  <div className="space-y-1">
-                    {strictMisses.map((m) => {
-                      const timeAgo = formatTimeAgo(m.decision_time);
-                      const reason = formatDecisionReason(m.last_decision_reason);
-                      
-                      return (
-                        <div
-                          key={m.symbol}
-                          className="grid grid-cols-[1fr_50px_60px_1fr] gap-2 items-center px-2 py-1.5 rounded bg-red-500/10 border border-red-500/20 group"
-                        >
-                          <div className="flex items-center gap-1.5">
-                            {m.move_type === 'pump' ? (
-                              <TrendingUp className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />
-                            ) : (
-                              <TrendingDown className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
-                            )}
-                            <span className="text-[11px] font-semibold text-foreground font-mono">
-                              {m.symbol.replace('-USD', '')}
-                            </span>
-                          </div>
-                          
-                          <span className={`text-[11px] font-mono text-right font-medium ${
-                            m.move_type === 'pump' ? 'text-emerald-400' : 'text-red-400'
-                          }`}>
-                            {m.change_24h >= 0 ? '+' : ''}{m.change_24h.toFixed(1)}%
-                          </span>
-                          
-                          <div className="flex justify-center">
-                            <Badge 
-                              variant={
-                                m.last_decision === 'BUY' ? 'default' :
-                                m.last_decision === 'SELL' ? 'destructive' :
-                                'secondary'
-                              }
-                              className="text-[9px] px-1.5 py-0 h-4 font-mono"
-                            >
-                              {m.last_decision || 'no eval'}
-                            </Badge>
-                          </div>
-                          
-                          <div className="flex items-center gap-1 min-w-0">
-                            <span className="text-[9px] text-muted-foreground truncate flex-1" title={m.last_decision_reason || ''}>
-                              {reason || 'not evaluated'}
-                            </span>
-                            <button 
-                              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded"
-                              title={`Why? (${timeAgo} ago)`}
-                            >
-                              <HelpCircle className="h-3 w-3 text-muted-foreground/60 hover:text-primary" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="text-center py-2 px-2 bg-muted/20 rounded-md">
-                    <div className="text-[10px] text-muted-foreground/60">
-                      None detected — no moves ≥{pumpThreshold}% without signal
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              {/* Section B: Largest Movers (Informational) */}
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 uppercase tracking-wide px-1 border-b border-border/20 pb-1">
-                  <TrendingUp className="h-3 w-3" />
-                  <span>Largest Moves (Observed)</span>
-                  <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-muted-foreground/20">
-                    informational
-                  </Badge>
-                </div>
-                
-                {largestMovers.length > 0 ? (
-                  <div className="space-y-0.5">
-                    {largestMovers.map((m) => (
-                      <div
-                        key={m.symbol}
-                        className="grid grid-cols-[1fr_50px_1fr] gap-2 items-center px-2 py-1 rounded bg-muted/20"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          {m.change_24h >= 0 ? (
-                            <TrendingUp className="h-3 w-3 text-muted-foreground/40 flex-shrink-0" />
-                          ) : (
-                            <TrendingDown className="h-3 w-3 text-muted-foreground/40 flex-shrink-0" />
-                          )}
-                          <span className="text-[10px] text-muted-foreground/80 font-mono">
-                            {m.symbol.replace('-USD', '')}
-                          </span>
-                        </div>
-                        
-                        <span className={`text-[10px] font-mono text-right ${
-                          m.change_24h >= 0 ? 'text-emerald-400/60' : 'text-red-400/60'
-                        }`}>
-                          {m.change_24h >= 0 ? '+' : ''}{m.change_24h.toFixed(1)}%
-                        </span>
-                        
-                        <span className="text-[9px] text-muted-foreground/40">
-                          {m.last_decision ? `${m.last_decision}` : 'no signal'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-2 px-2 bg-muted/20 rounded-md">
-                    <div className="text-[9px] text-muted-foreground/40">
-                      No monitored symbols with price data
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              {/* Footer: thresholds info */}
-              <div className="flex items-center justify-between px-2 pt-1 border-t border-border/30 text-[9px] text-muted-foreground/40">
-                <span>Thresholds: ≥{pumpThreshold}% / ≤{dumpThreshold}%</span>
-                <span>Monitoring: {monitoredCount} symbols</span>
-              </div>
-            </div>
-          </ScrollArea>
-        )}
-      </CardContent>
-    </Card>
+        <CardContent className="p-0 flex-1 min-h-0 overflow-hidden">
+          <AutopsyContent missedData={missedData} exitData={exitData} isLoading={isLoading} />
+        </CardContent>
+      </Card>
 
-    {/* Dragged ghost */}
-    {isBeingDragged && (
-      <div
-        className="fixed z-[1000] w-[300px] h-[200px] rounded-lg bg-card border-2 border-primary/60 shadow-2xl shadow-primary/20 pointer-events-none flex items-center justify-center"
-        style={{ left: dragPos.x, top: dragPos.y }}
-      >
-        <div className="flex items-center gap-2 text-foreground">
-          <GripHorizontal className="h-4 w-4 text-primary/60" />
-          <Skull className="h-4 w-4" />
-          <span className="font-mono text-sm">Autopsy</span>
+      {/* Dragged ghost */}
+      {isBeingDragged && (
+        <div
+          className="fixed z-[1000] w-[300px] h-[200px] rounded-lg bg-card border-2 border-primary/60 shadow-2xl shadow-primary/20 pointer-events-none flex items-center justify-center"
+          style={{ left: dragPos.x, top: dragPos.y }}
+        >
+          <div className="flex items-center gap-2 text-foreground">
+            <GripHorizontal className="h-4 w-4 text-primary/60" />
+            <Skull className="h-4 w-4" />
+            <span className="font-mono text-sm">Autopsy</span>
+          </div>
         </div>
-      </div>
-    )}
+      )}
+
+      {/* Popout Modal */}
+      <WidgetPopoutModal
+        open={isPopoutOpen}
+        onOpenChange={setIsPopoutOpen}
+        title="Autopsy"
+        badge="ground truth"
+        icon={<Skull className="h-4 w-4" />}
+      >
+        <AutopsyContent missedData={missedData} exitData={exitData} isLoading={isLoading} />
+      </WidgetPopoutModal>
     </>
   );
 }

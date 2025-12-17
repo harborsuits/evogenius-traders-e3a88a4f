@@ -11,7 +11,7 @@ import { SystemStatus, Generation } from '@/types/evotrader';
 import { Loader2 } from 'lucide-react';
 
 // Cockpit tiles
-import { TradeCycleTile, GenHealthTile, PollingHealthTile, SystemControlTile, CapitalOverviewTile, RolloverTile, GenComparisonTile, LineageTile, DecisionLogTile, AgentInactivityTile } from '@/components/orbital/tiles/CockpitTiles';
+import { TradeCycleTile, GenHealthTile, PollingHealthTile, SystemControlTile, CapitalOverviewTile, RolloverTile, GenComparisonTile, LineageTile, DecisionLogTile, AgentInactivityTile, SymbolCoverageTile } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PositionsCardContent, ActivityCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
 
@@ -22,12 +22,13 @@ const staticCards: OrbitalCard[] = [
   { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
   { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
   { id: 'capital', title: 'Capital Overview', type: 'cockpit', component: CapitalOverviewTile },
-  { id: 'decision-log', title: 'Decision Log', type: 'cockpit', component: DecisionLogTile },
+  { id: 'symbol-coverage', title: 'Symbol Coverage', type: 'cockpit', component: SymbolCoverageTile },
   { id: 'agent-inactivity', title: 'Agent Activity', type: 'cockpit', component: AgentInactivityTile },
   { id: 'gen-compare', title: 'Gen 10 vs 11', type: 'cockpit', component: GenComparisonTile },
   { id: 'lineage', title: 'Lineage', type: 'cockpit', component: LineageTile },
   { id: 'rollover', title: 'Rollover Checklist', type: 'cockpit', component: RolloverTile },
-  // Drillable cards - static paths
+  // Drillable cards
+  { id: 'decision-log', title: 'Decision Log', type: 'drillable', drilldownPath: '/decisions', component: DecisionLogTile },
   { id: 'activity', title: 'Activity', type: 'drillable', drilldownPath: '/trades', component: ActivityCardContent },
   { id: 'agents', title: 'Agent Leaderboard', type: 'drillable', drilldownPath: '/agents', component: AgentsCardContent },
   { id: 'positions', title: 'Positions', type: 'drillable', drilldownPath: '/positions', component: PositionsCardContent },

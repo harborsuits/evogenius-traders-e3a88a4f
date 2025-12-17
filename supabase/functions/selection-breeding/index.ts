@@ -279,10 +279,13 @@ Deno.serve(async (req) => {
       const offspringRecords = offspring.map(o => ({
         strategy_template: o.strategy_template,
         genes: o.genes,
+        generation_id: new_generation_id, // Required field - links offspring to new generation
         capital_allocation: 40, // Default allocation
         is_elite: false,
         status: 'active',
       }));
+
+      console.log(`[selection-breeding] Inserting ${offspringRecords.length} offspring for generation ${new_generation_id}`);
 
       const { data: insertedOffspring, error: insertError } = await supabase
         .from('agents')
@@ -291,8 +294,10 @@ Deno.serve(async (req) => {
 
       if (insertError) {
         console.error('[selection-breeding] Failed to insert offspring:', insertError);
+        console.error('[selection-breeding] Insert error details:', JSON.stringify(insertError));
       } else {
         insertedOffspringIds = (insertedOffspring ?? []).map(o => o.id);
+        console.log(`[selection-breeding] Successfully inserted ${insertedOffspringIds.length} offspring`);
       }
     }
 

@@ -253,6 +253,9 @@ export function RolloverChecklist() {
   const progressPct = snapshot ? Math.min(100, (snapshot.learnable_fills / 100) * 100) : 0;
   const timeProgressPct = snapshot ? Math.min(100, (snapshot.hours_elapsed / 168) * 100) : 0; // 7 days = 168 hours
 
+  // Check for cohort integrity failure
+  const cohortIntegrityFailed = cohortCount !== null && cohortCount !== 100;
+
   return (
     <Card className="bg-card/50 backdrop-blur border-border/50">
       <CardHeader className="pb-2">
@@ -271,6 +274,20 @@ export function RolloverChecklist() {
         </div>
       </CardHeader>
       <CardContent>
+        {/* CRITICAL: Cohort Integrity Blocker */}
+        {cohortIntegrityFailed && (
+          <div className="mb-3 p-2 rounded-md bg-destructive/20 border border-destructive/50">
+            <div className="flex items-center gap-2">
+              <XCircle className="h-4 w-4 text-destructive" />
+              <span className="font-mono text-xs text-destructive font-bold">BLOCKER: COHORT INTEGRITY FAILED</span>
+            </div>
+            <p className="text-[10px] text-destructive/80 mt-1 font-mono">
+              Expected 100 agents, found {cohortCount}. Breeding may have failed to create offspring.
+              Check control_events for 'rollover_failed' or 'offspring_shortfall'.
+            </p>
+          </div>
+        )}
+        
         <ScrollArea className="h-[400px] pr-2">
           {/* Section A: Pre-Rollover Snapshot */}
           <Section title="A. Pre-Rollover Snapshot" badge={savedSnapshot ? 'SAVED' : 'LIVE'} defaultOpen={true}>
@@ -433,8 +450,8 @@ export function RolloverChecklist() {
             />
             <CheckItem 
               label="generation_agents has 100 rows for Gen 11" 
-              status={cohortCount === 100 ? 'pass' : 'pending'}
-              detail={`Current cohort: ${cohortCount}`}
+              status={cohortCount === 100 ? 'pass' : cohortCount !== null ? 'fail' : 'pending'}
+              detail={`Current cohort: ${cohortCount}${cohortIntegrityFailed ? ' ⚠️ CRITICAL' : ''}`}
             />
             <CheckItem 
               label="Trade-cycle writes to Gen 11" 

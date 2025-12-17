@@ -147,7 +147,11 @@ export function OrdersCardContent({ compact }: { compact?: boolean }) {
                   </Badge>
                   <span className="font-mono">{order.symbol}</span>
                 </div>
-                <Badge variant="outline" className="text-[10px]">{order.status}</Badge>
+                {order.status === 'filled' && order.filled_price ? (
+                  <span className="font-mono text-muted-foreground">${order.filled_price.toLocaleString()}</span>
+                ) : (
+                  <Badge variant="outline" className="text-[10px]">{order.status}</Badge>
+                )}
               </div>
             ))}
           </div>

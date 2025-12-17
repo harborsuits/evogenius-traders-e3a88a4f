@@ -19,6 +19,8 @@ import { formatDistanceToNow } from "date-fns";
 import { NewsDock } from "@/components/orbital/OrbitalCommandCenter";
 import { useRef, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
+import { WidgetControls } from "./WidgetControls";
+import { WidgetPopoutModal } from "./WidgetPopoutModal";
 
 const DOCK_THRESHOLD = 150;
 
@@ -73,13 +75,170 @@ function formatTimeAgo(dateStr: string): string {
 interface IntakeWidgetProps {
   dock?: NewsDock;
   onDockChange?: (dock: NewsDock) => void;
+  onCollapse?: () => void;
+  onDockToOrbit?: () => void;
+  onUndock?: () => void;
+  isInOrbit?: boolean;
 }
 
-export function IntakeWidget({ dock = "side", onDockChange }: IntakeWidgetProps) {
+// Pure content component for reuse
+function IntakeContent({ newsData, isLoading }: { newsData: any; isLoading: boolean }) {
+  const newsIntensity = newsData?.news_intensity || {};
+  const botSymbols = newsData?.bot_symbols || [];
+  
+  // Section A: Catalyst Watch (strict monitored symbols with event tags)
+  const catalystNews = (newsData?.bot_lane || []).slice(0, 8);
+  
+  // Section B: Market Context (fallback macro/general news)
+  const marketNews = (newsData?.market_lane || [])
+    .filter((n: any) => !catalystNews.some((c: any) => c.id === n.id))
+    .slice(0, 8);
+  
+  // Target: fill card with labeled sections
+  const TARGET_ITEMS = 10;
+  const catalystCount = catalystNews.length;
+  const contextCount = Math.max(0, TARGET_ITEMS - catalystCount);
+  const displayContextNews = marketNews.slice(0, contextCount);
+
+  if (isLoading) {
+    return (
+      <div className="px-4 py-6 text-xs text-muted-foreground animate-pulse text-center">
+        Loading catalysts…
+      </div>
+    );
+  }
+
+  return (
+    <ScrollArea className="h-full">
+      <div className="px-3 pb-3 space-y-3">
+        {/* Section A: Catalyst Watch (Strict) */}
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5 text-[10px] text-primary/80 uppercase tracking-wide font-medium px-1 border-b border-border/30 pb-1">
+            <Eye className="h-3 w-3" />
+            <span>Catalyst Watch</span>
+            <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-primary/30">
+              {catalystCount} found
+            </Badge>
+          </div>
+          
+          {catalystNews.length > 0 ? (
+            <div className="space-y-1.5">
+              {catalystNews.map((n: any) => {
+                const eventType = detectEventType(n.title);
+                const symbols = n.symbols || [];
+                const timeAgo = formatTimeAgo(n.published_at);
+                
+                return (
+                  <a
+                    key={n.id}
+                    href={n.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex flex-col gap-1 p-2 rounded-md bg-primary/5 hover:bg-primary/10 transition-colors group border border-primary/10 hover:border-primary/20"
+                  >
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {symbols.slice(0, 2).map((s: string) => (
+                        <Badge 
+                          key={s} 
+                          variant="secondary"
+                          className="text-[10px] px-1.5 py-0 h-4 font-mono font-semibold"
+                        >
+                          {s.replace('-USD', '')}
+                        </Badge>
+                      ))}
+                      {eventType && (
+                        <span className={`flex items-center gap-0.5 text-[9px] ${eventType.color}`}>
+                          {eventType.icon}
+                          <span>{eventType.label}</span>
+                        </span>
+                      )}
+                      <span className="text-[9px] text-muted-foreground/60 ml-auto">
+                        {timeAgo}
+                      </span>
+                    </div>
+                    <p className="text-[11px] leading-snug text-foreground/80 line-clamp-2 group-hover:text-primary transition-colors">
+                      {n.title}
+                    </p>
+                  </a>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-2 px-2 bg-muted/20 rounded-md">
+              <div className="text-[10px] text-muted-foreground/60">
+                No monitored-coin catalysts detected
+              </div>
+              {botSymbols.length > 0 && (
+                <div className="text-[9px] text-muted-foreground/40 mt-0.5">
+                  Watching: {botSymbols.slice(0, 5).map((s: string) => s.replace('-USD', '')).join(', ')}
+                  {botSymbols.length > 5 && ` +${botSymbols.length - 5}`}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        
+        {/* Section B: Market Context (Fallback) */}
+        {displayContextNews.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 uppercase tracking-wide px-1 border-b border-border/20 pb-1">
+              <Globe className="h-3 w-3" />
+              <span>Market Context</span>
+              <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-muted-foreground/20">
+                fallback
+              </Badge>
+            </div>
+            
+            <div className="space-y-1">
+              {displayContextNews.map((n: any) => {
+                const timeAgo = formatTimeAgo(n.published_at);
+                const symbols = n.symbols || [];
+                
+                return (
+                  <a
+                    key={n.id}
+                    href={n.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex flex-col gap-0.5 p-1.5 rounded bg-muted/20 hover:bg-muted/30 transition-colors"
+                  >
+                    <div className="flex items-center gap-1">
+                      {symbols.slice(0, 1).map((s: string) => (
+                        <span key={s} className="text-[9px] font-mono text-muted-foreground/60">
+                          {s.replace('-USD', '')}
+                        </span>
+                      ))}
+                      <span className="text-[9px] text-muted-foreground/40 ml-auto">
+                        {timeAgo}
+                      </span>
+                    </div>
+                    <p className="text-[10px] leading-snug text-foreground/60 line-clamp-1 hover:text-foreground/80">
+                      {n.title}
+                    </p>
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </ScrollArea>
+  );
+}
+
+export function IntakeWidget({ 
+  dock = "side", 
+  onDockChange,
+  onCollapse,
+  onDockToOrbit,
+  onUndock,
+  isInOrbit = false,
+}: IntakeWidgetProps) {
   const { data: newsData, isLoading } = useNewsFeed();
   const headerRef = useRef<HTMLDivElement>(null);
   const [isBeingDragged, setIsBeingDragged] = useState(false);
   const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
+  const [isPopoutOpen, setIsPopoutOpen] = useState(false);
   const startPosRef = useRef({ x: 0, y: 0 });
   const initialRectRef = useRef<DOMRect | null>(null);
   const isDraggingRef = useRef(false);
@@ -144,28 +303,12 @@ export function IntakeWidget({ dock = "side", onDockChange }: IntakeWidgetProps)
   }, [dock, onDockChange]);
   
   const newsIntensity = newsData?.news_intensity || {};
-  const botSymbols = newsData?.bot_symbols || [];
-  const topVolumeSymbols = newsData?.top_volume_symbols || [];
   
   // Hot symbols from news mentions
   const hotSymbols = Object.entries(newsIntensity)
-    .filter(([_, count]) => count >= 2)
-    .sort(([, a], [, b]) => b - a)
+    .filter(([_, count]) => (count as number) >= 2)
+    .sort(([, a], [, b]) => (b as number) - (a as number))
     .slice(0, 4);
-
-  // Section A: Catalyst Watch (strict monitored symbols with event tags)
-  const catalystNews = (newsData?.bot_lane || []).slice(0, 8);
-  
-  // Section B: Market Context (fallback macro/general news)
-  const marketNews = (newsData?.market_lane || [])
-    .filter(n => !catalystNews.some(c => c.id === n.id))
-    .slice(0, 8);
-  
-  // Target: fill card with labeled sections
-  const TARGET_ITEMS = 10;
-  const catalystCount = catalystNews.length;
-  const contextCount = Math.max(0, TARGET_ITEMS - catalystCount);
-  const displayContextNews = marketNews.slice(0, contextCount);
   
   return (
     <>
@@ -188,7 +331,7 @@ export function IntakeWidget({ dock = "side", onDockChange }: IntakeWidgetProps)
               catalyst watch
             </Badge>
             {hotSymbols.length > 0 && (
-              <div className="flex items-center gap-1 ml-auto">
+              <div className="flex items-center gap-1">
                 <Flame className="h-3.5 w-3.5 text-orange-500" />
                 {hotSymbols.slice(0, 2).map(([symbol]) => (
                   <Badge 
@@ -201,145 +344,45 @@ export function IntakeWidget({ dock = "side", onDockChange }: IntakeWidgetProps)
                 ))}
               </div>
             )}
+            <WidgetControls
+              className="ml-auto"
+              isInOrbit={isInOrbit}
+              onCollapse={onCollapse}
+              onDockToOrbit={onDockToOrbit}
+              onUndock={onUndock}
+              onPopout={() => setIsPopoutOpen(true)}
+            />
           </CardTitle>
         </CardHeader>
-      <CardContent className="p-0 flex-1 min-h-0 overflow-hidden">
-        {isLoading ? (
-          <div className="px-4 py-6 text-xs text-muted-foreground animate-pulse text-center">
-            Loading catalysts…
-          </div>
-        ) : (
-          <ScrollArea className="h-full">
-            <div className="px-3 pb-3 space-y-3">
-              {/* Section A: Catalyst Watch (Strict) */}
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5 text-[10px] text-primary/80 uppercase tracking-wide font-medium px-1 border-b border-border/30 pb-1">
-                  <Eye className="h-3 w-3" />
-                  <span>Catalyst Watch</span>
-                  <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-primary/30">
-                    {catalystCount} found
-                  </Badge>
-                </div>
-                
-                {catalystNews.length > 0 ? (
-                  <div className="space-y-1.5">
-                    {catalystNews.map((n) => {
-                      const eventType = detectEventType(n.title);
-                      const symbols = n.symbols || [];
-                      const timeAgo = formatTimeAgo(n.published_at);
-                      
-                      return (
-                        <a
-                          key={n.id}
-                          href={n.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex flex-col gap-1 p-2 rounded-md bg-primary/5 hover:bg-primary/10 transition-colors group border border-primary/10 hover:border-primary/20"
-                        >
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {symbols.slice(0, 2).map((s) => (
-                              <Badge 
-                                key={s} 
-                                variant="secondary"
-                                className="text-[10px] px-1.5 py-0 h-4 font-mono font-semibold"
-                              >
-                                {s.replace('-USD', '')}
-                              </Badge>
-                            ))}
-                            {eventType && (
-                              <span className={`flex items-center gap-0.5 text-[9px] ${eventType.color}`}>
-                                {eventType.icon}
-                                <span>{eventType.label}</span>
-                              </span>
-                            )}
-                            <span className="text-[9px] text-muted-foreground/60 ml-auto">
-                              {timeAgo}
-                            </span>
-                          </div>
-                          <p className="text-[11px] leading-snug text-foreground/80 line-clamp-2 group-hover:text-primary transition-colors">
-                            {n.title}
-                          </p>
-                        </a>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="text-center py-2 px-2 bg-muted/20 rounded-md">
-                    <div className="text-[10px] text-muted-foreground/60">
-                      No monitored-coin catalysts detected
-                    </div>
-                    {botSymbols.length > 0 && (
-                      <div className="text-[9px] text-muted-foreground/40 mt-0.5">
-                        Watching: {botSymbols.slice(0, 5).map(s => s.replace('-USD', '')).join(', ')}
-                        {botSymbols.length > 5 && ` +${botSymbols.length - 5}`}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              
-              {/* Section B: Market Context (Fallback) */}
-              {displayContextNews.length > 0 && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 uppercase tracking-wide px-1 border-b border-border/20 pb-1">
-                    <Globe className="h-3 w-3" />
-                    <span>Market Context</span>
-                    <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-muted-foreground/20">
-                      fallback
-                    </Badge>
-                  </div>
-                  
-                  <div className="space-y-1">
-                    {displayContextNews.map((n) => {
-                      const timeAgo = formatTimeAgo(n.published_at);
-                      const symbols = n.symbols || [];
-                      
-                      return (
-                        <a
-                          key={n.id}
-                          href={n.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex flex-col gap-0.5 p-1.5 rounded bg-muted/20 hover:bg-muted/30 transition-colors"
-                        >
-                          <div className="flex items-center gap-1">
-                            {symbols.slice(0, 1).map((s) => (
-                              <span key={s} className="text-[9px] font-mono text-muted-foreground/60">
-                                {s.replace('-USD', '')}
-                              </span>
-                            ))}
-                            <span className="text-[9px] text-muted-foreground/40 ml-auto">
-                              {timeAgo}
-                            </span>
-                          </div>
-                          <p className="text-[10px] leading-snug text-foreground/60 line-clamp-1 hover:text-foreground/80">
-                            {n.title}
-                          </p>
-                        </a>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        )}
-      </CardContent>
-    </Card>
+        <CardContent className="p-0 flex-1 min-h-0 overflow-hidden">
+          <IntakeContent newsData={newsData} isLoading={isLoading} />
+        </CardContent>
+      </Card>
 
-    {/* Dragged ghost */}
-    {isBeingDragged && (
-      <div
-        className="fixed z-[1000] w-[300px] h-[200px] rounded-lg bg-card border-2 border-primary/60 shadow-2xl shadow-primary/20 pointer-events-none flex items-center justify-center"
-        style={{ left: dragPos.x, top: dragPos.y }}
-      >
-        <div className="flex items-center gap-2 text-foreground">
-          <GripHorizontal className="h-4 w-4 text-primary/60" />
-          <Eye className="h-4 w-4" />
-          <span className="font-mono text-sm">Intake</span>
+      {/* Dragged ghost */}
+      {isBeingDragged && (
+        <div
+          className="fixed z-[1000] w-[300px] h-[200px] rounded-lg bg-card border-2 border-primary/60 shadow-2xl shadow-primary/20 pointer-events-none flex items-center justify-center"
+          style={{ left: dragPos.x, top: dragPos.y }}
+        >
+          <div className="flex items-center gap-2 text-foreground">
+            <GripHorizontal className="h-4 w-4 text-primary/60" />
+            <Eye className="h-4 w-4" />
+            <span className="font-mono text-sm">Intake</span>
+          </div>
         </div>
-      </div>
-    )}
+      )}
+
+      {/* Popout Modal */}
+      <WidgetPopoutModal
+        open={isPopoutOpen}
+        onOpenChange={setIsPopoutOpen}
+        title="Intake"
+        badge="catalyst watch"
+        icon={<Eye className="h-4 w-4" />}
+      >
+        <IntakeContent newsData={newsData} isLoading={isLoading} />
+      </WidgetPopoutModal>
     </>
   );
 }

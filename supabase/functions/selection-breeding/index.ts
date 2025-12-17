@@ -333,7 +333,30 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 11. Log selection/breeding event
+    // 11. CRITICAL: Verify offspring count matches expected
+    const expectedOffspring = removed.length;
+    const actualOffspring = insertedOffspringIds.length;
+    const offspringShortfall = expectedOffspring - actualOffspring;
+    
+    if (offspringShortfall > 0) {
+      console.error(`[selection-breeding] CRITICAL: Offspring shortfall detected! Expected ${expectedOffspring}, got ${actualOffspring}`);
+      
+      // Log critical failure event
+      await supabase.from('control_events').insert({
+        action: 'rollover_failed',
+        metadata: {
+          reason: 'offspring_shortfall',
+          expected_offspring: expectedOffspring,
+          actual_offspring: actualOffspring,
+          shortfall: offspringShortfall,
+          ended_generation_id,
+          new_generation_id,
+          survivors: elites.length + parents.length,
+        },
+      });
+    }
+
+    // 12. Log selection/breeding event
     await supabase.from('control_events').insert({
       action: 'selection_breeding',
       metadata: {
@@ -343,7 +366,9 @@ Deno.serve(async (req) => {
         elites_count: elites.length,
         parents_count: parents.length,
         removed_count: removed.length,
-        offspring_created: insertedOffspringIds.length,
+        offspring_created: actualOffspring,
+        offspring_shortfall: offspringShortfall > 0 ? offspringShortfall : null,
+        cohort_integrity: offspringShortfall === 0 ? 'OK' : 'FAILED',
         top_elite: elites[0] ? {
           agent_id: elites[0].id.substring(0, 8),
           fitness: elites[0].fitness_score.toFixed(4),

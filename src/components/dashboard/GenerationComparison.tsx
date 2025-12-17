@@ -41,7 +41,7 @@ export function GenerationComparison() {
       const buildCurve = async (genId: string, startTime: string) => {
         const { data: orders } = await supabase
           .from('paper_orders')
-          .select('agent_id, symbol, filled_at')
+          .select('agent_id, symbol, filled_at, created_at, tags')
           .eq('generation_id', genId)
           .eq('status', 'filled')
           .order('filled_at');
@@ -49,33 +49,59 @@ export function GenerationComparison() {
         if (!orders) return [];
 
         const startTs = new Date(startTime).getTime();
-        const hourlyData: Map<number, Set<string>> = new Map();
+        
+        // Filter out test_mode orders
+        const learnableOrders = orders.filter(o => {
+          const tags = o.tags as Record<string, unknown> | null;
+          return !tags?.test_mode;
+        });
 
-        orders.forEach(order => {
-          if (!order.filled_at) return;
-          const hourBucket = Math.floor((new Date(order.filled_at).getTime() - startTs) / 3600000);
-          if (!hourlyData.has(hourBucket)) hourlyData.set(hourBucket, new Set());
+        if (metric === 'fills') {
+          // For fills: count raw fills per hour, then cumulative sum
+          const hourlyFills = new Map<number, number>();
           
-          const key = metric === 'agents' ? order.agent_id 
-            : metric === 'symbols' ? order.symbol 
-            : order.filled_at; // fills - each unique
-          hourlyData.get(hourBucket)!.add(key);
-        });
-
-        // Convert to cumulative
-        const sortedHours = [...hourlyData.keys()].sort((a, b) => a - b);
-        const cumulative: { hour: number; value: number }[] = [];
-        const seenAll = new Set<string>();
-
-        sortedHours.forEach(hour => {
-          hourlyData.get(hour)!.forEach(v => seenAll.add(v));
-          cumulative.push({ 
-            hour, 
-            value: metric === 'fills' ? seenAll.size : seenAll.size 
+          learnableOrders.forEach(order => {
+            const ts = order.filled_at ?? order.created_at;
+            if (!ts) return;
+            const hourBucket = Math.floor((new Date(ts).getTime() - startTs) / 3600000);
+            hourlyFills.set(hourBucket, (hourlyFills.get(hourBucket) ?? 0) + 1);
           });
-        });
 
-        return cumulative;
+          const sortedHours = [...hourlyFills.keys()].sort((a, b) => a - b);
+          const cumulative: { hour: number; value: number }[] = [];
+          let runningTotal = 0;
+
+          sortedHours.forEach(hour => {
+            runningTotal += hourlyFills.get(hour)!;
+            cumulative.push({ hour, value: runningTotal });
+          });
+
+          return cumulative;
+        } else {
+          // For agents/symbols: track unique values cumulatively
+          const hourlyData = new Map<number, Set<string>>();
+
+          learnableOrders.forEach(order => {
+            const ts = order.filled_at ?? order.created_at;
+            if (!ts) return;
+            const hourBucket = Math.floor((new Date(ts).getTime() - startTs) / 3600000);
+            if (!hourlyData.has(hourBucket)) hourlyData.set(hourBucket, new Set());
+            
+            const key = metric === 'agents' ? order.agent_id : order.symbol;
+            hourlyData.get(hourBucket)!.add(key);
+          });
+
+          const sortedHours = [...hourlyData.keys()].sort((a, b) => a - b);
+          const cumulative: { hour: number; value: number }[] = [];
+          const seenAll = new Set<string>();
+
+          sortedHours.forEach(hour => {
+            hourlyData.get(hour)!.forEach(v => seenAll.add(v));
+            cumulative.push({ hour, value: seenAll.size });
+          });
+
+          return cumulative;
+        }
       };
 
       const [gen10Curve, gen11Curve] = await Promise.all([

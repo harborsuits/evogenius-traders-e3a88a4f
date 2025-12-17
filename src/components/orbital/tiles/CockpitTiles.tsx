@@ -175,7 +175,7 @@ export function LineageTile({ compact }: { compact?: boolean }) {
   return <LineageWidget />;
 }
 
-// Decision Log Tile - Shows recent HOLD/BUY/SELL decisions with reasons
+// Decision Log Tile - Shows recent HOLD/BUY/SELL decisions with interpretive context
 export function DecisionLogTile({ compact }: { compact?: boolean }) {
   const { data: systemState } = useSystemState();
   
@@ -192,7 +192,7 @@ export function DecisionLogTile({ compact }: { compact?: boolean }) {
         .order('triggered_at', { ascending: false })
         .limit(100);
       
-      if (!events?.length) return { buy: 0, sell: 0, hold: 0, blocked: 0, topReasons: [] };
+      if (!events?.length) return { buy: 0, sell: 0, hold: 0, blocked: 0, topReasons: [], total: 0 };
       
       // Count decisions by metadata.decision
       let buy = 0, sell = 0, hold = 0, blocked = 0;
@@ -224,11 +224,24 @@ export function DecisionLogTile({ compact }: { compact?: boolean }) {
         .slice(0, 3)
         .map(([reason]) => reason.replace(/_/g, ' '));
       
-      return { buy, sell, hold, blocked, topReasons };
+      return { buy, sell, hold, blocked, topReasons, total: events.length };
     },
     enabled: !!systemState?.current_generation_id,
     refetchInterval: 30000,
   });
+  
+  // Interpretive signals
+  const getSignalQuality = () => {
+    if (!decisionStats || decisionStats.total === 0) return null;
+    const actionRate = ((decisionStats.buy + decisionStats.sell) / decisionStats.total) * 100;
+    
+    if (actionRate >= 10) return { label: 'HIGH CONVICTION', color: 'text-success', desc: 'System finding opportunities' };
+    if (actionRate >= 3) return { label: 'SELECTIVE', color: 'text-primary', desc: 'Disciplined signal filtering' };
+    if (actionRate >= 1) return { label: 'CAUTIOUS', color: 'text-amber-500', desc: 'Few setups passing thresholds' };
+    return { label: 'SIGNAL DROUGHT', color: 'text-muted-foreground', desc: 'Market conditions not aligning' };
+  };
+  
+  const signalQuality = getSignalQuality();
   
   return (
     <div className="space-y-3">
@@ -242,6 +255,14 @@ export function DecisionLogTile({ compact }: { compact?: boolean }) {
         <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
       ) : (
         <>
+          {/* Interpretive signal */}
+          {signalQuality && (
+            <div className={`text-[10px] font-mono ${signalQuality.color}`}>
+              <span className="font-bold">{signalQuality.label}</span>
+              <span className="text-muted-foreground ml-1">— {signalQuality.desc}</span>
+            </div>
+          )}
+          
           <div className="grid grid-cols-4 gap-2">
             <div className="bg-success/10 border border-success/20 rounded-lg p-2 text-center">
               <div className="text-lg font-bold text-success">{decisionStats.buy}</div>
@@ -263,7 +284,7 @@ export function DecisionLogTile({ compact }: { compact?: boolean }) {
           
           {decisionStats.topReasons.length > 0 && (
             <div className="text-[10px] text-muted-foreground">
-              <span className="text-primary">Top hold reasons:</span>{' '}
+              <span className="text-primary">Why holding:</span>{' '}
               {decisionStats.topReasons.join(', ')}
             </div>
           )}
@@ -273,7 +294,7 @@ export function DecisionLogTile({ compact }: { compact?: boolean }) {
   );
 }
 
-// Agent Inactivity Tile - Shows active vs inactive breakdown
+// Agent Inactivity Tile - Shows active vs inactive breakdown with evolutionary context
 export function AgentInactivityTile({ compact }: { compact?: boolean }) {
   const { data: systemState } = useSystemState();
   const { data: cohortCount = 0 } = useCohortCount(systemState?.current_generation_id ?? null);
@@ -299,11 +320,11 @@ export function AgentInactivityTile({ compact }: { compact?: boolean }) {
       
       const uniqueAgents = new Set(learnableOrders.map(o => o.agent_id));
       
-      // Get strategy breakdown for trading agents
+      // Get strategy breakdown AND elite status for trading agents
       if (uniqueAgents.size > 0) {
         const { data: agents } = await supabase
           .from('agents')
-          .select('strategy_template')
+          .select('id, strategy_template, is_elite')
           .in('id', Array.from(uniqueAgents));
         
         const strategyBreakdown = (agents || []).reduce((acc, a) => {
@@ -311,22 +332,57 @@ export function AgentInactivityTile({ compact }: { compact?: boolean }) {
           return acc;
         }, {} as Record<string, number>);
         
+        const elitesTrading = (agents || []).filter(a => a.is_elite).length;
+        
         return {
           activeCount: uniqueAgents.size,
           strategyBreakdown,
+          elitesTrading,
         };
       }
       
-      return { activeCount: 0, strategyBreakdown: {} };
+      return { activeCount: 0, strategyBreakdown: {}, elitesTrading: 0 };
     },
     enabled: !!systemState?.current_generation_id,
     refetchInterval: 60000,
+  });
+  
+  // Get total elite count
+  const { data: totalElites = 0 } = useQuery({
+    queryKey: ['elite-count'],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from('agents')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_elite', true);
+      return count || 0;
+    },
   });
   
   const activeCount = activityData?.activeCount || 0;
   const inactiveCount = cohortCount - activeCount;
   const activePct = cohortCount > 0 ? (activeCount / cohortCount) * 100 : 0;
   const strategyBreakdown = activityData?.strategyBreakdown || {};
+  const elitesTrading = activityData?.elitesTrading || 0;
+  
+  // Interpretive signals
+  const getActivitySignal = () => {
+    if (activePct >= 30) return { status: 'healthy', label: 'STRONG PARTICIPATION', color: 'text-success' };
+    if (activePct >= 15) return { status: 'ok', label: 'NORMAL SPREAD', color: 'text-primary' };
+    if (activePct >= 5) return { status: 'low', label: 'EARLY STAGE', color: 'text-amber-500' };
+    return { status: 'cold', label: 'WAITING FOR SIGNALS', color: 'text-muted-foreground' };
+  };
+  
+  const getEliteSignal = () => {
+    if (totalElites === 0) return null;
+    const elitePct = (elitesTrading / totalElites) * 100;
+    if (elitePct >= 50) return { label: 'ELITES ACTIVE', color: 'text-success', icon: '✓' };
+    if (elitePct > 0) return { label: `${elitesTrading}/${totalElites} ELITES`, color: 'text-amber-500', icon: '◐' };
+    return { label: 'ELITES DORMANT', color: 'text-muted-foreground', icon: '○' };
+  };
+  
+  const activitySignal = getActivitySignal();
+  const eliteSignal = getEliteSignal();
   
   return (
     <div className="space-y-3">
@@ -340,6 +396,12 @@ export function AgentInactivityTile({ compact }: { compact?: boolean }) {
         <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
       ) : (
         <>
+          {/* Status signal */}
+          <div className={`text-[10px] font-mono ${activitySignal.color} flex items-center gap-1`}>
+            <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+            {activitySignal.label}
+          </div>
+          
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-success/10 border border-success/20 rounded-lg p-2 space-y-1">
               <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
@@ -359,6 +421,15 @@ export function AgentInactivityTile({ compact }: { compact?: boolean }) {
               <div className="text-[9px] text-muted-foreground">{(100 - activePct).toFixed(0)}% waiting</div>
             </div>
           </div>
+          
+          {/* Elite activation signal */}
+          {eliteSignal && (
+            <div className={`text-[10px] font-mono ${eliteSignal.color} flex items-center gap-1 bg-muted/20 rounded px-2 py-1`}>
+              <span>{eliteSignal.icon}</span>
+              {eliteSignal.label}
+              <span className="text-muted-foreground ml-1">— proven agents from prior gen</span>
+            </div>
+          )}
           
           {Object.keys(strategyBreakdown).length > 0 && (
             <div className="text-[10px] space-y-0.5">
@@ -474,6 +545,52 @@ export function SymbolCoverageTile({ compact }: { compact?: boolean }) {
     return sorted[0]?.[0]?.replace('_', ' ') || null;
   };
   
+  // Interpretive signals
+  const getDiversitySignal = () => {
+    if (!coverageData || coverageData.uniqueSymbols === 0) return null;
+    const { uniqueSymbols, concentration } = coverageData;
+    
+    // Fixation warning: >60% in top 1 symbol
+    if (concentration.top1 > 60) {
+      return { 
+        status: 'warning', 
+        label: 'FIXATION RISK', 
+        color: 'text-amber-500',
+        desc: 'Heavy concentration in one symbol — diversity penalty will apply'
+      };
+    }
+    
+    // Good spread: 5+ symbols with reasonable distribution
+    if (uniqueSymbols >= 5 && concentration.top3 < 80) {
+      return { 
+        status: 'healthy', 
+        label: 'HEALTHY SPREAD', 
+        color: 'text-success',
+        desc: 'Good opportunity discovery across symbols'
+      };
+    }
+    
+    // Early exploration
+    if (uniqueSymbols >= 3) {
+      return { 
+        status: 'ok', 
+        label: 'EXPLORING', 
+        color: 'text-primary',
+        desc: 'Building diversity — evolution will favor broader coverage'
+      };
+    }
+    
+    // Limited
+    return { 
+      status: 'limited', 
+      label: 'NARROW FOCUS', 
+      color: 'text-muted-foreground',
+      desc: 'Few symbols traded — may limit evolutionary signal quality'
+    };
+  };
+  
+  const diversitySignal = getDiversitySignal();
+  
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
@@ -485,17 +602,25 @@ export function SymbolCoverageTile({ compact }: { compact?: boolean }) {
       {isLoading || !coverageData ? (
         <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
       ) : coverageData.uniqueSymbols === 0 ? (
-        <div className="text-xs text-muted-foreground">No fills this generation</div>
+        <div className="text-xs text-muted-foreground">No fills this generation — awaiting first trades</div>
       ) : (
         <>
+          {/* Interpretive signal */}
+          {diversitySignal && (
+            <div className={`text-[10px] font-mono ${diversitySignal.color}`}>
+              <span className="font-bold">{diversitySignal.label}</span>
+              <span className="text-muted-foreground ml-1">— {diversitySignal.desc}</span>
+            </div>
+          )}
+          
           {/* KPI row */}
           <div className="grid grid-cols-4 gap-2">
             <div className="bg-muted/30 rounded-lg p-2 text-center">
               <div className="text-lg font-bold">{coverageData.uniqueSymbols}</div>
               <div className="text-[9px] text-muted-foreground">Symbols</div>
             </div>
-            <div className="bg-muted/30 rounded-lg p-2 text-center">
-              <div className="text-lg font-bold">{coverageData.concentration.top1.toFixed(0)}%</div>
+            <div className={`rounded-lg p-2 text-center ${coverageData.concentration.top1 > 60 ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-muted/30'}`}>
+              <div className={`text-lg font-bold ${coverageData.concentration.top1 > 60 ? 'text-amber-500' : ''}`}>{coverageData.concentration.top1.toFixed(0)}%</div>
               <div className="text-[9px] text-muted-foreground">Top 1</div>
             </div>
             <div className="bg-muted/30 rounded-lg p-2 text-center">

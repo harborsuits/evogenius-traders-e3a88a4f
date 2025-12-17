@@ -11,7 +11,7 @@ import { SystemStatus, Generation } from '@/types/evotrader';
 import { Loader2 } from 'lucide-react';
 
 // Cockpit tiles
-import { TradeCycleTile, GenHealthTile, PollingHealthTile, SystemControlTile, CapitalOverviewTile, NewsTile, RolloverTile } from '@/components/orbital/tiles/CockpitTiles';
+import { TradeCycleTile, GenHealthTile, PollingHealthTile, SystemControlTile, CapitalOverviewTile, NewsTile, RolloverTile, GenComparisonTile } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PortfolioCardContent, PositionsCardContent, OrdersCardContent, TradesCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
 
@@ -22,6 +22,7 @@ const staticCards: OrbitalCard[] = [
   { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
   { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
   { id: 'capital', title: 'Capital Overview', type: 'cockpit', component: CapitalOverviewTile },
+  { id: 'gen-compare', title: 'Gen 10 vs 11', type: 'cockpit', component: GenComparisonTile },
   { id: 'news', title: 'News Feed', type: 'cockpit', component: NewsTile },
   { id: 'rollover', title: 'Rollover Checklist', type: 'cockpit', component: RolloverTile },
   // Drillable cards - static paths

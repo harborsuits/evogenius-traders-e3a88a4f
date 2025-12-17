@@ -18,6 +18,7 @@ import AgentComparePage from "./pages/AgentComparePage";
 import GenerationsPage from "./pages/GenerationsPage";
 import GenerationDetailPage from "./pages/GenerationDetailPage";
 import AlertsPage from "./pages/AlertsPage";
+import DecisionLogPage from "./pages/DecisionLogPage";
 
 const queryClient = new QueryClient();
 
@@ -48,6 +49,7 @@ const App = () => (
             <Route path="/generations" element={<GenerationsPage />} />
             <Route path="/generations/:genId" element={<GenerationDetailPage />} />
             <Route path="/alerts" element={<AlertsPage />} />
+            <Route path="/decisions" element={<DecisionLogPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

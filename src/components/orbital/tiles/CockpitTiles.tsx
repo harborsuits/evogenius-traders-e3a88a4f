@@ -23,7 +23,9 @@ import {
   TrendingDown,
   Gauge,
   FlaskConical,
-  BarChart3
+  BarChart3,
+  Layers,
+  PieChart
 } from 'lucide-react';
 import { useGenOrdersCount, useCohortCount } from '@/hooks/useGenOrders';
 import { useQuery } from '@tanstack/react-query';
@@ -369,6 +371,164 @@ export function AgentInactivityTile({ compact }: { compact?: boolean }) {
               ))}
             </div>
           )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Symbol Coverage Tile - Shows trading concentration and strategies
+export function SymbolCoverageTile({ compact }: { compact?: boolean }) {
+  const { data: systemState } = useSystemState();
+  
+  const { data: coverageData, isLoading } = useQuery({
+    queryKey: ['symbol-coverage', systemState?.current_generation_id],
+    queryFn: async () => {
+      if (!systemState?.current_generation_id) return null;
+      
+      // Get filled orders for this generation (excluding test_mode)
+      const { data: orders } = await supabase
+        .from('paper_orders')
+        .select('symbol, agent_id, tags')
+        .eq('generation_id', systemState.current_generation_id)
+        .eq('status', 'filled');
+      
+      // Filter out test_mode orders
+      const learnableOrders = (orders || []).filter(o => {
+        const tags = o.tags as any;
+        return !tags?.test_mode;
+      });
+      
+      if (learnableOrders.length === 0) {
+        return { uniqueSymbols: 0, topSymbols: [], concentration: { top1: 0, top3: 0, top5: 0 }, strategyBySymbol: {} };
+      }
+      
+      // Count fills per symbol
+      const symbolCounts: Record<string, number> = {};
+      const symbolAgents: Record<string, Set<string>> = {};
+      
+      for (const o of learnableOrders) {
+        symbolCounts[o.symbol] = (symbolCounts[o.symbol] || 0) + 1;
+        if (!symbolAgents[o.symbol]) symbolAgents[o.symbol] = new Set();
+        if (o.agent_id) symbolAgents[o.symbol].add(o.agent_id);
+      }
+      
+      const totalFills = learnableOrders.length;
+      const uniqueSymbols = Object.keys(symbolCounts).length;
+      
+      // Sort by count descending
+      const sorted = Object.entries(symbolCounts)
+        .sort((a, b) => b[1] - a[1]);
+      
+      const topSymbols = sorted.slice(0, 10).map(([symbol, count]) => ({
+        symbol,
+        count,
+        pct: (count / totalFills) * 100,
+      }));
+      
+      // Concentration metrics
+      const top1Pct = sorted[0] ? (sorted[0][1] / totalFills) * 100 : 0;
+      const top3Total = sorted.slice(0, 3).reduce((sum, [, c]) => sum + c, 0);
+      const top3Pct = (top3Total / totalFills) * 100;
+      const top5Total = sorted.slice(0, 5).reduce((sum, [, c]) => sum + c, 0);
+      const top5Pct = (top5Total / totalFills) * 100;
+      
+      // Get strategy breakdown for top symbols
+      const allAgentIds = new Set(learnableOrders.map(o => o.agent_id).filter(Boolean));
+      let strategyBySymbol: Record<string, Record<string, number>> = {};
+      
+      if (allAgentIds.size > 0) {
+        const { data: agents } = await supabase
+          .from('agents')
+          .select('id, strategy_template')
+          .in('id', Array.from(allAgentIds));
+        
+        const agentStrategyMap = new Map((agents || []).map(a => [a.id, a.strategy_template]));
+        
+        // Build strategy counts per symbol
+        for (const o of learnableOrders) {
+          if (!o.agent_id) continue;
+          const strategy = agentStrategyMap.get(o.agent_id);
+          if (!strategy) continue;
+          
+          if (!strategyBySymbol[o.symbol]) strategyBySymbol[o.symbol] = {};
+          strategyBySymbol[o.symbol][strategy] = (strategyBySymbol[o.symbol][strategy] || 0) + 1;
+        }
+      }
+      
+      return {
+        uniqueSymbols,
+        topSymbols,
+        concentration: { top1: top1Pct, top3: top3Pct, top5: top5Pct },
+        strategyBySymbol,
+      };
+    },
+    enabled: !!systemState?.current_generation_id,
+    refetchInterval: 60000,
+  });
+  
+  const getDominantStrategy = (symbol: string) => {
+    const strategies = coverageData?.strategyBySymbol?.[symbol];
+    if (!strategies) return null;
+    const sorted = Object.entries(strategies).sort((a, b) => b[1] - a[1]);
+    return sorted[0]?.[0]?.replace('_', ' ') || null;
+  };
+  
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
+        <PieChart className="h-4 w-4 text-primary" />
+        Symbol Coverage
+        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
+      </div>
+      
+      {isLoading || !coverageData ? (
+        <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
+      ) : coverageData.uniqueSymbols === 0 ? (
+        <div className="text-xs text-muted-foreground">No fills this generation</div>
+      ) : (
+        <>
+          {/* KPI row */}
+          <div className="grid grid-cols-4 gap-2">
+            <div className="bg-muted/30 rounded-lg p-2 text-center">
+              <div className="text-lg font-bold">{coverageData.uniqueSymbols}</div>
+              <div className="text-[9px] text-muted-foreground">Symbols</div>
+            </div>
+            <div className="bg-muted/30 rounded-lg p-2 text-center">
+              <div className="text-lg font-bold">{coverageData.concentration.top1.toFixed(0)}%</div>
+              <div className="text-[9px] text-muted-foreground">Top 1</div>
+            </div>
+            <div className="bg-muted/30 rounded-lg p-2 text-center">
+              <div className="text-lg font-bold">{coverageData.concentration.top3.toFixed(0)}%</div>
+              <div className="text-[9px] text-muted-foreground">Top 3</div>
+            </div>
+            <div className="bg-muted/30 rounded-lg p-2 text-center">
+              <div className="text-lg font-bold">{coverageData.concentration.top5.toFixed(0)}%</div>
+              <div className="text-[9px] text-muted-foreground">Top 5</div>
+            </div>
+          </div>
+          
+          {/* Top symbols list */}
+          <div className="space-y-1.5 max-h-[120px] overflow-y-auto">
+            {coverageData.topSymbols.slice(0, 5).map(({ symbol, count, pct }) => {
+              const dominantStrategy = getDominantStrategy(symbol);
+              return (
+                <div key={symbol} className="flex items-center gap-2 text-[10px]">
+                  <span className="font-mono w-16 truncate">{symbol.replace('-USD', '')}</span>
+                  <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-primary/60 rounded-full"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <span className="font-mono w-8 text-right text-muted-foreground">{count}</span>
+                  {dominantStrategy && (
+                    <Badge variant="outline" className="text-[8px] px-1 py-0 h-4">{dominantStrategy}</Badge>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </>
       )}
     </div>

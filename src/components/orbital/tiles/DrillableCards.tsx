@@ -165,30 +165,56 @@ export function OrdersCardContent({ compact }: { compact?: boolean }) {
   );
 }
 
-// Trades/Fills Card Content
-export function TradesCardContent({ compact }: { compact?: boolean }) {
+// Activity Card Content - Combined Orders + Fills
+export function ActivityCardContent({ compact }: { compact?: boolean }) {
   const { data: account } = usePaperAccount();
   
-  const { data: fills = [] } = useQuery({
-    queryKey: ['recent-fills', account?.id],
+  const { data: activity = [] } = useQuery({
+    queryKey: ['recent-activity', account?.id],
     queryFn: async () => {
       if (!account?.id) return [];
       
+      // Get recent orders
       const { data: orders } = await supabase
         .from('paper_orders')
-        .select('id')
-        .eq('account_id', account.id);
+        .select('id, side, symbol, status, filled_price, created_at')
+        .eq('account_id', account.id)
+        .order('created_at', { ascending: false })
+        .limit(10);
       
-      if (!orders?.length) return [];
-      
-      const { data } = await supabase
+      // Get recent fills
+      const { data: fills } = await supabase
         .from('paper_fills')
-        .select('*')
-        .in('order_id', orders.map(o => o.id))
+        .select('id, side, symbol, price, timestamp')
         .order('timestamp', { ascending: false })
         .limit(10);
       
-      return data ?? [];
+      // Combine and sort chronologically
+      const combined = [
+        ...(orders || []).map(o => ({
+          id: o.id,
+          type: 'order' as const,
+          side: o.side,
+          symbol: o.symbol,
+          price: o.filled_price,
+          status: o.status,
+          time: o.created_at,
+        })),
+        ...(fills || []).map(f => ({
+          id: f.id,
+          type: 'fill' as const,
+          side: f.side,
+          symbol: f.symbol,
+          price: f.price,
+          status: 'filled',
+          time: f.timestamp,
+        })),
+      ];
+      
+      // Sort by time descending and dedupe (fills often duplicate orders)
+      return combined
+        .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+        .slice(0, 8);
     },
     enabled: !!account?.id,
   });
@@ -197,26 +223,30 @@ export function TradesCardContent({ compact }: { compact?: boolean }) {
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-muted-foreground">
         <Activity className="h-4 w-4" />
-        <span className="text-xs">Recent Fills</span>
-        <Badge variant="outline" className="text-[10px] ml-auto">{fills.length}</Badge>
+        <span className="text-xs">Recent Activity</span>
+        <Badge variant="outline" className="text-[10px] ml-auto">{activity.length}</Badge>
       </div>
       
-      {fills.length === 0 ? (
+      {activity.length === 0 ? (
         <div className="text-xs text-muted-foreground text-center py-4">
-          No fills yet
+          No activity yet
         </div>
       ) : (
-        <ScrollArea className="max-h-[100px]">
+        <ScrollArea className="max-h-[120px]">
           <div className="space-y-1">
-            {fills.slice(0, 5).map((fill: any) => (
-              <div key={fill.id} className="flex items-center justify-between text-xs">
+            {activity.slice(0, 6).map((item) => (
+              <div key={`${item.type}-${item.id}`} className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2">
-                  <Badge variant={fill.side === 'buy' ? 'success' : 'danger'} className="text-[10px] px-1">
-                    {fill.side.toUpperCase()}
+                  <Badge variant={item.side === 'buy' ? 'success' : 'danger'} className="text-[10px] px-1">
+                    {item.side.toUpperCase()}
                   </Badge>
-                  <span className="font-mono">{fill.symbol}</span>
+                  <span className="font-mono">{item.symbol}</span>
                 </div>
-                <span className="font-mono">${fill.price.toFixed(2)}</span>
+                {item.price ? (
+                  <span className="font-mono text-muted-foreground">${item.price.toLocaleString()}</span>
+                ) : (
+                  <Badge variant="outline" className="text-[10px]">{item.status}</Badge>
+                )}
               </div>
             ))}
           </div>
@@ -224,7 +254,7 @@ export function TradesCardContent({ compact }: { compact?: boolean }) {
       )}
       
       <div className="text-xs text-muted-foreground pt-2 border-t border-border/50">
-        Click to view all trades →
+        Click to view all activity →
       </div>
     </div>
   );

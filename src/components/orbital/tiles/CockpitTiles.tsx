@@ -26,6 +26,8 @@ import {
   BarChart3
 } from 'lucide-react';
 import { useGenOrdersCount, useCohortCount } from '@/hooks/useGenOrders';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
 
 // Trade Cycle Status Tile
 export function TradeCycleTile({ compact }: { compact?: boolean }) {
@@ -169,4 +171,181 @@ export function GenComparisonTile({ compact }: { compact?: boolean }) {
 // Lineage Widget Tile
 export function LineageTile({ compact }: { compact?: boolean }) {
   return <LineageWidget />;
+}
+
+// Decision Log Tile - Shows recent HOLD/BUY/SELL decisions with reasons
+export function DecisionLogTile({ compact }: { compact?: boolean }) {
+  const { data: events = [], isLoading } = useQuery({
+    queryKey: ['decision-log-summary'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('control_events')
+        .select('*')
+        .in('action', ['trade_executed', 'trade_blocked', 'cycle_complete'])
+        .order('triggered_at', { ascending: false })
+        .limit(20);
+      return data ?? [];
+    },
+    refetchInterval: 30000,
+  });
+  
+  // Count decisions from recent events
+  const tradeCounts = events.reduce((acc, e) => {
+    if (e.action === 'trade_executed') {
+      const side = (e.metadata as any)?.side?.toUpperCase() || 'TRADE';
+      acc[side] = (acc[side] || 0) + 1;
+    } else if (e.action === 'trade_blocked') {
+      acc.BLOCKED = (acc.BLOCKED || 0) + 1;
+    } else if (e.action === 'cycle_complete') {
+      const holdCount = (e.metadata as any)?.symbols_evaluated || 0;
+      acc.HOLD = (acc.HOLD || 0) + holdCount;
+    }
+    return acc;
+  }, {} as Record<string, number>);
+  
+  // Get top block reasons
+  const blockReasons = events
+    .filter(e => e.action === 'trade_blocked')
+    .map(e => (e.metadata as any)?.block_reason || 'unknown')
+    .slice(0, 3);
+  
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
+        <Activity className="h-4 w-4 text-primary" />
+        Recent Decisions
+        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
+      </div>
+      
+      {isLoading ? (
+        <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-4 gap-2">
+            <div className="bg-success/10 border border-success/20 rounded-lg p-2 text-center">
+              <div className="text-lg font-bold text-success">{tradeCounts.BUY || 0}</div>
+              <div className="text-[9px] text-muted-foreground">BUY</div>
+            </div>
+            <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-2 text-center">
+              <div className="text-lg font-bold text-destructive">{tradeCounts.SELL || 0}</div>
+              <div className="text-[9px] text-muted-foreground">SELL</div>
+            </div>
+            <div className="bg-muted/30 rounded-lg p-2 text-center">
+              <div className="text-lg font-bold text-muted-foreground">{tradeCounts.HOLD || 0}</div>
+              <div className="text-[9px] text-muted-foreground">HOLD</div>
+            </div>
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 text-center">
+              <div className="text-lg font-bold text-amber-500">{tradeCounts.BLOCKED || 0}</div>
+              <div className="text-[9px] text-muted-foreground">BLOCKED</div>
+            </div>
+          </div>
+          
+          {blockReasons.length > 0 && (
+            <div className="text-[10px] text-muted-foreground">
+              <span className="text-amber-500">Block reasons:</span>{' '}
+              {blockReasons.join(', ')}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Agent Inactivity Tile - Shows active vs inactive breakdown
+export function AgentInactivityTile({ compact }: { compact?: boolean }) {
+  const { data: systemState } = useSystemState();
+  const { data: cohortCount = 0 } = useCohortCount(systemState?.current_generation_id ?? null);
+  
+  const { data: activityData, isLoading } = useQuery({
+    queryKey: ['agent-activity-summary', systemState?.current_generation_id],
+    queryFn: async () => {
+      if (!systemState?.current_generation_id) return null;
+      
+      // Get unique agents who have traded this generation
+      const { data: orders } = await supabase
+        .from('paper_orders')
+        .select('agent_id')
+        .eq('generation_id', systemState.current_generation_id)
+        .eq('status', 'filled')
+        .not('agent_id', 'is', null);
+      
+      const uniqueAgents = new Set((orders || []).map(o => o.agent_id));
+      
+      // Get strategy breakdown for trading agents
+      if (uniqueAgents.size > 0) {
+        const { data: agents } = await supabase
+          .from('agents')
+          .select('strategy_template')
+          .in('id', Array.from(uniqueAgents));
+        
+        const strategyBreakdown = (agents || []).reduce((acc, a) => {
+          acc[a.strategy_template] = (acc[a.strategy_template] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+        
+        return {
+          activeCount: uniqueAgents.size,
+          strategyBreakdown,
+        };
+      }
+      
+      return { activeCount: 0, strategyBreakdown: {} };
+    },
+    enabled: !!systemState?.current_generation_id,
+    refetchInterval: 60000,
+  });
+  
+  const activeCount = activityData?.activeCount || 0;
+  const inactiveCount = cohortCount - activeCount;
+  const activePct = cohortCount > 0 ? (activeCount / cohortCount) * 100 : 0;
+  const strategyBreakdown = activityData?.strategyBreakdown || {};
+  
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
+        <Users className="h-4 w-4 text-primary" />
+        Agent Activity
+        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
+      </div>
+      
+      {isLoading ? (
+        <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-success/10 border border-success/20 rounded-lg p-2 space-y-1">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Activity className="h-3 w-3" />
+                Trading
+              </div>
+              <div className="font-mono text-lg font-bold text-success">{activeCount}</div>
+              <div className="text-[9px] text-success/70">{activePct.toFixed(0)}% of cohort</div>
+            </div>
+            
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Gauge className="h-3 w-3" />
+                Holding
+              </div>
+              <div className="font-mono text-lg font-bold">{inactiveCount}</div>
+              <div className="text-[9px] text-muted-foreground">{(100 - activePct).toFixed(0)}% waiting</div>
+            </div>
+          </div>
+          
+          {Object.keys(strategyBreakdown).length > 0 && (
+            <div className="text-[10px] space-y-0.5">
+              <div className="text-muted-foreground mb-1">By strategy:</div>
+              {Object.entries(strategyBreakdown).map(([strat, count]) => (
+                <div key={strat} className="flex justify-between">
+                  <span className="text-muted-foreground">{strat.replace('_', ' ')}</span>
+                  <span className="font-mono">{count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
 }

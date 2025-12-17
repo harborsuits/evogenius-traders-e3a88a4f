@@ -175,39 +175,58 @@ export function LineageTile({ compact }: { compact?: boolean }) {
 
 // Decision Log Tile - Shows recent HOLD/BUY/SELL decisions with reasons
 export function DecisionLogTile({ compact }: { compact?: boolean }) {
-  const { data: events = [], isLoading } = useQuery({
-    queryKey: ['decision-log-summary'],
+  const { data: systemState } = useSystemState();
+  
+  const { data: decisionStats, isLoading } = useQuery({
+    queryKey: ['decision-log-summary', systemState?.current_generation_id],
     queryFn: async () => {
-      const { data } = await supabase
+      if (!systemState?.current_generation_id) return null;
+      
+      // Query trade_decision events (the canonical decision source)
+      const { data: events } = await supabase
         .from('control_events')
-        .select('*')
-        .in('action', ['trade_executed', 'trade_blocked', 'cycle_complete'])
+        .select('metadata')
+        .eq('action', 'trade_decision')
         .order('triggered_at', { ascending: false })
-        .limit(20);
-      return data ?? [];
+        .limit(100);
+      
+      if (!events?.length) return { buy: 0, sell: 0, hold: 0, blocked: 0, topReasons: [] };
+      
+      // Count decisions by metadata.decision
+      let buy = 0, sell = 0, hold = 0, blocked = 0;
+      const reasonCounts: Record<string, number> = {};
+      
+      for (const e of events) {
+        const meta = e.metadata as any;
+        const decision = meta?.decision?.toLowerCase();
+        
+        if (decision === 'buy') buy++;
+        else if (decision === 'sell') sell++;
+        else if (decision === 'hold') {
+          hold++;
+          // Extract hold reasons from top_hold_reasons array
+          const reasons = meta?.top_hold_reasons || [];
+          for (const r of reasons) {
+            // Format: "no_signal:3" -> extract reason name
+            const match = typeof r === 'string' ? r.match(/^([^:]+)/) : null;
+            if (match) {
+              reasonCounts[match[1]] = (reasonCounts[match[1]] || 0) + 1;
+            }
+          }
+        } else if (decision === 'blocked') blocked++;
+      }
+      
+      // Get top 3 reasons
+      const topReasons = Object.entries(reasonCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([reason]) => reason.replace(/_/g, ' '));
+      
+      return { buy, sell, hold, blocked, topReasons };
     },
+    enabled: !!systemState?.current_generation_id,
     refetchInterval: 30000,
   });
-  
-  // Count decisions from recent events
-  const tradeCounts = events.reduce((acc, e) => {
-    if (e.action === 'trade_executed') {
-      const side = (e.metadata as any)?.side?.toUpperCase() || 'TRADE';
-      acc[side] = (acc[side] || 0) + 1;
-    } else if (e.action === 'trade_blocked') {
-      acc.BLOCKED = (acc.BLOCKED || 0) + 1;
-    } else if (e.action === 'cycle_complete') {
-      const holdCount = (e.metadata as any)?.symbols_evaluated || 0;
-      acc.HOLD = (acc.HOLD || 0) + holdCount;
-    }
-    return acc;
-  }, {} as Record<string, number>);
-  
-  // Get top block reasons
-  const blockReasons = events
-    .filter(e => e.action === 'trade_blocked')
-    .map(e => (e.metadata as any)?.block_reason || 'unknown')
-    .slice(0, 3);
   
   return (
     <div className="space-y-3">
@@ -217,33 +236,33 @@ export function DecisionLogTile({ compact }: { compact?: boolean }) {
         <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
       </div>
       
-      {isLoading ? (
+      {isLoading || !decisionStats ? (
         <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
       ) : (
         <>
           <div className="grid grid-cols-4 gap-2">
             <div className="bg-success/10 border border-success/20 rounded-lg p-2 text-center">
-              <div className="text-lg font-bold text-success">{tradeCounts.BUY || 0}</div>
+              <div className="text-lg font-bold text-success">{decisionStats.buy}</div>
               <div className="text-[9px] text-muted-foreground">BUY</div>
             </div>
             <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-2 text-center">
-              <div className="text-lg font-bold text-destructive">{tradeCounts.SELL || 0}</div>
+              <div className="text-lg font-bold text-destructive">{decisionStats.sell}</div>
               <div className="text-[9px] text-muted-foreground">SELL</div>
             </div>
             <div className="bg-muted/30 rounded-lg p-2 text-center">
-              <div className="text-lg font-bold text-muted-foreground">{tradeCounts.HOLD || 0}</div>
+              <div className="text-lg font-bold text-muted-foreground">{decisionStats.hold}</div>
               <div className="text-[9px] text-muted-foreground">HOLD</div>
             </div>
             <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 text-center">
-              <div className="text-lg font-bold text-amber-500">{tradeCounts.BLOCKED || 0}</div>
+              <div className="text-lg font-bold text-amber-500">{decisionStats.blocked}</div>
               <div className="text-[9px] text-muted-foreground">BLOCKED</div>
             </div>
           </div>
           
-          {blockReasons.length > 0 && (
+          {decisionStats.topReasons.length > 0 && (
             <div className="text-[10px] text-muted-foreground">
-              <span className="text-amber-500">Block reasons:</span>{' '}
-              {blockReasons.join(', ')}
+              <span className="text-primary">Top hold reasons:</span>{' '}
+              {decisionStats.topReasons.join(', ')}
             </div>
           )}
         </>
@@ -262,15 +281,21 @@ export function AgentInactivityTile({ compact }: { compact?: boolean }) {
     queryFn: async () => {
       if (!systemState?.current_generation_id) return null;
       
-      // Get unique agents who have traded this generation
+      // Get unique agents who have traded this generation (excluding test_mode)
       const { data: orders } = await supabase
         .from('paper_orders')
-        .select('agent_id')
+        .select('agent_id, tags')
         .eq('generation_id', systemState.current_generation_id)
         .eq('status', 'filled')
         .not('agent_id', 'is', null);
       
-      const uniqueAgents = new Set((orders || []).map(o => o.agent_id));
+      // Filter out test_mode orders
+      const learnableOrders = (orders || []).filter(o => {
+        const tags = o.tags as any;
+        return !tags?.test_mode;
+      });
+      
+      const uniqueAgents = new Set(learnableOrders.map(o => o.agent_id));
       
       // Get strategy breakdown for trading agents
       if (uniqueAgents.size > 0) {

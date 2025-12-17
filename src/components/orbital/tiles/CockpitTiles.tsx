@@ -6,6 +6,7 @@ import { ControlPanel } from '@/components/dashboard/ControlPanel';
 import { NewsPanel } from '@/components/dashboard/NewsPanel';
 import { RolloverChecklist } from '@/components/dashboard/RolloverChecklist';
 import { GenerationComparison } from '@/components/dashboard/GenerationComparison';
+import { LineageWidget } from '@/components/dashboard/LineageWidget';
 import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
 import { usePaperAccount, usePaperPositions, usePaperRealtimeSubscriptions } from '@/hooks/usePaperTrading';
 import { SystemStatus } from '@/types/evotrader';
@@ -163,4 +164,9 @@ export function RolloverTile({ compact }: { compact?: boolean }) {
 // Generation Comparison Tile
 export function GenComparisonTile({ compact }: { compact?: boolean }) {
   return <GenerationComparison />;
+}
+
+// Lineage Widget Tile
+export function LineageTile({ compact }: { compact?: boolean }) {
+  return <LineageWidget />;
 }

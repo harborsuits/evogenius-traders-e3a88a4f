@@ -1,4 +1,5 @@
 import { useMissedMoves } from "@/hooks/useMissedMoves";
+import { useExitEfficiency } from "@/hooks/useExitEfficiency";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +9,10 @@ import {
   TrendingDown,
   AlertCircle,
   HelpCircle,
-  GripHorizontal
+  GripHorizontal,
+  LogOut,
+  CheckCircle,
+  XCircle
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { NewsDock } from "@/components/orbital/OrbitalCommandCenter";
@@ -45,7 +49,8 @@ interface AutopsyWidgetProps {
 }
 
 export function AutopsyWidget({ dock = "side", onDockChange }: AutopsyWidgetProps) {
-  const { data: missedData, isLoading } = useMissedMoves();
+  const { data: missedData, isLoading: missedLoading } = useMissedMoves();
+  const { data: exitData, isLoading: exitLoading } = useExitEfficiency(24);
   const headerRef = useRef<HTMLDivElement>(null);
   const [isBeingDragged, setIsBeingDragged] = useState(false);
   const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
@@ -129,6 +134,17 @@ export function AutopsyWidget({ dock = "side", onDockChange }: AutopsyWidgetProp
     .sort((a, b) => Math.abs(b.change_24h) - Math.abs(a.change_24h))
     .slice(0, 6);
 
+  // Exit efficiency data
+  const exits = exitData?.exits || [];
+  const avgMissedPct = exitData?.avg_missed_profit_pct || 0;
+  const exitCount = exitData?.exit_count || 0;
+  
+  // Separate good vs missed-profit exits
+  const goodExits = exits.filter(e => e.was_profitable_exit);
+  const missedProfitExits = exits.filter(e => !e.was_profitable_exit && e.missed_profit_pct > 1); // >1% missed
+
+  const isLoading = missedLoading || exitLoading;
+
   return (
     <>
       <Card className={cn(
@@ -167,6 +183,101 @@ export function AutopsyWidget({ dock = "side", onDockChange }: AutopsyWidgetProp
         ) : (
           <ScrollArea className="h-full">
             <div className="px-3 pb-3 space-y-3">
+              {/* Section: Exit Efficiency (NEW) */}
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5 text-[10px] text-amber-400/80 uppercase tracking-wide font-medium px-1 border-b border-amber-500/20 pb-1">
+                  <LogOut className="h-3 w-3" />
+                  <span>Exit Efficiency (24h)</span>
+                  <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-amber-500/30 text-amber-400">
+                    {exitCount} exits
+                  </Badge>
+                </div>
+                
+                {exitCount > 0 ? (
+                  <div className="space-y-1">
+                    {/* Summary stats */}
+                    <div className="flex items-center gap-3 px-2 py-1.5 rounded bg-amber-500/10 border border-amber-500/20">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[9px] text-muted-foreground">Avg:</span>
+                        <span className={cn(
+                          "text-[11px] font-mono font-medium",
+                          avgMissedPct > 1 ? "text-red-400" : avgMissedPct < -1 ? "text-emerald-400" : "text-muted-foreground"
+                        )}>
+                          {avgMissedPct >= 0 ? '+' : ''}{avgMissedPct.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle className="h-3 w-3 text-emerald-400/60" />
+                        <span className="text-[10px] text-emerald-400/80">{goodExits.length} good</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <XCircle className="h-3 w-3 text-red-400/60" />
+                        <span className="text-[10px] text-red-400/80">{missedProfitExits.length} early</span>
+                      </div>
+                    </div>
+                    
+                    {/* Recent exits with missed profit */}
+                    {missedProfitExits.slice(0, 4).map((exit) => {
+                      const timeAgo = formatTimeAgo(exit.exit_time);
+                      return (
+                        <div
+                          key={`${exit.symbol}-${exit.exit_time}`}
+                          className="grid grid-cols-[1fr_55px_55px_45px] gap-1.5 items-center px-2 py-1 rounded bg-red-500/5 border border-red-500/10"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <TrendingUp className="h-3 w-3 text-red-400/60 flex-shrink-0" />
+                            <span className="text-[10px] font-semibold text-foreground/80 font-mono">
+                              {exit.symbol.replace('-USD', '')}
+                            </span>
+                          </div>
+                          
+                          <div className="text-right">
+                            <span className="text-[9px] text-muted-foreground/60 block">exit</span>
+                            <span className="text-[10px] font-mono text-muted-foreground">
+                              ${exit.exit_price.toFixed(exit.exit_price < 1 ? 4 : 2)}
+                            </span>
+                          </div>
+                          
+                          <div className="text-right">
+                            <span className="text-[9px] text-muted-foreground/60 block">now</span>
+                            <span className="text-[10px] font-mono text-foreground">
+                              ${exit.current_price.toFixed(exit.current_price < 1 ? 4 : 2)}
+                            </span>
+                          </div>
+                          
+                          <div className="text-right">
+                            <span className="text-[10px] font-mono text-red-400 font-medium">
+                              +{exit.missed_profit_pct.toFixed(1)}%
+                            </span>
+                            <span className="text-[8px] text-muted-foreground/40 block">
+                              {timeAgo}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    
+                    {/* Good exits (collapsed) */}
+                    {goodExits.length > 0 && missedProfitExits.length === 0 && (
+                      <div className="text-center py-1.5 px-2 bg-emerald-500/10 rounded border border-emerald-500/20">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <CheckCircle className="h-3 w-3 text-emerald-400" />
+                          <span className="text-[10px] text-emerald-400">
+                            All {goodExits.length} exits timed well (price dropped after)
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-2 px-2 bg-muted/20 rounded-md">
+                    <div className="text-[10px] text-muted-foreground/60">
+                      No exits in last 24h to analyze
+                    </div>
+                  </div>
+                )}
+              </div>
+              
               {/* Section A: Missed Moves (Strict) */}
               <div className="space-y-1.5">
                 <div className="flex items-center gap-1.5 text-[10px] text-red-400/80 uppercase tracking-wide font-medium px-1 border-b border-red-500/20 pb-1">

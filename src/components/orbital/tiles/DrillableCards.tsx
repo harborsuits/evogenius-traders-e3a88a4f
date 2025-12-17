@@ -165,7 +165,7 @@ export function OrdersCardContent({ compact }: { compact?: boolean }) {
   );
 }
 
-// Activity Card Content - Combined Orders + Fills
+// Activity Card Content - Combined Orders + Fills (properly scoped to account)
 export function ActivityCardContent({ compact }: { compact?: boolean }) {
   const { data: account } = usePaperAccount();
   
@@ -174,45 +174,71 @@ export function ActivityCardContent({ compact }: { compact?: boolean }) {
     queryFn: async () => {
       if (!account?.id) return [];
       
-      // Get recent orders
+      // Get recent orders for this account
       const { data: orders } = await supabase
         .from('paper_orders')
         .select('id, side, symbol, status, filled_price, created_at')
         .eq('account_id', account.id)
         .order('created_at', { ascending: false })
-        .limit(10);
+        .limit(15);
       
-      // Get recent fills
+      if (!orders?.length) return [];
+      
+      // Get order IDs to filter fills (ensures fills belong to this account)
+      const orderIds = orders.map(o => o.id);
+      
+      // Get fills only for orders belonging to this account
       const { data: fills } = await supabase
         .from('paper_fills')
-        .select('id, side, symbol, price, timestamp')
+        .select('id, order_id, side, symbol, price, timestamp')
+        .in('order_id', orderIds)
         .order('timestamp', { ascending: false })
-        .limit(10);
+        .limit(15);
       
-      // Combine and sort chronologically
-      const combined = [
-        ...(orders || []).map(o => ({
-          id: o.id,
-          type: 'order' as const,
-          side: o.side,
-          symbol: o.symbol,
-          price: o.filled_price,
-          status: o.status,
-          time: o.created_at,
-        })),
-        ...(fills || []).map(f => ({
+      // Create a set of order IDs that have fills (for deduplication)
+      const filledOrderIds = new Set((fills || []).map(f => f.order_id));
+      
+      // Build activity list: prefer fills over orders when both exist
+      const activity: Array<{
+        id: string;
+        type: 'order' | 'fill';
+        side: string;
+        symbol: string;
+        price: number | null;
+        status: string;
+        time: string;
+      }> = [];
+      
+      // Add fills first (these are confirmed executions)
+      for (const f of fills || []) {
+        activity.push({
           id: f.id,
-          type: 'fill' as const,
+          type: 'fill',
           side: f.side,
           symbol: f.symbol,
           price: f.price,
           status: 'filled',
           time: f.timestamp,
-        })),
-      ];
+        });
+      }
       
-      // Sort by time descending and dedupe (fills often duplicate orders)
-      return combined
+      // Add orders that don't have fills (pending/rejected)
+      for (const o of orders) {
+        if (!filledOrderIds.has(o.id)) {
+          activity.push({
+            id: o.id,
+            type: 'order',
+            side: o.side,
+            symbol: o.symbol,
+            price: o.filled_price,
+            status: o.status,
+            time: o.created_at,
+          });
+        }
+      }
+      
+      // Sort by time descending
+      return activity
         .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
         .slice(0, 8);
     },

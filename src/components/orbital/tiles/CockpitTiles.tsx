@@ -5,6 +5,7 @@ import { PollingHealth } from '@/components/dashboard/PollingHealth';
 import { ControlPanel } from '@/components/dashboard/ControlPanel';
 import { NewsPanel } from '@/components/dashboard/NewsPanel';
 import { RolloverChecklist } from '@/components/dashboard/RolloverChecklist';
+import { GenerationComparison } from '@/components/dashboard/GenerationComparison';
 import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
 import { usePaperAccount, usePaperPositions, usePaperRealtimeSubscriptions } from '@/hooks/usePaperTrading';
 import { SystemStatus } from '@/types/evotrader';
@@ -157,4 +158,9 @@ export function NewsTile({ compact }: { compact?: boolean }) {
 // Rollover Checklist Tile
 export function RolloverTile({ compact }: { compact?: boolean }) {
   return <RolloverChecklist />;
+}
+
+// Generation Comparison Tile
+export function GenComparisonTile({ compact }: { compact?: boolean }) {
+  return <GenerationComparison />;
 }

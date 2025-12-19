@@ -13,6 +13,7 @@ import { SystemStatus } from '@/types/evotrader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { MetricCard } from '@/components/dashboard/MetricCard';
 import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Wallet, 
   DollarSign, 
@@ -25,11 +26,31 @@ import {
   FlaskConical,
   BarChart3,
   Layers,
-  PieChart
+  PieChart,
+  Eye,
+  Flame,
+  Globe,
+  Unlock,
+  Wrench,
+  AlertTriangle,
+  Megaphone,
+  Scale,
+  Handshake,
+  Skull,
+  AlertCircle,
+  LogOut,
+  CheckCircle,
+  XCircle,
+  HelpCircle
 } from 'lucide-react';
 import { useGenOrdersCount, useCohortCount } from '@/hooks/useGenOrders';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useNewsFeed } from '@/hooks/useNewsFeed';
+import { useMissedMoves } from '@/hooks/useMissedMoves';
+import { useExitEfficiency } from '@/hooks/useExitEfficiency';
+import { formatDistanceToNow } from 'date-fns';
+import { cn } from '@/lib/utils';
 
 // Trade Cycle Status Tile
 export function TradeCycleTile({ compact }: { compact?: boolean }) {
@@ -448,6 +469,361 @@ export function AgentInactivityTile({ compact }: { compact?: boolean }) {
   );
 }
 
+// ============================================
+// CATALYST WATCH TILE (formerly side Intake widget)
+// ============================================
+
+function formatTimeAgo(dateStr: string): string {
+  try {
+    return formatDistanceToNow(new Date(dateStr), { addSuffix: false })
+      .replace('about ', '')
+      .replace(' minutes', 'm')
+      .replace(' minute', 'm')
+      .replace(' hours', 'h')
+      .replace(' hour', 'h')
+      .replace(' days', 'd')
+      .replace(' day', 'd')
+      .replace('less than a', '<1');
+  } catch {
+    return '';
+  }
+}
+
+function detectEventType(title: string): { icon: React.ReactNode; label: string; color: string } | null {
+  const lower = title.toLowerCase();
+  
+  if (lower.includes('unlock') || lower.includes('vesting') || lower.includes('emission')) {
+    return { icon: <Unlock className="h-3 w-3" />, label: 'unlock', color: 'text-amber-400' };
+  }
+  if (lower.includes('upgrade') || lower.includes('mainnet') || lower.includes('fork')) {
+    return { icon: <Wrench className="h-3 w-3" />, label: 'upgrade', color: 'text-blue-400' };
+  }
+  if (lower.includes('outage') || lower.includes('bug') || lower.includes('exploit') || lower.includes('hack')) {
+    return { icon: <AlertTriangle className="h-3 w-3" />, label: 'outage', color: 'text-red-400' };
+  }
+  if (lower.includes('listing') || lower.includes('delist') || lower.includes('binance') || lower.includes('coinbase adds')) {
+    return { icon: <Megaphone className="h-3 w-3" />, label: 'listing', color: 'text-green-400' };
+  }
+  if (lower.includes('sec') || lower.includes('regulation') || lower.includes('lawsuit') || lower.includes('fine') || lower.includes('investigation')) {
+    return { icon: <Scale className="h-3 w-3" />, label: 'legal', color: 'text-red-400' };
+  }
+  if (lower.includes('whale') || lower.includes('transfer') || lower.includes('moved') || lower.includes('wallet')) {
+    return { icon: <Scale className="h-3 w-3" />, label: 'whale', color: 'text-purple-400' };
+  }
+  if (lower.includes('governance') || lower.includes('vote') || lower.includes('proposal') || lower.includes('dao')) {
+    return { icon: <Scale className="h-3 w-3" />, label: 'gov', color: 'text-cyan-400' };
+  }
+  if (lower.includes('partner') || lower.includes('collab') || lower.includes('integration') || lower.includes('launch')) {
+    return { icon: <Handshake className="h-3 w-3" />, label: 'partner', color: 'text-emerald-400' };
+  }
+  
+  return null;
+}
+
+export function CatalystWatchTile({ compact }: { compact?: boolean }) {
+  const { data: newsData, isLoading } = useNewsFeed();
+  
+  const newsIntensity = newsData?.news_intensity || {};
+  const botSymbols = newsData?.bot_symbols || [];
+  const catalystNews = (newsData?.bot_lane || []).slice(0, 6);
+  const marketNews = (newsData?.market_lane || [])
+    .filter((n: any) => !catalystNews.some((c: any) => c.id === n.id))
+    .slice(0, 4);
+  
+  const hotSymbols = Object.entries(newsIntensity)
+    .filter(([_, count]) => (count as number) >= 2)
+    .sort(([, a], [, b]) => (b as number) - (a as number))
+    .slice(0, 4);
+  
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
+        <Eye className="h-4 w-4 text-primary" />
+        Catalyst Watch
+        {hotSymbols.length > 0 && (
+          <div className="flex items-center gap-1">
+            <Flame className="h-3.5 w-3.5 text-orange-500" />
+            {hotSymbols.slice(0, 2).map(([symbol]) => (
+              <Badge 
+                key={symbol}
+                variant="outline"
+                className="text-[9px] px-1.5 py-0 h-4 font-mono border-orange-500/30 text-orange-400"
+              >
+                {symbol.replace('-USD', '')}
+              </Badge>
+            ))}
+          </div>
+        )}
+        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
+      </div>
+      
+      {isLoading ? (
+        <div className="text-xs text-muted-foreground animate-pulse">Loading catalysts...</div>
+      ) : (
+        <ScrollArea className="h-[200px]">
+          <div className="space-y-2">
+            {/* Catalyst Watch (Strict) */}
+            {catalystNews.length > 0 ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5 text-[10px] text-primary/80 uppercase tracking-wide font-medium px-1 border-b border-border/30 pb-1">
+                  <Eye className="h-3 w-3" />
+                  <span>Monitored Symbols</span>
+                  <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-primary/30">
+                    {catalystNews.length}
+                  </Badge>
+                </div>
+                {catalystNews.map((n: any) => {
+                  const eventType = detectEventType(n.title);
+                  const symbols = n.symbols || [];
+                  const timeAgo = formatTimeAgo(n.published_at);
+                  
+                  return (
+                    <a
+                      key={n.id}
+                      href={n.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex flex-col gap-1 p-2 rounded-md bg-primary/5 hover:bg-primary/10 transition-colors group border border-primary/10 hover:border-primary/20"
+                    >
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {symbols.slice(0, 2).map((s: string) => (
+                          <Badge 
+                            key={s} 
+                            variant="secondary"
+                            className="text-[10px] px-1.5 py-0 h-4 font-mono font-semibold"
+                          >
+                            {s.replace('-USD', '')}
+                          </Badge>
+                        ))}
+                        {eventType && (
+                          <span className={`flex items-center gap-0.5 text-[9px] ${eventType.color}`}>
+                            {eventType.icon}
+                            <span>{eventType.label}</span>
+                          </span>
+                        )}
+                        <span className="text-[9px] text-muted-foreground/60 ml-auto">{timeAgo}</span>
+                      </div>
+                      <p className="text-[11px] leading-snug text-foreground/80 line-clamp-2 group-hover:text-primary transition-colors">
+                        {n.title}
+                      </p>
+                    </a>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-2 px-2 bg-muted/20 rounded-md">
+                <div className="text-[10px] text-muted-foreground/60">No monitored-coin catalysts detected</div>
+                {botSymbols.length > 0 && (
+                  <div className="text-[9px] text-muted-foreground/40 mt-0.5">
+                    Watching: {botSymbols.slice(0, 5).map((s: string) => s.replace('-USD', '')).join(', ')}
+                    {botSymbols.length > 5 && ` +${botSymbols.length - 5}`}
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {/* Market Context (Fallback) */}
+            {marketNews.length > 0 && (
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 uppercase tracking-wide px-1 border-b border-border/20 pb-1">
+                  <Globe className="h-3 w-3" />
+                  <span>Market Context</span>
+                </div>
+                {marketNews.map((n: any) => {
+                  const timeAgo = formatTimeAgo(n.published_at);
+                  return (
+                    <a
+                      key={n.id}
+                      href={n.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex flex-col gap-0.5 p-1.5 rounded bg-muted/20 hover:bg-muted/30 transition-colors"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] text-muted-foreground/40 ml-auto">{timeAgo}</span>
+                      </div>
+                      <p className="text-[10px] leading-snug text-foreground/60 line-clamp-1 hover:text-foreground/80">
+                        {n.title}
+                      </p>
+                    </a>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      )}
+    </div>
+  );
+}
+
+// ============================================
+// AUTOPSY TILE (formerly side Autopsy widget)
+// ============================================
+
+function formatDecisionReason(reason: string | null): string {
+  if (!reason) return '';
+  if (reason.length > 40) return reason.slice(0, 37) + '...';
+  return reason;
+}
+
+export function AutopsyTile({ compact }: { compact?: boolean }) {
+  const { data: missedData, isLoading: missedLoading } = useMissedMoves();
+  const { data: exitData, isLoading: exitLoading } = useExitEfficiency(24);
+  
+  const missedMoves = missedData?.missed_moves || [];
+  const pumpThreshold = missedData?.thresholds?.pump || 5;
+  const dumpThreshold = missedData?.thresholds?.dump || -5;
+  
+  const strictMisses = missedMoves.filter((m: any) => 
+    Math.abs(m.change_24h) >= Math.max(Math.abs(pumpThreshold), Math.abs(dumpThreshold))
+  );
+  
+  const exits = exitData?.exits || [];
+  const avgMissedPct = exitData?.avg_missed_profit_pct || 0;
+  const exitCount = exitData?.exit_count || 0;
+  
+  const goodExits = exits.filter((e: any) => e.was_profitable_exit);
+  const missedProfitExits = exits.filter((e: any) => !e.was_profitable_exit && e.missed_profit_pct > 1);
+  
+  const isLoading = missedLoading || exitLoading;
+  
+  // Diagnostic signal
+  const getDiagnosticSignal = () => {
+    const hasExitIssues = missedProfitExits.length > 2 || avgMissedPct > 3;
+    const hasMissedMoves = strictMisses.length > 2;
+    
+    if (hasExitIssues && hasMissedMoves) {
+      return { label: 'NEEDS ATTENTION', color: 'text-destructive', desc: 'Exit timing and signal gaps detected' };
+    }
+    if (hasExitIssues) {
+      return { label: 'EXIT REVIEW', color: 'text-amber-500', desc: 'Some early exits left profit on table' };
+    }
+    if (hasMissedMoves) {
+      return { label: 'SIGNAL GAPS', color: 'text-amber-500', desc: 'Large moves without agent participation' };
+    }
+    if (exitCount > 0 && goodExits.length === exitCount) {
+      return { label: 'CLEAN EXECUTION', color: 'text-success', desc: 'All exits well-timed' };
+    }
+    return { label: 'NOMINAL', color: 'text-muted-foreground', desc: 'No major issues detected' };
+  };
+  
+  const signal = getDiagnosticSignal();
+  
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
+        <Skull className="h-4 w-4 text-amber-500" />
+        Performance Autopsy
+        {strictMisses.length > 0 && (
+          <Badge variant="destructive" className="text-[9px] px-1.5 py-0 h-4 font-mono">
+            {strictMisses.length} miss{strictMisses.length !== 1 ? 'es' : ''}
+          </Badge>
+        )}
+        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">24h</Badge>
+      </div>
+      
+      {isLoading ? (
+        <div className="text-xs text-muted-foreground animate-pulse">Loading diagnostics...</div>
+      ) : (
+        <>
+          {/* Diagnostic signal */}
+          <div className={`text-[10px] font-mono ${signal.color}`}>
+            <span className="font-bold">{signal.label}</span>
+            <span className="text-muted-foreground ml-1">— {signal.desc}</span>
+          </div>
+          
+          <ScrollArea className="h-[180px]">
+            <div className="space-y-3">
+              {/* Exit Efficiency Summary */}
+              {exitCount > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[10px] text-amber-400/80 uppercase tracking-wide font-medium px-1 border-b border-amber-500/20 pb-1">
+                    <LogOut className="h-3 w-3" />
+                    <span>Exit Efficiency</span>
+                    <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-amber-500/30 text-amber-400">
+                      {exitCount} exits
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-3 px-2 py-1.5 rounded bg-amber-500/10 border border-amber-500/20">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] text-muted-foreground">Avg:</span>
+                      <span className={cn(
+                        "text-[11px] font-mono font-medium",
+                        avgMissedPct > 1 ? "text-red-400" : avgMissedPct < -1 ? "text-emerald-400" : "text-muted-foreground"
+                      )}>
+                        {avgMissedPct >= 0 ? '+' : ''}{avgMissedPct.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <CheckCircle className="h-3 w-3 text-emerald-400/60" />
+                      <span className="text-[10px] text-emerald-400/80">{goodExits.length} good</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <XCircle className="h-3 w-3 text-red-400/60" />
+                      <span className="text-[10px] text-red-400/80">{missedProfitExits.length} early</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Missed Moves */}
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5 text-[10px] text-red-400/80 uppercase tracking-wide font-medium px-1 border-b border-red-500/20 pb-1">
+                  <AlertCircle className="h-3 w-3" />
+                  <span>Missed Moves (≥{pumpThreshold}%)</span>
+                  <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 ml-auto border-red-500/30 text-red-400">
+                    {strictMisses.length}
+                  </Badge>
+                </div>
+                
+                {strictMisses.length > 0 ? (
+                  <div className="space-y-1">
+                    {strictMisses.slice(0, 4).map((m: any) => {
+                      const reason = formatDecisionReason(m.last_decision_reason);
+                      return (
+                        <div
+                          key={m.symbol}
+                          className="grid grid-cols-[1fr_50px_60px] gap-2 items-center px-2 py-1.5 rounded bg-red-500/10 border border-red-500/20"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            {m.move_type === 'pump' ? (
+                              <TrendingUp className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />
+                            ) : (
+                              <TrendingDown className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
+                            )}
+                            <span className="text-[11px] font-semibold text-foreground font-mono">
+                              {m.symbol.replace('-USD', '')}
+                            </span>
+                          </div>
+                          <span className={`text-[11px] font-mono text-right font-medium ${
+                            m.move_type === 'pump' ? 'text-emerald-400' : 'text-red-400'
+                          }`}>
+                            {m.change_24h >= 0 ? '+' : ''}{m.change_24h.toFixed(1)}%
+                          </span>
+                          <Badge 
+                            variant={m.last_decision === 'BUY' ? 'default' : m.last_decision === 'SELL' ? 'destructive' : 'secondary'}
+                            className="text-[9px] px-1.5 py-0 h-4 font-mono"
+                          >
+                            {m.last_decision || 'no eval'}
+                          </Badge>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-2 px-2 bg-muted/20 rounded-md">
+                    <div className="text-[10px] text-muted-foreground/60">None — no large moves without signal</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </ScrollArea>
+        </>
+      )}
+    </div>
+  );
+}
 // Symbol Coverage Tile - Shows trading concentration and strategies
 export function SymbolCoverageTile({ compact }: { compact?: boolean }) {
   const { data: systemState } = useSystemState();

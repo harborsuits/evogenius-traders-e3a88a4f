@@ -11,7 +11,21 @@ import { SystemStatus, Generation } from '@/types/evotrader';
 import { Loader2 } from 'lucide-react';
 
 // Cockpit tiles
-import { TradeCycleTile, GenHealthTile, PollingHealthTile, SystemControlTile, CapitalOverviewTile, RolloverTile, GenComparisonTile, LineageTile, DecisionLogTile, AgentInactivityTile, SymbolCoverageTile } from '@/components/orbital/tiles/CockpitTiles';
+import { 
+  TradeCycleTile, 
+  GenHealthTile, 
+  PollingHealthTile, 
+  SystemControlTile, 
+  CapitalOverviewTile, 
+  RolloverTile, 
+  GenComparisonTile, 
+  LineageTile, 
+  DecisionLogTile, 
+  AgentInactivityTile, 
+  SymbolCoverageTile,
+  CatalystWatchTile,
+  AutopsyTile
+} from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PositionsCardContent, ActivityCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
 
@@ -24,6 +38,8 @@ const staticCards: OrbitalCard[] = [
   { id: 'capital', title: 'Capital Overview', type: 'cockpit', component: CapitalOverviewTile },
   { id: 'symbol-coverage', title: 'Symbol Coverage', type: 'cockpit', component: SymbolCoverageTile },
   { id: 'agent-inactivity', title: 'Agent Activity', type: 'cockpit', component: AgentInactivityTile },
+  { id: 'catalyst-watch', title: 'Catalyst Watch', type: 'cockpit', component: CatalystWatchTile },
+  { id: 'autopsy', title: 'Performance Autopsy', type: 'cockpit', component: AutopsyTile },
   { id: 'gen-compare', title: 'Gen 10 vs 11', type: 'cockpit', component: GenComparisonTile },
   { id: 'lineage', title: 'Lineage', type: 'cockpit', component: LineageTile },
   { id: 'rollover', title: 'Rollover Checklist', type: 'cockpit', component: RolloverTile },

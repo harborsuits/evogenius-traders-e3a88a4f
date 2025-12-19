@@ -9,6 +9,7 @@ import { GenerationComparison } from '@/components/dashboard/GenerationCompariso
 import { LineageWidget } from '@/components/dashboard/LineageWidget';
 import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
 import { usePaperAccount, usePaperPositions, usePaperRealtimeSubscriptions } from '@/hooks/usePaperTrading';
+import { useDroughtState } from '@/hooks/useDroughtState';
 import { SystemStatus } from '@/types/evotrader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { MetricCard } from '@/components/dashboard/MetricCard';
@@ -41,7 +42,8 @@ import {
   LogOut,
   CheckCircle,
   XCircle,
-  HelpCircle
+  HelpCircle,
+  Droplets
 } from 'lucide-react';
 import { useGenOrdersCount, useCohortCount } from '@/hooks/useGenOrders';
 import { useQuery } from '@tanstack/react-query';
@@ -51,6 +53,87 @@ import { useMissedMoves } from '@/hooks/useMissedMoves';
 import { useExitEfficiency } from '@/hooks/useExitEfficiency';
 import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
+
+// Drought Monitor Tile - Shows signal drought state and gate failures
+export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
+  const { data: droughtState, isLoading } = useDroughtState();
+  
+  const getStatusColor = () => {
+    if (!droughtState) return 'text-muted-foreground';
+    if (droughtState.blocked) return 'text-amber-500';
+    if (droughtState.isActive) return 'text-destructive';
+    return 'text-success';
+  };
+  
+  const getStatusLabel = () => {
+    if (!droughtState) return 'LOADING';
+    if (droughtState.blocked) return 'DROUGHT BLOCKED';
+    if (droughtState.isActive) return 'DROUGHT ACTIVE';
+    return 'NORMAL';
+  };
+  
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
+        <Droplets className="h-4 w-4 text-primary" />
+        Signal Drought
+        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
+      </div>
+      
+      {isLoading || !droughtState ? (
+        <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
+      ) : (
+        <>
+          <div className={`text-[10px] font-mono ${getStatusColor()} flex items-center gap-1`}>
+            <span className={cn("w-1.5 h-1.5 rounded-full bg-current", droughtState.isActive && "animate-pulse")} />
+            {getStatusLabel()}
+            {droughtState.reason && <span className="text-muted-foreground ml-1">({droughtState.reason})</span>}
+          </div>
+          
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="text-[10px] text-muted-foreground">6h Window</div>
+              <div className="font-mono text-sm">
+                <span className="text-muted-foreground">{droughtState.shortWindowHolds}</span>
+                <span className="text-[10px] text-muted-foreground mx-1">holds</span>
+                <span className="text-primary">{droughtState.shortWindowOrders}</span>
+                <span className="text-[10px] text-muted-foreground ml-1">orders</span>
+              </div>
+            </div>
+            
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="text-[10px] text-muted-foreground">48h Window</div>
+              <div className="font-mono text-sm">
+                <span className="text-muted-foreground">{droughtState.longWindowHolds}</span>
+                <span className="text-[10px] text-muted-foreground mx-1">holds</span>
+                <span className="text-primary">{droughtState.longWindowOrders}</span>
+                <span className="text-[10px] text-muted-foreground ml-1">orders</span>
+              </div>
+            </div>
+          </div>
+          
+          {droughtState.nearestPass && (
+            <div className="text-[10px] text-muted-foreground">
+              <span className="text-amber-500">Nearest pass:</span>{' '}
+              <span className="font-mono">{droughtState.nearestPass.gate}</span>
+              <span className="ml-1">({droughtState.nearestPass.margin.toFixed(4)} from threshold)</span>
+            </div>
+          )}
+          
+          {Object.keys(droughtState.gateFailures).length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {Object.entries(droughtState.gateFailures).slice(0, 3).map(([gate, stats]) => (
+                <Badge key={gate} variant="secondary" className="text-[9px] px-1 py-0">
+                  {gate}: {stats.count}×
+                </Badge>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 // Trade Cycle Status Tile
 export function TradeCycleTile({ compact }: { compact?: boolean }) {

@@ -24,7 +24,8 @@ import {
   AgentInactivityTile, 
   SymbolCoverageTile,
   CatalystWatchTile,
-  AutopsyTile
+  AutopsyTile,
+  DroughtMonitorTile
 } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PositionsCardContent, ActivityCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
@@ -40,6 +41,7 @@ const staticCards: OrbitalCard[] = [
   { id: 'agent-inactivity', title: 'Agent Activity', type: 'cockpit', component: AgentInactivityTile },
   { id: 'catalyst-watch', title: 'Catalyst Watch', type: 'cockpit', component: CatalystWatchTile },
   { id: 'autopsy', title: 'Performance Autopsy', type: 'cockpit', component: AutopsyTile },
+  { id: 'drought', title: 'Signal Drought', type: 'cockpit', component: DroughtMonitorTile },
   { id: 'gen-compare', title: 'Gen 10 vs 11', type: 'cockpit', component: GenComparisonTile },
   { id: 'lineage', title: 'Lineage', type: 'cockpit', component: LineageTile },
   { id: 'rollover', title: 'Rollover Checklist', type: 'cockpit', component: RolloverTile },

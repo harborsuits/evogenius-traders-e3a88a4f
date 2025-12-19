@@ -37,6 +37,7 @@ interface TradeTags {
   confidence: number;
   pattern_id: string;
   test_mode?: boolean;
+  drought_mode?: boolean;
   market_snapshot: {
     price: number;
     change_24h: number;
@@ -44,6 +45,14 @@ interface TradeTags {
     atr_ratio: number;
     age_seconds: number;
   };
+}
+
+// Gate failure telemetry for learning
+interface GateFailure {
+  gate: string;
+  actual: number;
+  threshold: number;
+  margin: number; // How far from passing (negative = failed by this much)
 }
 
 // Determine market regime from market data
@@ -64,85 +73,289 @@ function getDataAge(updatedAt: string): number {
 }
 
 // ===========================================================================
-// BASELINE CRYPTO TRADING KNOWLEDGE (SEEDED PRIORS)
-// ===========================================================================
-// These are evidence-based starting thresholds from crypto market analysis.
-// They're NOT "winners", just reasonable priors to avoid garbage exploration.
-// Evolution can still mutate and discover better values over time.
+// THRESHOLD CONFIGURATION
 // ===========================================================================
 
-// BASELINE THRESHOLDS - VALIDATION PHASE (AGGRESSIVE)
-// These are very loose to force trades for pipeline validation.
-// MUST tighten back after validation passes (30-50 trades).
+// BASELINE THRESHOLDS - Conservative default (normal mode)
 const BASELINE_THRESHOLDS = {
-  // Trend Pullback: Very low slope threshold
-  trend_threshold: 0.005,      // 0.5% EMA slope - almost any trend triggers
-  pullback_pct: 5.0,           // 5% pullback tolerance - very lenient
-  
-  // Mean Reversion: Loosened for validation
-  rsi_threshold: 0.6,          // 0.6% move in 24h - even smaller moves trigger
-  
-  // Breakout: High contraction threshold so most conditions qualify
-  vol_contraction: 1.3,        // ATR ratio < 1.3 - triggers in normal/high volatility
-  vol_expansion_exit: 1.2,     // Earlier exit
-  
-  // Confidence modifiers
+  trend_threshold: 0.005,      // 0.5% EMA slope
+  pullback_pct: 5.0,           // 5% pullback tolerance
+  rsi_threshold: 0.6,          // 0.6% move in 24h
+  vol_contraction: 1.3,        // ATR ratio < 1.3
+  vol_expansion_exit: 1.2,
   min_confidence: 0.5,
   max_confidence: 0.85,
 };
 
-// TEST MODE THRESHOLDS - looser to trigger trades for pipeline validation
-// IMPORTANT: Trades made with test_mode=true should NEVER train the system
-const TEST_MODE_THRESHOLDS = {
-  trend_threshold: 0.01,       // Much looser - almost any slope triggers
-  pullback_pct: 1.5,           // Small pullback still qualifies
-  rsi_threshold: 1.0,          // Very easy oversold/overbought
-  vol_contraction: 1.2,        // Breakout triggers in normal conditions
+// DROUGHT MODE THRESHOLDS - Relaxed to generate trades for learning
+// Only ONE gate is relaxed at a time to maintain quality
+const DROUGHT_THRESHOLDS = {
+  trend_threshold: 0.0035,     // 30% looser
+  pullback_pct: 3.0,           // 40% looser  
+  rsi_threshold: 0.4,          // 33% looser
+  vol_contraction: 1.4,        // 8% looser
   vol_expansion_exit: 1.3,
   min_confidence: 0.5,
   max_confidence: 0.85,
 };
 
+// DROUGHT MODE SAFETY CAPS
+const DROUGHT_SAFETY = {
+  max_trades_per_hour: 2,
+  size_multiplier: 0.5,        // 50% normal size
+  max_drawdown_pct: 2.0,       // Exit drought if drawdown > 2%
+  min_cash_pct: 50,            // Must have 50%+ cash to trade in drought
+};
+
+// TEST MODE THRESHOLDS - Very loose for pipeline validation only
+const TEST_MODE_THRESHOLDS = {
+  trend_threshold: 0.01,
+  pullback_pct: 1.5,
+  rsi_threshold: 1.0,
+  vol_contraction: 1.2,
+  vol_expansion_exit: 1.3,
+  min_confidence: 0.5,
+  max_confidence: 0.85,
+};
+
+// Drought detection thresholds
+const DROUGHT_DETECTION = {
+  min_holds_short_window: 20,   // Min holds in 6h window to trigger
+  min_holds_long_window: 80,    // Min holds in 48h window to trigger
+  max_orders_short_window: 3,   // Max orders in 6h to be considered drought
+  max_orders_long_window: 10,   // Max orders in 48h to be considered drought
+  short_window_hours: 6,
+  long_window_hours: 48,
+};
+
 // ===========================================================================
 // LEARNABLE TRADE FILTER
 // ===========================================================================
-// Use this to exclude test mode trades from fitness/evolution/pattern_stats
-// ===========================================================================
 interface TradeTagsForLearning {
   test_mode?: boolean;
+  drought_mode?: boolean;
   entry_reason?: string[];
 }
 
-/**
- * Returns true if this trade should be used for learning (fitness, evolution, pattern_stats).
- * Excludes: test_mode trades, trades with 'test_mode' in entry_reason.
- */
 function isLearnableTrade(tags: TradeTagsForLearning): boolean {
   if (tags.test_mode === true) return false;
   if (tags.entry_reason?.includes('test_mode')) return false;
+  // Drought mode trades ARE learnable - they just use relaxed thresholds
   return true;
 }
 
-// Export for use in fitness/evolution functions later
-// Usage: if (!isLearnableTrade(trade.tags)) continue;
-
-// Confidence calibration - scales raw confidence by sample size
-// Prevents overconfidence with few trades (survivorship bias protection)
+// Confidence calibration
 function calibrateConfidence(rawConfidence: number, tradeCount: number): number {
   const MIN_TRADES_FOR_FULL_CONFIDENCE = 30;
   const scaleFactor = Math.min(1, tradeCount / MIN_TRADES_FOR_FULL_CONFIDENCE);
   return rawConfidence * scaleFactor;
 }
 
-// Simple strategy decision logic
+// ===========================================================================
+// DROUGHT DETECTION
+// ===========================================================================
+interface DroughtState {
+  isActive: boolean;
+  shortWindowHolds: number;
+  shortWindowOrders: number;
+  longWindowHolds: number;
+  longWindowOrders: number;
+  triggeredAt?: string;
+  reason?: string;
+}
+
+async function detectDrought(supabase: any): Promise<DroughtState> {
+  const now = new Date();
+  const shortWindowStart = new Date(now.getTime() - DROUGHT_DETECTION.short_window_hours * 60 * 60 * 1000).toISOString();
+  const longWindowStart = new Date(now.getTime() - DROUGHT_DETECTION.long_window_hours * 60 * 60 * 1000).toISOString();
+  
+  // Count holds in short window (6h)
+  const { data: shortHolds } = await supabase
+    .from('control_events')
+    .select('id')
+    .eq('action', 'trade_decision')
+    .gte('triggered_at', shortWindowStart)
+    .filter('metadata->>decision', 'eq', 'hold');
+  
+  // Count orders in short window
+  const { data: shortOrders } = await supabase
+    .from('paper_orders')
+    .select('id')
+    .gte('created_at', shortWindowStart)
+    .eq('status', 'filled');
+  
+  // Count holds in long window (48h)
+  const { data: longHolds } = await supabase
+    .from('control_events')
+    .select('id')
+    .eq('action', 'trade_decision')
+    .gte('triggered_at', longWindowStart)
+    .filter('metadata->>decision', 'eq', 'hold');
+  
+  // Count orders in long window
+  const { data: longOrders } = await supabase
+    .from('paper_orders')
+    .select('id')
+    .gte('created_at', longWindowStart)
+    .eq('status', 'filled');
+  
+  const shortWindowHolds = shortHolds?.length ?? 0;
+  const shortWindowOrders = shortOrders?.length ?? 0;
+  const longWindowHolds = longHolds?.length ?? 0;
+  const longWindowOrders = longOrders?.length ?? 0;
+  
+  // Determine if drought is active
+  const shortDrought = shortWindowHolds >= DROUGHT_DETECTION.min_holds_short_window && 
+                       shortWindowOrders <= DROUGHT_DETECTION.max_orders_short_window;
+  const longDrought = longWindowHolds >= DROUGHT_DETECTION.min_holds_long_window && 
+                      longWindowOrders <= DROUGHT_DETECTION.max_orders_long_window;
+  
+  const isActive = shortDrought || longDrought;
+  
+  let reason: string | undefined;
+  if (shortDrought && longDrought) {
+    reason = `sustained_drought_${DROUGHT_DETECTION.long_window_hours}h`;
+  } else if (shortDrought) {
+    reason = `short_drought_${DROUGHT_DETECTION.short_window_hours}h`;
+  } else if (longDrought) {
+    reason = `long_drought_${DROUGHT_DETECTION.long_window_hours}h`;
+  }
+  
+  return {
+    isActive,
+    shortWindowHolds,
+    shortWindowOrders,
+    longWindowHolds,
+    longWindowOrders,
+    triggeredAt: isActive ? now.toISOString() : undefined,
+    reason,
+  };
+}
+
+// Check drought safety conditions
+async function checkDroughtSafety(supabase: any, accountId: string, startingCash: number): Promise<{ safe: boolean; reason?: string }> {
+  // Get current account state
+  const { data: account } = await supabase
+    .from('paper_accounts')
+    .select('cash')
+    .eq('id', accountId)
+    .single();
+  
+  if (!account) return { safe: false, reason: 'no_account' };
+  
+  const cashPct = (account.cash / startingCash) * 100;
+  
+  // Check cash requirement
+  if (cashPct < DROUGHT_SAFETY.min_cash_pct) {
+    return { safe: false, reason: `low_cash_${cashPct.toFixed(0)}pct` };
+  }
+  
+  // Check recent trades in drought mode
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { data: recentOrders } = await supabase
+    .from('paper_orders')
+    .select('id, tags')
+    .gte('created_at', oneHourAgo)
+    .eq('status', 'filled');
+  
+  const droughtOrders = (recentOrders ?? []).filter((o: { id: string; tags: unknown }) => (o.tags as Record<string, boolean>)?.drought_mode === true);
+  if (droughtOrders.length >= DROUGHT_SAFETY.max_trades_per_hour) {
+    return { safe: false, reason: `hourly_cap_${droughtOrders.length}` };
+  }
+  
+  return { safe: true };
+}
+
+// ===========================================================================
+// GATE FAILURE ANALYSIS
+// ===========================================================================
+function analyzeGateFailures(
+  agent: Agent,
+  market: MarketData,
+  thresholds: typeof BASELINE_THRESHOLDS
+): GateFailure[] {
+  const failures: GateFailure[] = [];
+  const strategy = agent.strategy_template;
+  
+  if (strategy === 'trend_pullback') {
+    // Check trend gate
+    const slopeAbs = Math.abs(market.ema_50_slope);
+    if (slopeAbs < thresholds.trend_threshold) {
+      failures.push({
+        gate: 'trend',
+        actual: slopeAbs,
+        threshold: thresholds.trend_threshold,
+        margin: slopeAbs - thresholds.trend_threshold,
+      });
+    }
+    
+    // Check pullback gate
+    const changeAbs = Math.abs(market.change_24h);
+    if (changeAbs > thresholds.pullback_pct) {
+      failures.push({
+        gate: 'pullback',
+        actual: changeAbs,
+        threshold: thresholds.pullback_pct,
+        margin: thresholds.pullback_pct - changeAbs,
+      });
+    }
+  }
+  
+  if (strategy === 'mean_reversion') {
+    // Check RSI-like gate (using 24h change)
+    const changeAbs = Math.abs(market.change_24h);
+    if (changeAbs < thresholds.rsi_threshold) {
+      failures.push({
+        gate: 'rsi',
+        actual: changeAbs,
+        threshold: thresholds.rsi_threshold,
+        margin: changeAbs - thresholds.rsi_threshold,
+      });
+    }
+  }
+  
+  if (strategy === 'breakout') {
+    // Check volatility contraction gate
+    if (market.atr_ratio >= thresholds.vol_contraction) {
+      failures.push({
+        gate: 'vol_contraction',
+        actual: market.atr_ratio,
+        threshold: thresholds.vol_contraction,
+        margin: thresholds.vol_contraction - market.atr_ratio,
+      });
+    }
+  }
+  
+  return failures;
+}
+
+// Find nearest passing gate (closest to threshold)
+function findNearestPass(failures: GateFailure[]): GateFailure | undefined {
+  if (failures.length === 0) return undefined;
+  
+  // Sort by margin (closest to 0 = closest to passing)
+  return failures.sort((a, b) => Math.abs(a.margin) - Math.abs(b.margin))[0];
+}
+
+// ===========================================================================
+// STRATEGY DECISION LOGIC
+// ===========================================================================
 function makeDecision(
   agent: Agent,
   market: MarketData,
   hasPosition: boolean,
   positionQty: number,
   testMode: boolean,
+  droughtMode: boolean,
   agentTradeCount: number = 0
-): { decision: Decision; reasons: string[]; confidence: number; exitReason?: string } {
+): { 
+  decision: Decision; 
+  reasons: string[]; 
+  confidence: number; 
+  exitReason?: string;
+  gateFailures: GateFailure[];
+  nearestPass?: GateFailure;
+} {
   const reasons: string[] = [];
   let confidence = 0.5;
   let exitReason: string | undefined;
@@ -152,38 +365,49 @@ function makeDecision(
   const genes = agent.genes;
   
   // Threshold selection priority:
-  // 1. Test mode: use TEST_MODE_THRESHOLDS (loose, for pipeline validation)
-  // 2. Normal mode: use agent genes if set, else BASELINE_THRESHOLDS (sensible crypto defaults)
-  const thresholds = testMode 
-    ? TEST_MODE_THRESHOLDS 
-    : {
-        trend_threshold: genes.trend_threshold ?? BASELINE_THRESHOLDS.trend_threshold,
-        pullback_pct: genes.pullback_pct ?? BASELINE_THRESHOLDS.pullback_pct,
-        rsi_threshold: genes.rsi_threshold ?? BASELINE_THRESHOLDS.rsi_threshold,
-        vol_contraction: genes.vol_contraction ?? BASELINE_THRESHOLDS.vol_contraction,
-        vol_expansion_exit: genes.vol_expansion_exit ?? BASELINE_THRESHOLDS.vol_expansion_exit,
-      };
+  // 1. Test mode: use TEST_MODE_THRESHOLDS
+  // 2. Drought mode: use DROUGHT_THRESHOLDS
+  // 3. Normal mode: use agent genes or BASELINE_THRESHOLDS
+  let thresholds: typeof BASELINE_THRESHOLDS;
+  if (testMode) {
+    thresholds = TEST_MODE_THRESHOLDS;
+  } else if (droughtMode) {
+    thresholds = DROUGHT_THRESHOLDS;
+  } else {
+    thresholds = {
+      trend_threshold: genes.trend_threshold ?? BASELINE_THRESHOLDS.trend_threshold,
+      pullback_pct: genes.pullback_pct ?? BASELINE_THRESHOLDS.pullback_pct,
+      rsi_threshold: genes.rsi_threshold ?? BASELINE_THRESHOLDS.rsi_threshold,
+      vol_contraction: genes.vol_contraction ?? BASELINE_THRESHOLDS.vol_contraction,
+      vol_expansion_exit: genes.vol_expansion_exit ?? BASELINE_THRESHOLDS.vol_expansion_exit,
+      min_confidence: BASELINE_THRESHOLDS.min_confidence,
+      max_confidence: BASELINE_THRESHOLDS.max_confidence,
+    };
+  }
+  
+  // Analyze gate failures for telemetry
+  const gateFailures = analyzeGateFailures(agent, market, thresholds);
+  const nearestPass = findNearestPass(gateFailures);
   
   // Trend Pullback Strategy
   if (strategy === 'trend_pullback') {
-    // Use >= for slope comparison to catch edge cases
     const emaTrending = Math.abs(market.ema_50_slope) >= thresholds.trend_threshold;
-    // FIX: Use absolute value for pullback - negative change IS a pullback in uptrend
     const pullback = Math.abs(market.change_24h) <= thresholds.pullback_pct;
     
     if (emaTrending && market.ema_50_slope > 0 && pullback && !hasPosition) {
       reasons.push('ema_trending_up', 'pullback_detected');
       if (testMode) reasons.push('test_mode');
+      if (droughtMode) reasons.push('drought_mode');
       const rawConfidence = 0.6 + Math.min(0.2, Math.abs(market.ema_50_slope) * 5);
       confidence = calibrateConfidence(rawConfidence, agentTradeCount);
-      return { decision: 'buy', reasons, confidence };
+      return { decision: 'buy', reasons, confidence, gateFailures, nearestPass };
     }
     
     if (hasPosition && market.ema_50_slope < 0) {
       reasons.push('trend_reversal');
       exitReason = 'trend_reversal';
       confidence = calibrateConfidence(0.65, agentTradeCount);
-      return { decision: 'sell', reasons, confidence, exitReason };
+      return { decision: 'sell', reasons, confidence, exitReason, gateFailures, nearestPass };
     }
   }
   
@@ -195,16 +419,17 @@ function makeDecision(
     if (oversold && !hasPosition && regime === 'ranging') {
       reasons.push('oversold', 'ranging_regime');
       if (testMode) reasons.push('test_mode');
+      if (droughtMode) reasons.push('drought_mode');
       const rawConfidence = 0.55 + Math.min(0.2, Math.abs(market.change_24h) / 20);
       confidence = calibrateConfidence(rawConfidence, agentTradeCount);
-      return { decision: 'buy', reasons, confidence };
+      return { decision: 'buy', reasons, confidence, gateFailures, nearestPass };
     }
     
     if (overbought && hasPosition) {
       reasons.push('overbought', 'take_profit');
       exitReason = 'take_profit';
       confidence = calibrateConfidence(0.6, agentTradeCount);
-      return { decision: 'sell', reasons, confidence, exitReason };
+      return { decision: 'sell', reasons, confidence, exitReason, gateFailures, nearestPass };
     }
   }
   
@@ -215,21 +440,22 @@ function makeDecision(
     if (volatilityContraction && market.ema_50_slope > 0 && !hasPosition) {
       reasons.push('volatility_contraction', 'upward_bias');
       if (testMode) reasons.push('test_mode');
+      if (droughtMode) reasons.push('drought_mode');
       const rawConfidence = 0.5 + Math.min(0.15, (1 - market.atr_ratio) * 0.5);
       confidence = calibrateConfidence(rawConfidence, agentTradeCount);
-      return { decision: 'buy', reasons, confidence };
+      return { decision: 'buy', reasons, confidence, gateFailures, nearestPass };
     }
     
     if (hasPosition && market.atr_ratio > (thresholds.vol_expansion_exit ?? 1.4)) {
       reasons.push('volatility_spike', 'exit_breakout');
       exitReason = 'exit_breakout';
       confidence = calibrateConfidence(0.55, agentTradeCount);
-      return { decision: 'sell', reasons, confidence, exitReason };
+      return { decision: 'sell', reasons, confidence, exitReason, gateFailures, nearestPass };
     }
   }
   
   reasons.push('no_signal');
-  return { decision: 'hold', reasons, confidence: 0.5 };
+  return { decision: 'hold', reasons, confidence: 0.5, gateFailures, nearestPass };
 }
 
 // Generate pattern ID from decision context
@@ -257,7 +483,6 @@ Deno.serve(async (req) => {
   const cycleId = crypto.randomUUID();
   
   console.log(`[trade-cycle] Starting cycle ${cycleId}`);
-  console.log(`[trade-cycle] THRESHOLDS: trend=${BASELINE_THRESHOLDS.trend_threshold}, pullback=${BASELINE_THRESHOLDS.pullback_pct}, rsi=${BASELINE_THRESHOLDS.rsi_threshold}, vol_contraction=${BASELINE_THRESHOLDS.vol_contraction}`);
 
   try {
     // 1. Check system state
@@ -275,7 +500,6 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Must be running and paper mode
     if (systemState.status !== 'running') {
       console.log(`[trade-cycle] System not running (${systemState.status}), skipping`);
       return new Response(
@@ -292,7 +516,14 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 2. Get active agents
+    // 2. Detect drought state
+    const droughtState = await detectDrought(supabase);
+    
+    if (droughtState.isActive) {
+      console.log(`[trade-cycle] DROUGHT MODE ACTIVE: ${droughtState.reason} (holds_6h=${droughtState.shortWindowHolds}, orders_6h=${droughtState.shortWindowOrders})`);
+    }
+
+    // 3. Get active agents
     const { data: agents, error: agentsError } = await supabase
       .from('agents')
       .select('*')
@@ -307,8 +538,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 3. Get market data for ALL symbols (dynamic universe)
-    // Only include fresh data (updated within last 5 minutes)
+    // 4. Get market data
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     
     const { data: marketDataList, error: marketError } = await supabase
@@ -332,13 +562,12 @@ Deno.serve(async (req) => {
       marketBySymbol.set(m.symbol, m as MarketData);
     }
     
-    // Get all available symbols for rotation
     const availableSymbols = marketDataList.map(m => m.symbol);
 
-    // 4. Get paper account for position checks
+    // 5. Get paper account
     const { data: paperAccount } = await supabase
       .from('paper_accounts')
-      .select('id, cash')
+      .select('id, cash, starting_cash')
       .limit(1)
       .single();
 
@@ -350,7 +579,22 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 5. Get current positions
+    // 6. Check drought safety if in drought mode
+    let droughtModeActive = droughtState.isActive;
+    let droughtBlocked = false;
+    let droughtBlockReason: string | undefined;
+    
+    if (droughtModeActive) {
+      const safety = await checkDroughtSafety(supabase, paperAccount.id, paperAccount.starting_cash);
+      if (!safety.safe) {
+        droughtModeActive = false;
+        droughtBlocked = true;
+        droughtBlockReason = safety.reason;
+        console.log(`[trade-cycle] Drought mode BLOCKED: ${safety.reason}`);
+      }
+    }
+
+    // 7. Get current positions
     const { data: positions } = await supabase
       .from('paper_positions')
       .select('symbol, qty')
@@ -361,24 +605,19 @@ Deno.serve(async (req) => {
       positionBySymbol.set(p.symbol, p.qty);
     }
 
-    // 6. Pick one agent for this cycle (round-robin by cycle time)
+    // 8. Pick one agent for this cycle
     const agentIndex = Math.floor(Date.now() / 60000) % agents.length;
     const agent = agents[agentIndex] as Agent;
     
-    // 7. Pick symbols using deterministic rotation
-    // Each agent evaluates SYMBOLS_PER_AGENT symbols per cycle for faster opportunity discovery
-    // Symbol selection rotates based on agent ID hash + time bucket
-    const SYMBOLS_PER_AGENT = 3; // Increased for faster validation
-    const TIME_BUCKET_MINS = 5; // Rotate every 5 minutes
+    // 9. Pick symbols using deterministic rotation
+    const SYMBOLS_PER_AGENT = 3;
+    const TIME_BUCKET_MINS = 5;
     
-    // Simple deterministic hash from agent ID (sum of char codes)
     const agentHash = agent.id.split('').reduce((sum, c) => sum + c.charCodeAt(0), 0);
     const timeBucket = Math.floor(Date.now() / (TIME_BUCKET_MINS * 60000));
     
-    // Get SYMBOLS_PER_AGENT symbols deterministically (spaced out across universe)
     const symbolsToEvaluate: string[] = [];
     for (let i = 0; i < SYMBOLS_PER_AGENT && i < availableSymbols.length; i++) {
-      // Space symbols out across the universe instead of consecutive picks
       const offset = Math.floor(availableSymbols.length / SYMBOLS_PER_AGENT) * i;
       const symbolIndex = (agentHash + timeBucket + offset) % availableSymbols.length;
       const sym = availableSymbols[symbolIndex];
@@ -389,20 +628,7 @@ Deno.serve(async (req) => {
     
     console.log(`[trade-cycle] Agent ${agent.id.substring(0, 8)} evaluating ${symbolsToEvaluate.length} symbols: ${symbolsToEvaluate.join(', ')}`);
     
-    // Store all decisions to pick the best actionable one
-    interface DecisionCandidate {
-      symbol: string;
-      market: MarketData;
-      decision: Decision;
-      reasons: string[];
-      confidence: number;
-      exitReason?: string;
-      positionQty: number;
-    }
-    
-    const candidates: DecisionCandidate[] = [];
-    
-    // 7b. Get system config for test mode flag (once, outside loop)
+    // Get test mode flag
     const { data: configData } = await supabase
       .from('system_config')
       .select('config')
@@ -411,11 +637,15 @@ Deno.serve(async (req) => {
     
     const testMode = configData?.config?.strategy_test_mode === true;
     
-    if (testMode) {
-      console.log('[trade-cycle] TEST MODE ACTIVE - using loosened thresholds');
-    }
+    const thresholdsUsed = testMode 
+      ? 'test_mode' 
+      : droughtModeActive 
+        ? 'drought_mode' 
+        : 'baseline';
     
-    // 7c. Get agent's trade count for confidence calibration (once, outside loop)
+    console.log(`[trade-cycle] Mode: ${thresholdsUsed} | Thresholds: trend=${droughtModeActive ? DROUGHT_THRESHOLDS.trend_threshold : BASELINE_THRESHOLDS.trend_threshold}`);
+    
+    // Get agent's trade count
     const { data: agentTradeData } = await supabase
       .from('paper_orders')
       .select('id')
@@ -425,14 +655,27 @@ Deno.serve(async (req) => {
     
     const MAX_MARKET_AGE_SECONDS = 120;
     
-    // Evaluate each symbol and collect candidates
+    interface DecisionCandidate {
+      symbol: string;
+      market: MarketData;
+      decision: Decision;
+      reasons: string[];
+      confidence: number;
+      exitReason?: string;
+      positionQty: number;
+      gateFailures: GateFailure[];
+      nearestPass?: GateFailure;
+    }
+    
+    const candidates: DecisionCandidate[] = [];
+    
+    // Evaluate each symbol
     for (const sym of symbolsToEvaluate) {
       const mkt = marketBySymbol.get(sym);
       if (!mkt) continue;
       
       const age = getDataAge(mkt.updated_at);
       
-      // Skip stale data for this symbol
       if (age > MAX_MARKET_AGE_SECONDS) {
         console.log(`[trade-cycle] ${sym} data stale (${age}s), skipping`);
         continue;
@@ -442,7 +685,7 @@ Deno.serve(async (req) => {
       const posQty = positionBySymbol.get(sym) ?? 0;
       const hasPos = posQty > 0;
       
-      const result = makeDecision(agent, mkt, hasPos, posQty, testMode, agentTradeCount);
+      const result = makeDecision(agent, mkt, hasPos, posQty, testMode, droughtModeActive, agentTradeCount);
       
       candidates.push({
         symbol: sym,
@@ -452,20 +695,41 @@ Deno.serve(async (req) => {
         confidence: result.confidence,
         exitReason: result.exitReason,
         positionQty: posQty,
+        gateFailures: result.gateFailures,
+        nearestPass: result.nearestPass,
       });
       
       console.log(`[trade-cycle] ${sym}: ${result.decision} (conf=${result.confidence.toFixed(2)}, reasons=${result.reasons.join(',')})`);
     }
     
-    // Pick the best actionable candidate (buy/sell with highest confidence)
+    // Pick best actionable candidate
     const actionableCandidates = candidates.filter(c => c.decision !== 'hold');
     const bestCandidate = actionableCandidates.sort((a, b) => b.confidence - a.confidence)[0];
     
-    // If no actionable candidates, log HOLD with minimal summary (reduces DB payload)
+    // Aggregate gate failure telemetry
+    const allGateFailures: Record<string, { count: number; avgMargin: number }> = {};
+    let nearestPassGlobal: GateFailure | undefined = undefined;
+    
+    for (const c of candidates) {
+      for (const f of c.gateFailures) {
+        if (!allGateFailures[f.gate]) {
+          allGateFailures[f.gate] = { count: 0, avgMargin: 0 };
+        }
+        allGateFailures[f.gate].count++;
+        allGateFailures[f.gate].avgMargin = 
+          (allGateFailures[f.gate].avgMargin * (allGateFailures[f.gate].count - 1) + f.margin) / 
+          allGateFailures[f.gate].count;
+      }
+      
+      if (c.nearestPass && (!nearestPassGlobal || Math.abs(c.nearestPass.margin) < Math.abs(nearestPassGlobal.margin))) {
+        nearestPassGlobal = c.nearestPass;
+      }
+    }
+    
+    // If no actionable candidates, log HOLD with telemetry
     if (!bestCandidate) {
       console.log(`[trade-cycle] All ${symbolsToEvaluate.length} symbols HOLD`);
       
-      // Summarize hold reasons (avoid logging full market data for every HOLD)
       const holdReasons: Record<string, number> = {};
       for (const c of candidates) {
         for (const r of c.reasons) {
@@ -489,12 +753,24 @@ Deno.serve(async (req) => {
           all_hold: true,
           top_hold_reasons: topHoldReasons,
           mode: 'paper',
-          thresholds_used: {
-            trend: BASELINE_THRESHOLDS.trend_threshold,
-            pullback: BASELINE_THRESHOLDS.pullback_pct,
-            rsi: BASELINE_THRESHOLDS.rsi_threshold,
-            vol_contraction: BASELINE_THRESHOLDS.vol_contraction,
+          thresholds_used: thresholdsUsed,
+          drought_state: {
+            active: droughtState.isActive,
+            blocked: droughtBlocked,
+            block_reason: droughtBlockReason,
+            reason: droughtState.reason,
+            holds_6h: droughtState.shortWindowHolds,
+            orders_6h: droughtState.shortWindowOrders,
+            holds_48h: droughtState.longWindowHolds,
+            orders_48h: droughtState.longWindowOrders,
           },
+          gate_failures: allGateFailures,
+          nearest_pass: nearestPassGlobal ? {
+            gate: nearestPassGlobal.gate,
+            actual: nearestPassGlobal.actual,
+            threshold: nearestPassGlobal.threshold,
+            margin: nearestPassGlobal.margin,
+          } : null,
         },
       });
       
@@ -504,6 +780,7 @@ Deno.serve(async (req) => {
           decision: 'hold',
           agent_id: agent.id,
           symbols_evaluated: symbolsToEvaluate,
+          drought_mode: droughtModeActive,
           duration_ms: Date.now() - startTime,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -511,13 +788,16 @@ Deno.serve(async (req) => {
     }
     
     // Use the best candidate
-    const { symbol, market, decision, reasons, confidence, exitReason, positionQty } = bestCandidate;
+    const { symbol, market, decision, reasons, confidence, exitReason, positionQty, gateFailures } = bestCandidate;
     const dataAge = getDataAge(market.updated_at);
     const regime = getRegime(market);
     
-    // Calculate qty
+    // Calculate qty with drought mode adjustment
     const baseQty = symbol === 'BTC-USD' ? 0.0001 : 0.001;
-    const plannedQty = decision === 'sell' ? Math.min(baseQty, positionQty) : baseQty;
+    const sizeMultiplier = droughtModeActive ? DROUGHT_SAFETY.size_multiplier : 1.0;
+    const plannedQty = decision === 'sell' 
+      ? Math.min(baseQty * sizeMultiplier, positionQty) 
+      : baseQty * sizeMultiplier;
     
     const patternId = generatePatternId(agent.strategy_template, symbol, regime, reasons);
     
@@ -529,6 +809,7 @@ Deno.serve(async (req) => {
       confidence,
       pattern_id: patternId,
       test_mode: testMode,
+      drought_mode: droughtModeActive,
       market_snapshot: {
         price: market.price,
         change_24h: market.change_24h,
@@ -538,7 +819,6 @@ Deno.serve(async (req) => {
       },
     };
 
-    // Build per-symbol evaluation summary (only for actionable trades, capped to top 5)
     const evaluations = candidates
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, 5)
@@ -547,6 +827,7 @@ Deno.serve(async (req) => {
         decision: c.decision,
         reasons: c.reasons,
         confidence: c.confidence,
+        gate_failures: c.gateFailures,
         market: {
           price: c.market.price,
           change_24h: c.market.change_24h,
@@ -556,7 +837,6 @@ Deno.serve(async (req) => {
         },
       }));
 
-    // Log decision to control_events (full details only for actual trades)
     await supabase.from('control_events').insert({
       action: 'trade_decision',
       metadata: {
@@ -567,15 +847,17 @@ Deno.serve(async (req) => {
         decision,
         qty: plannedQty,
         symbols_evaluated: symbolsToEvaluate.length,
-        evaluations, // Top 5 candidates only
+        evaluations,
         ...tags,
         mode: 'paper',
-        thresholds_used: {
-          trend: BASELINE_THRESHOLDS.trend_threshold,
-          pullback: BASELINE_THRESHOLDS.pullback_pct,
-          rsi: BASELINE_THRESHOLDS.rsi_threshold,
-          vol_contraction: BASELINE_THRESHOLDS.vol_contraction,
+        thresholds_used: thresholdsUsed,
+        drought_state: {
+          active: droughtModeActive,
+          blocked: droughtBlocked,
+          block_reason: droughtBlockReason,
+          reason: droughtState.reason,
         },
+        gate_failures: gateFailures,
       },
     });
 
@@ -596,7 +878,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`[trade-cycle] BEST: ${decision.toUpperCase()} ${finalQty} ${symbol} | conf=${confidence.toFixed(2)} | reasons=${reasons.join(',')}`);
+    console.log(`[trade-cycle] BEST: ${decision.toUpperCase()} ${finalQty} ${symbol} | conf=${confidence.toFixed(2)} | drought=${droughtModeActive} | reasons=${reasons.join(',')}`);
 
     // Submit to trade-execute
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
@@ -630,6 +912,7 @@ Deno.serve(async (req) => {
         symbol,
         qty: finalQty,
         symbols_evaluated: symbolsToEvaluate,
+        drought_mode: droughtModeActive,
         execute_result: executeResult,
         duration_ms: Date.now() - startTime,
       }),

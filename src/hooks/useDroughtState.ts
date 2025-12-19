@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
 export interface DroughtState {
+  detected: boolean;
   isActive: boolean;
   shortWindowHolds: number;
   shortWindowOrders: number;
@@ -21,50 +22,14 @@ export interface DroughtState {
     threshold: number;
     margin: number;
   };
+  equityDrawdownPct?: number;
 }
-
-const DROUGHT_DETECTION = {
-  min_holds_short_window: 20,
-  min_holds_long_window: 80,
-  max_orders_short_window: 3,
-  max_orders_long_window: 10,
-  short_window_hours: 6,
-  long_window_hours: 48,
-};
 
 export function useDroughtState() {
   return useQuery({
     queryKey: ['drought-state'],
     queryFn: async (): Promise<DroughtState> => {
-      const now = new Date();
-      const shortWindowStart = new Date(now.getTime() - DROUGHT_DETECTION.short_window_hours * 60 * 60 * 1000).toISOString();
-      const longWindowStart = new Date(now.getTime() - DROUGHT_DETECTION.long_window_hours * 60 * 60 * 1000).toISOString();
-      
-      // Use count-only queries to avoid dragging rows over network
-      const [shortHoldsResult, longHoldsResult, shortOrdersResult, longOrdersResult] = await Promise.all([
-        supabase
-          .from('control_events')
-          .select('*', { count: 'exact', head: true })
-          .eq('action', 'trade_decision')
-          .gte('triggered_at', shortWindowStart),
-        supabase
-          .from('control_events')
-          .select('*', { count: 'exact', head: true })
-          .eq('action', 'trade_decision')
-          .gte('triggered_at', longWindowStart),
-        supabase
-          .from('paper_orders')
-          .select('*', { count: 'exact', head: true })
-          .gte('created_at', shortWindowStart)
-          .eq('status', 'filled'),
-        supabase
-          .from('paper_orders')
-          .select('*', { count: 'exact', head: true })
-          .gte('created_at', longWindowStart)
-          .eq('status', 'filled'),
-      ]);
-      
-      // Get most recent decision for telemetry data
+      // Get most recent decision for complete drought state (single source of truth)
       const { data: latestDecisions } = await supabase
         .from('control_events')
         .select('metadata')
@@ -72,48 +37,36 @@ export function useDroughtState() {
         .order('triggered_at', { ascending: false })
         .limit(1);
       
-      const shortHolds = shortHoldsResult.count ?? 0;
-      const longHolds = longHoldsResult.count ?? 0;
-      const shortWindowOrders = shortOrdersResult.count ?? 0;
-      const longWindowOrders = longOrdersResult.count ?? 0;
-      
-      // Determine drought state
-      const shortDrought = shortHolds >= DROUGHT_DETECTION.min_holds_short_window && 
-                           shortWindowOrders <= DROUGHT_DETECTION.max_orders_short_window;
-      const longDrought = longHolds >= DROUGHT_DETECTION.min_holds_long_window && 
-                          longWindowOrders <= DROUGHT_DETECTION.max_orders_long_window;
-      
-      const isActive = shortDrought || longDrought;
-      
-      let reason: string | undefined;
-      if (shortDrought && longDrought) {
-        reason = 'sustained_drought';
-      } else if (shortDrought) {
-        reason = 'short_drought_6h';
-      } else if (longDrought) {
-        reason = 'long_drought_48h';
-      }
-      
-      // Get telemetry from most recent decision
+      // Extract unified drought state from latest decision metadata
       const latestMeta = (latestDecisions?.[0]?.metadata ?? {}) as Record<string, unknown>;
-      const gateFailures = (latestMeta.gate_failures ?? {}) as Record<string, { count: number; avgMargin: number }>;
-      const nearestPass = latestMeta.nearest_pass as DroughtState['nearestPass'];
       const droughtState = latestMeta.drought_state as { 
+        detected?: boolean;
+        active?: boolean;
         blocked?: boolean; 
         block_reason?: string;
         killed?: boolean;
         kill_reason?: string;
         cooldown_until?: string;
         override?: 'auto' | 'force_off' | 'force_on';
+        reason?: string;
+        holds_6h?: number;
+        orders_6h?: number;
+        holds_48h?: number;
+        orders_48h?: number;
+        equity_drawdown_pct?: number;
       } | undefined;
       
+      const gateFailures = (latestMeta.gate_failures ?? {}) as Record<string, { count: number; avgMargin: number }>;
+      const nearestPass = latestMeta.nearest_pass as DroughtState['nearestPass'];
+      
       return {
-        isActive,
-        shortWindowHolds: shortHolds,
-        shortWindowOrders,
-        longWindowHolds: longHolds,
-        longWindowOrders,
-        reason,
+        detected: droughtState?.detected ?? false,
+        isActive: droughtState?.active ?? false,
+        shortWindowHolds: droughtState?.holds_6h ?? 0,
+        shortWindowOrders: droughtState?.orders_6h ?? 0,
+        longWindowHolds: droughtState?.holds_48h ?? 0,
+        longWindowOrders: droughtState?.orders_48h ?? 0,
+        reason: droughtState?.reason,
         blocked: droughtState?.blocked ?? false,
         blockReason: droughtState?.block_reason,
         killed: droughtState?.killed ?? false,
@@ -122,6 +75,7 @@ export function useDroughtState() {
         override: droughtState?.override ?? 'auto',
         gateFailures,
         nearestPass,
+        equityDrawdownPct: droughtState?.equity_drawdown_pct,
       };
     },
     refetchInterval: 30000,

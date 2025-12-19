@@ -65,7 +65,7 @@ export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
     if (droughtState.killed) return 'text-destructive';
     if (droughtState.blocked) return 'text-amber-500';
     if (droughtState.isActive) return 'text-primary';
-    return 'text-success';
+    return 'text-emerald-500';
   };
   
   const getStatusLabel = () => {
@@ -145,6 +145,18 @@ export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
           {droughtState.cooldownUntil && (
             <div className="text-[10px] text-amber-500 font-mono">
               ⏱ Cooldown until {new Date(droughtState.cooldownUntil).toLocaleTimeString()}
+            </div>
+          )}
+          
+          {/* Equity drawdown (true P&L based) */}
+          {droughtState.equityDrawdownPct !== undefined && (
+            <div className={cn(
+              "text-[10px] font-mono",
+              droughtState.equityDrawdownPct > 1.5 ? 'text-amber-500' : 
+              droughtState.equityDrawdownPct > 0 ? 'text-muted-foreground' : 'text-emerald-500'
+            )}>
+              Equity Drawdown: {droughtState.equityDrawdownPct.toFixed(2)}%
+              {droughtState.equityDrawdownPct > 1.5 && ' ⚠️ approaching kill'}
             </div>
           )}
           

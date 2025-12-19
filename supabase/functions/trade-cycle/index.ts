@@ -237,6 +237,7 @@ async function detectDrought(supabase: any): Promise<DroughtState> {
 // DROUGHT MODE RESOLVER - Single source of truth for drought state
 // ===========================================================================
 interface ResolvedDroughtState {
+  detected: boolean;
   active: boolean;
   blocked: boolean;
   blockReason?: string;
@@ -245,24 +246,58 @@ interface ResolvedDroughtState {
   cooldownUntil?: string;
   override: 'auto' | 'force_off' | 'force_on';
   detection: DroughtState;
+  equityDrawdownPct?: number;
+}
+
+// Compute true equity = cash + sum(position_qty * current_price)
+async function computeEquity(
+  supabase: any,
+  accountId: string,
+  marketBySymbol: Map<string, MarketData>
+): Promise<{ cash: number; positionsValue: number; equity: number }> {
+  const { data: account } = await supabase
+    .from('paper_accounts')
+    .select('cash')
+    .eq('id', accountId)
+    .single();
+  
+  const cash = account?.cash ?? 0;
+  
+  const { data: positions } = await supabase
+    .from('paper_positions')
+    .select('symbol, qty')
+    .eq('account_id', accountId);
+  
+  let positionsValue = 0;
+  for (const pos of positions ?? []) {
+    const market = marketBySymbol.get(pos.symbol);
+    if (market && pos.qty > 0) {
+      positionsValue += pos.qty * market.price;
+    }
+  }
+  
+  return { cash, positionsValue, equity: cash + positionsValue };
 }
 
 async function resolveDroughtMode(
   supabase: any,
   accountId: string,
   startingCash: number,
-  marketData: MarketData[]
+  marketData: MarketData[],
+  marketBySymbol: Map<string, MarketData>,
+  evaluatedSymbols: string[] = []
 ): Promise<ResolvedDroughtState> {
   // 1. Get detection state
   const detection = await detectDrought(supabase);
   
-  // 2. Get system config for override + cooldown state
+  // 2. Get system config for override + cooldown state - MUST select id
   const { data: configData } = await supabase
     .from('system_config')
-    .select('config')
+    .select('id, config')
     .limit(1)
     .single();
   
+  const configId = configData?.id;
   const config = configData?.config ?? {};
   const override = (config.drought_override ?? 'auto') as 'auto' | 'force_off' | 'force_on';
   const cooldownUntil = config.drought_cooldown_until as string | undefined;
@@ -274,6 +309,7 @@ async function resolveDroughtMode(
   // 4. Check if force_off
   if (override === 'force_off') {
     return {
+      detected: detection.isActive,
       active: false,
       blocked: true,
       blockReason: 'force_off_override',
@@ -286,6 +322,7 @@ async function resolveDroughtMode(
   // 5. Check cooldown
   if (inCooldown) {
     return {
+      detected: detection.isActive,
       active: false,
       blocked: true,
       blockReason: 'cooldown_active',
@@ -297,119 +334,118 @@ async function resolveDroughtMode(
   }
   
   // 6. Determine if should be active (auto or force_on)
-  let shouldBeActive = override === 'force_on' || detection.isActive;
+  const shouldBeActive = override === 'force_on' || detection.isActive;
   
-  // 7. Safety checks (can kill even force_on)
-  const { data: account } = await supabase
-    .from('paper_accounts')
-    .select('cash')
-    .eq('id', accountId)
-    .single();
+  // 7. Compute TRUE equity (not just cash)
+  const { cash, positionsValue, equity } = await computeEquity(supabase, accountId, marketBySymbol);
+  const equityDrawdownPct = ((startingCash - equity) / startingCash) * 100;
+  const cashPct = (cash / startingCash) * 100;
   
-  if (!account) {
-    return {
-      active: false,
-      blocked: true,
-      blockReason: 'no_account',
-      killed: false,
-      override,
-      detection,
-    };
-  }
-  
-  const cashPct = (account.cash / startingCash) * 100;
-  const drawdownPct = 100 - cashPct;
-  
-  // Kill check: drawdown
-  if (shouldBeActive && drawdownPct > DROUGHT_SAFETY.max_drawdown_pct) {
-    // Set cooldown
+  // 8. Kill check: equity drawdown (true drawdown, not cash depletion)
+  if (shouldBeActive && configId && equityDrawdownPct > DROUGHT_SAFETY.max_drawdown_pct) {
     const cooldownEnd = new Date(now.getTime() + DROUGHT_SAFETY.kill_cooldown_hours * 60 * 60 * 1000).toISOString();
+    
     await supabase
       .from('system_config')
       .update({ 
         config: { ...config, drought_cooldown_until: cooldownEnd },
         updated_at: now.toISOString(),
       })
-      .eq('id', configData.id);
+      .eq('id', configId);
     
-    // Log kill event
     await supabase.from('control_events').insert({
       action: 'drought_kill',
       metadata: {
-        reason: 'drawdown',
-        drawdown_pct: drawdownPct,
+        reason: 'equity_drawdown',
+        equity,
+        starting_cash: startingCash,
+        drawdown_pct: equityDrawdownPct,
         threshold: DROUGHT_SAFETY.max_drawdown_pct,
         cooldown_until: cooldownEnd,
       },
     });
     
     return {
+      detected: detection.isActive,
       active: false,
       blocked: false,
       killed: true,
-      killReason: `drawdown_${drawdownPct.toFixed(1)}pct`,
+      killReason: `equity_drawdown_${equityDrawdownPct.toFixed(1)}pct`,
       cooldownUntil: cooldownEnd,
       override,
       detection,
+      equityDrawdownPct,
     };
   }
   
-  // Kill check: volatility spike
-  const avgAtr = marketData.length > 0 
-    ? marketData.reduce((sum, m) => sum + m.atr_ratio, 0) / marketData.length 
-    : 1;
+  // 9. Kill check: volatility spike on ANY evaluated symbol (not avg)
+  const symbolsToCheck = evaluatedSymbols.length > 0 
+    ? evaluatedSymbols 
+    : marketData.slice(0, 3).map(m => m.symbol);
   
-  if (shouldBeActive && avgAtr > DROUGHT_SAFETY.vol_spike_atr) {
-    // Soft exit - no cooldown, just disable
-    return {
-      active: false,
-      blocked: false,
-      killed: true,
-      killReason: `vol_spike_${avgAtr.toFixed(2)}`,
-      override,
-      detection,
-    };
+  for (const sym of symbolsToCheck) {
+    const market = marketBySymbol.get(sym);
+    if (market && market.atr_ratio > DROUGHT_SAFETY.vol_spike_atr) {
+      return {
+        detected: detection.isActive,
+        active: false,
+        blocked: false,
+        killed: true,
+        killReason: `vol_spike_${sym}_${market.atr_ratio.toFixed(2)}`,
+        override,
+        detection,
+        equityDrawdownPct,
+      };
+    }
   }
   
-  // Block check: low cash
+  // 10. Block check: low cash (legitimate - can't buy with no cash)
   if (shouldBeActive && cashPct < DROUGHT_SAFETY.min_cash_pct) {
     return {
+      detected: detection.isActive,
       active: false,
       blocked: true,
       blockReason: `low_cash_${cashPct.toFixed(0)}pct`,
       killed: false,
       override,
       detection,
+      equityDrawdownPct,
     };
   }
   
-  // Block check: hourly cap
+  // 11. Block check: hourly cap for DROUGHT TRADES only
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const { count: droughtOrderCount } = await supabase
+  const { data: recentOrders } = await supabase
     .from('paper_orders')
-    .select('*', { count: 'exact', head: true })
+    .select('tags')
     .gte('created_at', oneHourAgo)
     .eq('status', 'filled');
   
-  // This is approximate - we'd need to check tags but that requires row fetch
-  // For now, just cap total trades in drought periods
-  if (shouldBeActive && (droughtOrderCount ?? 0) >= DROUGHT_SAFETY.max_trades_per_hour) {
+  const droughtOrderCount = (recentOrders ?? []).filter(
+    (o: { tags: { drought_mode?: boolean } }) => o.tags?.drought_mode === true
+  ).length;
+  
+  if (shouldBeActive && droughtOrderCount >= DROUGHT_SAFETY.max_trades_per_hour) {
     return {
+      detected: detection.isActive,
       active: shouldBeActive,
       blocked: true,
       blockReason: `hourly_cap_${droughtOrderCount}`,
       killed: false,
       override,
       detection,
+      equityDrawdownPct,
     };
   }
   
   return {
+    detected: detection.isActive,
     active: shouldBeActive,
     blocked: false,
     killed: false,
     override,
     detection,
+    equityDrawdownPct,
   };
 }
 
@@ -705,11 +741,13 @@ Deno.serve(async (req) => {
     }
 
     // 4. Resolve drought mode (includes detection, safety checks, kill logic)
+    // Note: Pass marketBySymbol and evaluatedSymbols will be added after symbol selection
     const droughtResolved = await resolveDroughtMode(
       supabase, 
       paperAccount.id, 
       paperAccount.starting_cash,
-      marketDataList as MarketData[]
+      marketDataList as MarketData[],
+      marketBySymbol
     );
     
     const droughtModeActive = droughtResolved.active && !droughtResolved.blocked;
@@ -907,7 +945,8 @@ Deno.serve(async (req) => {
           mode: 'paper',
           thresholds_used: thresholdsUsed,
           drought_state: {
-            active: droughtResolved.detection.isActive,
+            detected: droughtResolved.detected,
+            active: droughtModeActive,
             blocked: droughtBlocked,
             block_reason: droughtBlockReason,
             killed: droughtKilled,
@@ -919,6 +958,7 @@ Deno.serve(async (req) => {
             orders_6h: droughtResolved.detection.shortWindowOrders,
             holds_48h: droughtResolved.detection.longWindowHolds,
             orders_48h: droughtResolved.detection.longWindowOrders,
+            equity_drawdown_pct: droughtResolved.equityDrawdownPct,
           },
           gate_failures: allGateFailures,
           nearest_pass: nearestPassGlobal ? {
@@ -1008,13 +1048,16 @@ Deno.serve(async (req) => {
         mode: 'paper',
         thresholds_used: thresholdsUsed,
         drought_state: {
+          detected: droughtResolved.detected,
           active: droughtModeActive,
           blocked: droughtBlocked,
           block_reason: droughtBlockReason,
           killed: droughtKilled,
           kill_reason: droughtKillReason,
+          cooldown_until: droughtResolved.cooldownUntil,
           override: droughtResolved.override,
           reason: droughtResolved.detection.reason,
+          equity_drawdown_pct: droughtResolved.equityDrawdownPct,
         },
         gate_failures: gateFailures,
       },

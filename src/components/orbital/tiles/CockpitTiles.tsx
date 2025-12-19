@@ -1,3 +1,4 @@
+import React from 'react';
 // Cockpit Tiles - Small instrument cards that don't need drilldown
 import { TradeCycleStatus } from '@/components/dashboard/TradeCycleStatus';
 import { GenerationHealth } from '@/components/dashboard/GenerationHealth';
@@ -54,22 +55,51 @@ import { useExitEfficiency } from '@/hooks/useExitEfficiency';
 import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
 
-// Drought Monitor Tile - Shows signal drought state and gate failures
+// Drought Monitor Tile - Shows signal drought state and gate failures with override controls
 export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
-  const { data: droughtState, isLoading } = useDroughtState();
+  const { data: droughtState, isLoading, refetch } = useDroughtState();
+  const [isUpdating, setIsUpdating] = React.useState(false);
   
   const getStatusColor = () => {
     if (!droughtState) return 'text-muted-foreground';
+    if (droughtState.killed) return 'text-destructive';
     if (droughtState.blocked) return 'text-amber-500';
-    if (droughtState.isActive) return 'text-destructive';
+    if (droughtState.isActive) return 'text-primary';
     return 'text-success';
   };
   
   const getStatusLabel = () => {
     if (!droughtState) return 'LOADING';
-    if (droughtState.blocked) return 'DROUGHT BLOCKED';
+    if (droughtState.killed) return `KILLED: ${droughtState.killReason}`;
+    if (droughtState.blocked) return `BLOCKED: ${droughtState.blockReason}`;
     if (droughtState.isActive) return 'DROUGHT ACTIVE';
     return 'NORMAL';
+  };
+  
+  const handleOverrideChange = async (newOverride: 'auto' | 'force_off' | 'force_on') => {
+    setIsUpdating(true);
+    try {
+      // Get current config
+      const { data: configData } = await supabase
+        .from('system_config')
+        .select('id, config')
+        .limit(1)
+        .single();
+      
+      if (configData) {
+        const currentConfig = (configData.config ?? {}) as Record<string, unknown>;
+        await supabase
+          .from('system_config')
+          .update({ 
+            config: { ...currentConfig, drought_override: newOverride },
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', configData.id);
+      }
+      refetch();
+    } finally {
+      setIsUpdating(false);
+    }
   };
   
   return (
@@ -84,11 +114,39 @@ export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
         <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
       ) : (
         <>
-          <div className={`text-[10px] font-mono ${getStatusColor()} flex items-center gap-1`}>
-            <span className={cn("w-1.5 h-1.5 rounded-full bg-current", droughtState.isActive && "animate-pulse")} />
-            {getStatusLabel()}
-            {droughtState.reason && <span className="text-muted-foreground ml-1">({droughtState.reason})</span>}
+          {/* Status + Override */}
+          <div className="flex items-center justify-between">
+            <div className={`text-[10px] font-mono ${getStatusColor()} flex items-center gap-1`}>
+              <span className={cn("w-1.5 h-1.5 rounded-full bg-current", droughtState.isActive && !droughtState.blocked && "animate-pulse")} />
+              {getStatusLabel()}
+            </div>
+            
+            {/* Override toggle */}
+            <div className="flex gap-1">
+              {(['auto', 'force_off', 'force_on'] as const).map(mode => (
+                <button
+                  key={mode}
+                  onClick={() => handleOverrideChange(mode)}
+                  disabled={isUpdating}
+                  className={cn(
+                    "text-[8px] px-1.5 py-0.5 rounded font-mono transition-colors",
+                    droughtState.override === mode 
+                      ? "bg-primary text-primary-foreground" 
+                      : "bg-muted/30 text-muted-foreground hover:bg-muted/50"
+                  )}
+                >
+                  {mode === 'auto' ? 'AUTO' : mode === 'force_off' ? 'OFF' : 'ON'}
+                </button>
+              ))}
+            </div>
           </div>
+          
+          {/* Cooldown warning */}
+          {droughtState.cooldownUntil && (
+            <div className="text-[10px] text-amber-500 font-mono">
+              ⏱ Cooldown until {new Date(droughtState.cooldownUntil).toLocaleTimeString()}
+            </div>
+          )}
           
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-muted/30 rounded-lg p-2 space-y-1">

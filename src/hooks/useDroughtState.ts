@@ -10,6 +10,10 @@ export interface DroughtState {
   reason?: string;
   blocked: boolean;
   blockReason?: string;
+  killed: boolean;
+  killReason?: string;
+  cooldownUntil?: string;
+  override: 'auto' | 'force_off' | 'force_on';
   gateFailures: Record<string, { count: number; avgMargin: number }>;
   nearestPass?: {
     gate: string;
@@ -36,40 +40,42 @@ export function useDroughtState() {
       const shortWindowStart = new Date(now.getTime() - DROUGHT_DETECTION.short_window_hours * 60 * 60 * 1000).toISOString();
       const longWindowStart = new Date(now.getTime() - DROUGHT_DETECTION.long_window_hours * 60 * 60 * 1000).toISOString();
       
-      // Get recent trade decisions for analysis
-      const { data: recentDecisions } = await supabase
+      // Use count-only queries to avoid dragging rows over network
+      const [shortHoldsResult, longHoldsResult, shortOrdersResult, longOrdersResult] = await Promise.all([
+        supabase
+          .from('control_events')
+          .select('*', { count: 'exact', head: true })
+          .eq('action', 'trade_decision')
+          .gte('triggered_at', shortWindowStart),
+        supabase
+          .from('control_events')
+          .select('*', { count: 'exact', head: true })
+          .eq('action', 'trade_decision')
+          .gte('triggered_at', longWindowStart),
+        supabase
+          .from('paper_orders')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', shortWindowStart)
+          .eq('status', 'filled'),
+        supabase
+          .from('paper_orders')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', longWindowStart)
+          .eq('status', 'filled'),
+      ]);
+      
+      // Get most recent decision for telemetry data
+      const { data: latestDecisions } = await supabase
         .from('control_events')
-        .select('metadata, triggered_at')
+        .select('metadata')
         .eq('action', 'trade_decision')
         .order('triggered_at', { ascending: false })
-        .limit(200);
+        .limit(1);
       
-      // Parse decisions from metadata
-      const shortHolds = (recentDecisions ?? []).filter(e => {
-        const meta = e.metadata as Record<string, unknown> | null;
-        return e.triggered_at >= shortWindowStart && meta?.decision === 'hold';
-      }).length;
-      
-      const longHolds = (recentDecisions ?? []).filter(e => {
-        const meta = e.metadata as Record<string, unknown> | null;
-        return e.triggered_at >= longWindowStart && meta?.decision === 'hold';
-      }).length;
-      
-      // Get orders from paper_orders
-      const { data: shortOrders } = await supabase
-        .from('paper_orders')
-        .select('id')
-        .gte('created_at', shortWindowStart)
-        .eq('status', 'filled');
-      
-      const { data: longOrders } = await supabase
-        .from('paper_orders')
-        .select('id')
-        .gte('created_at', longWindowStart)
-        .eq('status', 'filled');
-      
-      const shortWindowOrders = shortOrders?.length ?? 0;
-      const longWindowOrders = longOrders?.length ?? 0;
+      const shortHolds = shortHoldsResult.count ?? 0;
+      const longHolds = longHoldsResult.count ?? 0;
+      const shortWindowOrders = shortOrdersResult.count ?? 0;
+      const longWindowOrders = longOrdersResult.count ?? 0;
       
       // Determine drought state
       const shortDrought = shortHolds >= DROUGHT_DETECTION.min_holds_short_window && 
@@ -88,12 +94,18 @@ export function useDroughtState() {
         reason = 'long_drought_48h';
       }
       
-      // Get gate failures from most recent decision
-      const latestDecision = (recentDecisions ?? [])[0];
-      const latestMeta = latestDecision?.metadata as Record<string, unknown> | null;
-      const gateFailures = (latestMeta?.gate_failures ?? {}) as Record<string, { count: number; avgMargin: number }>;
-      const nearestPass = latestMeta?.nearest_pass as DroughtState['nearestPass'];
-      const droughtState = latestMeta?.drought_state as { blocked?: boolean; block_reason?: string } | undefined;
+      // Get telemetry from most recent decision
+      const latestMeta = (latestDecisions?.[0]?.metadata ?? {}) as Record<string, unknown>;
+      const gateFailures = (latestMeta.gate_failures ?? {}) as Record<string, { count: number; avgMargin: number }>;
+      const nearestPass = latestMeta.nearest_pass as DroughtState['nearestPass'];
+      const droughtState = latestMeta.drought_state as { 
+        blocked?: boolean; 
+        block_reason?: string;
+        killed?: boolean;
+        kill_reason?: string;
+        cooldown_until?: string;
+        override?: 'auto' | 'force_off' | 'force_on';
+      } | undefined;
       
       return {
         isActive,
@@ -104,6 +116,10 @@ export function useDroughtState() {
         reason,
         blocked: droughtState?.blocked ?? false,
         blockReason: droughtState?.block_reason,
+        killed: droughtState?.killed ?? false,
+        killReason: droughtState?.kill_reason,
+        cooldownUntil: droughtState?.cooldown_until,
+        override: droughtState?.override ?? 'auto',
         gateFailures,
         nearestPass,
       };

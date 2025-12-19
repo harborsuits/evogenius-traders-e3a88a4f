@@ -103,18 +103,21 @@ const DROUGHT_THRESHOLDS = {
 const DROUGHT_SAFETY = {
   max_trades_per_hour: 2,
   size_multiplier: 0.5,        // 50% normal size
-  max_drawdown_pct: 2.0,       // Exit drought if drawdown > 2%
+  max_drawdown_pct: 2.0,       // Kill drought if drawdown > 2%
   min_cash_pct: 50,            // Must have 50%+ cash to trade in drought
+  vol_spike_atr: 1.8,          // Exit drought if ATR ratio > 1.8
+  kill_cooldown_hours: 4,      // Cooldown after a kill
 };
 
-// TEST MODE THRESHOLDS - Very loose for pipeline validation only
+// TEST MODE THRESHOLDS - VERY loose for pipeline validation only
+// These must be MORE permissive than baseline to force trades
 const TEST_MODE_THRESHOLDS = {
-  trend_threshold: 0.01,
-  pullback_pct: 1.5,
-  rsi_threshold: 1.0,
-  vol_contraction: 1.2,
-  vol_expansion_exit: 1.3,
-  min_confidence: 0.5,
+  trend_threshold: 0.001,        // Much looser than 0.005 - almost any slope
+  pullback_pct: 15.0,            // Much looser than 5.0 - large pullbacks OK
+  rsi_threshold: 0.2,            // Much looser than 0.6 - tiny moves trigger
+  vol_contraction: 2.0,          // Much looser than 1.3 - even high vol OK
+  vol_expansion_exit: 2.5,       // Looser exit trigger
+  min_confidence: 0.3,           // Lower confidence floor
   max_confidence: 0.85,
 };
 
@@ -164,45 +167,43 @@ interface DroughtState {
   reason?: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function detectDrought(supabase: any): Promise<DroughtState> {
   const now = new Date();
   const shortWindowStart = new Date(now.getTime() - DROUGHT_DETECTION.short_window_hours * 60 * 60 * 1000).toISOString();
   const longWindowStart = new Date(now.getTime() - DROUGHT_DETECTION.long_window_hours * 60 * 60 * 1000).toISOString();
   
-  // Count holds in short window (6h)
-  const { data: shortHolds } = await supabase
+  // Use count-only queries (head: true) to avoid dragging rows over network
+  const { count: shortHoldsCount } = await supabase
     .from('control_events')
-    .select('id')
+    .select('*', { count: 'exact', head: true })
     .eq('action', 'trade_decision')
     .gte('triggered_at', shortWindowStart)
-    .filter('metadata->>decision', 'eq', 'hold');
+    .eq('metadata->>decision', 'hold');
   
-  // Count orders in short window
-  const { data: shortOrders } = await supabase
+  const { count: shortOrdersCount } = await supabase
     .from('paper_orders')
-    .select('id')
+    .select('*', { count: 'exact', head: true })
     .gte('created_at', shortWindowStart)
     .eq('status', 'filled');
   
-  // Count holds in long window (48h)
-  const { data: longHolds } = await supabase
+  const { count: longHoldsCount } = await supabase
     .from('control_events')
-    .select('id')
+    .select('*', { count: 'exact', head: true })
     .eq('action', 'trade_decision')
     .gte('triggered_at', longWindowStart)
-    .filter('metadata->>decision', 'eq', 'hold');
+    .eq('metadata->>decision', 'hold');
   
-  // Count orders in long window
-  const { data: longOrders } = await supabase
+  const { count: longOrdersCount } = await supabase
     .from('paper_orders')
-    .select('id')
+    .select('*', { count: 'exact', head: true })
     .gte('created_at', longWindowStart)
     .eq('status', 'filled');
   
-  const shortWindowHolds = shortHolds?.length ?? 0;
-  const shortWindowOrders = shortOrders?.length ?? 0;
-  const longWindowHolds = longHolds?.length ?? 0;
-  const longWindowOrders = longOrders?.length ?? 0;
+  const shortWindowHolds = shortHoldsCount ?? 0;
+  const shortWindowOrders = shortOrdersCount ?? 0;
+  const longWindowHolds = longHoldsCount ?? 0;
+  const longWindowOrders = longOrdersCount ?? 0;
   
   // Determine if drought is active
   const shortDrought = shortWindowHolds >= DROUGHT_DETECTION.min_holds_short_window && 
@@ -232,38 +233,184 @@ async function detectDrought(supabase: any): Promise<DroughtState> {
   };
 }
 
-// Check drought safety conditions
-async function checkDroughtSafety(supabase: any, accountId: string, startingCash: number): Promise<{ safe: boolean; reason?: string }> {
-  // Get current account state
+// ===========================================================================
+// DROUGHT MODE RESOLVER - Single source of truth for drought state
+// ===========================================================================
+interface ResolvedDroughtState {
+  active: boolean;
+  blocked: boolean;
+  blockReason?: string;
+  killed: boolean;
+  killReason?: string;
+  cooldownUntil?: string;
+  override: 'auto' | 'force_off' | 'force_on';
+  detection: DroughtState;
+}
+
+async function resolveDroughtMode(
+  supabase: any,
+  accountId: string,
+  startingCash: number,
+  marketData: MarketData[]
+): Promise<ResolvedDroughtState> {
+  // 1. Get detection state
+  const detection = await detectDrought(supabase);
+  
+  // 2. Get system config for override + cooldown state
+  const { data: configData } = await supabase
+    .from('system_config')
+    .select('config')
+    .limit(1)
+    .single();
+  
+  const config = configData?.config ?? {};
+  const override = (config.drought_override ?? 'auto') as 'auto' | 'force_off' | 'force_on';
+  const cooldownUntil = config.drought_cooldown_until as string | undefined;
+  
+  // 3. Check cooldown
+  const now = new Date();
+  const inCooldown = cooldownUntil && new Date(cooldownUntil) > now;
+  
+  // 4. Check if force_off
+  if (override === 'force_off') {
+    return {
+      active: false,
+      blocked: true,
+      blockReason: 'force_off_override',
+      killed: false,
+      override,
+      detection,
+    };
+  }
+  
+  // 5. Check cooldown
+  if (inCooldown) {
+    return {
+      active: false,
+      blocked: true,
+      blockReason: 'cooldown_active',
+      killed: false,
+      cooldownUntil,
+      override,
+      detection,
+    };
+  }
+  
+  // 6. Determine if should be active (auto or force_on)
+  let shouldBeActive = override === 'force_on' || detection.isActive;
+  
+  // 7. Safety checks (can kill even force_on)
   const { data: account } = await supabase
     .from('paper_accounts')
     .select('cash')
     .eq('id', accountId)
     .single();
   
-  if (!account) return { safe: false, reason: 'no_account' };
-  
-  const cashPct = (account.cash / startingCash) * 100;
-  
-  // Check cash requirement
-  if (cashPct < DROUGHT_SAFETY.min_cash_pct) {
-    return { safe: false, reason: `low_cash_${cashPct.toFixed(0)}pct` };
+  if (!account) {
+    return {
+      active: false,
+      blocked: true,
+      blockReason: 'no_account',
+      killed: false,
+      override,
+      detection,
+    };
   }
   
-  // Check recent trades in drought mode
+  const cashPct = (account.cash / startingCash) * 100;
+  const drawdownPct = 100 - cashPct;
+  
+  // Kill check: drawdown
+  if (shouldBeActive && drawdownPct > DROUGHT_SAFETY.max_drawdown_pct) {
+    // Set cooldown
+    const cooldownEnd = new Date(now.getTime() + DROUGHT_SAFETY.kill_cooldown_hours * 60 * 60 * 1000).toISOString();
+    await supabase
+      .from('system_config')
+      .update({ 
+        config: { ...config, drought_cooldown_until: cooldownEnd },
+        updated_at: now.toISOString(),
+      })
+      .eq('id', configData.id);
+    
+    // Log kill event
+    await supabase.from('control_events').insert({
+      action: 'drought_kill',
+      metadata: {
+        reason: 'drawdown',
+        drawdown_pct: drawdownPct,
+        threshold: DROUGHT_SAFETY.max_drawdown_pct,
+        cooldown_until: cooldownEnd,
+      },
+    });
+    
+    return {
+      active: false,
+      blocked: false,
+      killed: true,
+      killReason: `drawdown_${drawdownPct.toFixed(1)}pct`,
+      cooldownUntil: cooldownEnd,
+      override,
+      detection,
+    };
+  }
+  
+  // Kill check: volatility spike
+  const avgAtr = marketData.length > 0 
+    ? marketData.reduce((sum, m) => sum + m.atr_ratio, 0) / marketData.length 
+    : 1;
+  
+  if (shouldBeActive && avgAtr > DROUGHT_SAFETY.vol_spike_atr) {
+    // Soft exit - no cooldown, just disable
+    return {
+      active: false,
+      blocked: false,
+      killed: true,
+      killReason: `vol_spike_${avgAtr.toFixed(2)}`,
+      override,
+      detection,
+    };
+  }
+  
+  // Block check: low cash
+  if (shouldBeActive && cashPct < DROUGHT_SAFETY.min_cash_pct) {
+    return {
+      active: false,
+      blocked: true,
+      blockReason: `low_cash_${cashPct.toFixed(0)}pct`,
+      killed: false,
+      override,
+      detection,
+    };
+  }
+  
+  // Block check: hourly cap
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const { data: recentOrders } = await supabase
+  const { count: droughtOrderCount } = await supabase
     .from('paper_orders')
-    .select('id, tags')
+    .select('*', { count: 'exact', head: true })
     .gte('created_at', oneHourAgo)
     .eq('status', 'filled');
   
-  const droughtOrders = (recentOrders ?? []).filter((o: { id: string; tags: unknown }) => (o.tags as Record<string, boolean>)?.drought_mode === true);
-  if (droughtOrders.length >= DROUGHT_SAFETY.max_trades_per_hour) {
-    return { safe: false, reason: `hourly_cap_${droughtOrders.length}` };
+  // This is approximate - we'd need to check tags but that requires row fetch
+  // For now, just cap total trades in drought periods
+  if (shouldBeActive && (droughtOrderCount ?? 0) >= DROUGHT_SAFETY.max_trades_per_hour) {
+    return {
+      active: shouldBeActive,
+      blocked: true,
+      blockReason: `hourly_cap_${droughtOrderCount}`,
+      killed: false,
+      override,
+      detection,
+    };
   }
   
-  return { safe: true };
+  return {
+    active: shouldBeActive,
+    blocked: false,
+    killed: false,
+    override,
+    detection,
+  };
 }
 
 // ===========================================================================
@@ -516,29 +663,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 2. Detect drought state
-    const droughtState = await detectDrought(supabase);
-    
-    if (droughtState.isActive) {
-      console.log(`[trade-cycle] DROUGHT MODE ACTIVE: ${droughtState.reason} (holds_6h=${droughtState.shortWindowHolds}, orders_6h=${droughtState.shortWindowOrders})`);
-    }
-
-    // 3. Get active agents
-    const { data: agents, error: agentsError } = await supabase
-      .from('agents')
-      .select('*')
-      .eq('status', 'active')
-      .limit(100);
-
-    if (agentsError || !agents || agents.length === 0) {
-      console.log('[trade-cycle] No active agents found');
-      return new Response(
-        JSON.stringify({ ok: true, skipped: true, reason: 'no_agents' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // 4. Get market data
+    // 2. Get market data first (needed for drought resolution)
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     
     const { data: marketDataList, error: marketError } = await supabase
@@ -564,7 +689,7 @@ Deno.serve(async (req) => {
     
     const availableSymbols = marketDataList.map(m => m.symbol);
 
-    // 5. Get paper account
+    // 3. Get paper account
     const { data: paperAccount } = await supabase
       .from('paper_accounts')
       .select('id, cash, starting_cash')
@@ -579,22 +704,49 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 6. Check drought safety if in drought mode
-    let droughtModeActive = droughtState.isActive;
-    let droughtBlocked = false;
-    let droughtBlockReason: string | undefined;
+    // 4. Resolve drought mode (includes detection, safety checks, kill logic)
+    const droughtResolved = await resolveDroughtMode(
+      supabase, 
+      paperAccount.id, 
+      paperAccount.starting_cash,
+      marketDataList as MarketData[]
+    );
     
+    const droughtModeActive = droughtResolved.active && !droughtResolved.blocked;
+    const droughtBlocked = droughtResolved.blocked;
+    const droughtBlockReason = droughtResolved.blockReason;
+    const droughtKilled = droughtResolved.killed;
+    const droughtKillReason = droughtResolved.killReason;
+    
+    if (droughtResolved.detection.isActive) {
+      console.log(`[trade-cycle] DROUGHT DETECTED: ${droughtResolved.detection.reason}`);
+    }
     if (droughtModeActive) {
-      const safety = await checkDroughtSafety(supabase, paperAccount.id, paperAccount.starting_cash);
-      if (!safety.safe) {
-        droughtModeActive = false;
-        droughtBlocked = true;
-        droughtBlockReason = safety.reason;
-        console.log(`[trade-cycle] Drought mode BLOCKED: ${safety.reason}`);
-      }
+      console.log(`[trade-cycle] DROUGHT MODE ACTIVE (override=${droughtResolved.override})`);
+    }
+    if (droughtBlocked) {
+      console.log(`[trade-cycle] DROUGHT MODE BLOCKED: ${droughtBlockReason}`);
+    }
+    if (droughtKilled) {
+      console.log(`[trade-cycle] DROUGHT MODE KILLED: ${droughtKillReason}`);
     }
 
-    // 7. Get current positions
+    // 5. Get active agents
+    const { data: agents, error: agentsError } = await supabase
+      .from('agents')
+      .select('*')
+      .eq('status', 'active')
+      .limit(100);
+
+    if (agentsError || !agents || agents.length === 0) {
+      console.log('[trade-cycle] No active agents found');
+      return new Response(
+        JSON.stringify({ ok: true, skipped: true, reason: 'no_agents' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // 6. Get current positions
     const { data: positions } = await supabase
       .from('paper_positions')
       .select('symbol, qty')
@@ -755,14 +907,18 @@ Deno.serve(async (req) => {
           mode: 'paper',
           thresholds_used: thresholdsUsed,
           drought_state: {
-            active: droughtState.isActive,
+            active: droughtResolved.detection.isActive,
             blocked: droughtBlocked,
             block_reason: droughtBlockReason,
-            reason: droughtState.reason,
-            holds_6h: droughtState.shortWindowHolds,
-            orders_6h: droughtState.shortWindowOrders,
-            holds_48h: droughtState.longWindowHolds,
-            orders_48h: droughtState.longWindowOrders,
+            killed: droughtKilled,
+            kill_reason: droughtKillReason,
+            cooldown_until: droughtResolved.cooldownUntil,
+            override: droughtResolved.override,
+            reason: droughtResolved.detection.reason,
+            holds_6h: droughtResolved.detection.shortWindowHolds,
+            orders_6h: droughtResolved.detection.shortWindowOrders,
+            holds_48h: droughtResolved.detection.longWindowHolds,
+            orders_48h: droughtResolved.detection.longWindowOrders,
           },
           gate_failures: allGateFailures,
           nearest_pass: nearestPassGlobal ? {
@@ -855,7 +1011,10 @@ Deno.serve(async (req) => {
           active: droughtModeActive,
           blocked: droughtBlocked,
           block_reason: droughtBlockReason,
-          reason: droughtState.reason,
+          killed: droughtKilled,
+          kill_reason: droughtKillReason,
+          override: droughtResolved.override,
+          reason: droughtResolved.detection.reason,
         },
         gate_failures: gateFailures,
       },

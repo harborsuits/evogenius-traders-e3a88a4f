@@ -260,8 +260,8 @@ function WorkspaceColumn({
   return (
     <div 
       ref={setNodeRef}
-      className="h-full min-h-0 flex flex-col"
-      style={{ transform: 'none' }} // Prevent any transform inheritance
+      className="h-full flex flex-col overflow-hidden"
+      style={{ transform: 'none' }}
     >
       <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
         <DropZone 
@@ -598,7 +598,7 @@ function TabletWorkspaceColumn({
   return (
     <div 
       ref={setNodeRef}
-      className="h-full min-h-0 overflow-y-auto"
+      className="h-full flex flex-col overflow-hidden"
       style={{ transform: 'none' }}
     >
       <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>

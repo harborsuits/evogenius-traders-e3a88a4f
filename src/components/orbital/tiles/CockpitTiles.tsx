@@ -8,6 +8,7 @@ import { NewsPanel } from '@/components/dashboard/NewsPanel';
 import { RolloverChecklist } from '@/components/dashboard/RolloverChecklist';
 import { GenerationComparison } from '@/components/dashboard/GenerationComparison';
 import { LineageWidget } from '@/components/dashboard/LineageWidget';
+import { EliteRotationCard } from '@/components/dashboard/EliteRotationCard';
 import { PassingTradesFeed } from '@/components/dashboard/PassingTradesFeed';
 import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
 import { usePaperAccount, usePaperPositions, usePaperRealtimeSubscriptions } from '@/hooks/usePaperTrading';

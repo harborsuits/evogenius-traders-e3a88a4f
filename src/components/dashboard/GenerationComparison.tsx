@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useGenerationSelection } from '@/hooks/useGenerationSelection';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Users, TrendingUp, Coins } from 'lucide-react';
@@ -13,39 +14,47 @@ interface DataPoint {
   current?: number;
 }
 
-export function GenerationComparison() {
+interface GenerationComparisonProps {
+  currentGenNumber?: number;
+  compareGenNumber?: number;
+}
+
+export function GenerationComparison({ currentGenNumber: propCurrentGen, compareGenNumber: propCompareGen }: GenerationComparisonProps) {
   const [metric, setMetric] = useState<MetricType>('agents');
+  
+  // Use hook if props not provided
+  const selection = useGenerationSelection();
+  const currentGenNumber = propCurrentGen ?? selection.currentGenNumber;
+  const compareGenNumber = propCompareGen ?? selection.compareGenNumber;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['generation-comparison', metric],
+    queryKey: ['generation-comparison', metric, currentGenNumber, compareGenNumber],
     queryFn: async () => {
-      // Get current generation from system state
-      const { data: sysState } = await supabase
-        .from('system_state')
-        .select('current_generation_id')
-        .single();
-
-      if (!sysState?.current_generation_id) {
+      if (currentGenNumber === null) {
         return { points: [], prevGen: null, currentGen: null, prevHours: 0, currentHours: 0 };
       }
 
-      // Fetch current generation details
+      // Fetch current generation by number
       const { data: currentGenData } = await supabase
         .from('generations')
         .select('id, generation_number, start_time, end_time')
-        .eq('id', sysState.current_generation_id)
-        .single();
+        .eq('generation_number', currentGenNumber)
+        .maybeSingle();
 
       if (!currentGenData) {
         return { points: [], prevGen: null, currentGen: null, prevHours: 0, currentHours: 0 };
       }
 
-      // Fetch previous generation (generation_number - 1)
-      const { data: prevGenData } = await supabase
-        .from('generations')
-        .select('id, generation_number, start_time, end_time')
-        .eq('generation_number', currentGenData.generation_number - 1)
-        .single();
+      // Fetch compare generation by number
+      let prevGenData = null;
+      if (compareGenNumber !== null) {
+        const { data: prevData } = await supabase
+          .from('generations')
+          .select('id, generation_number, start_time, end_time')
+          .eq('generation_number', compareGenNumber)
+          .maybeSingle();
+        prevGenData = prevData;
+      }
 
       const currentGen = currentGenData;
       const prevGen = prevGenData;
@@ -161,6 +170,7 @@ export function GenerationComparison() {
         currentHours: Math.round(currentHours * 10) / 10 
       };
     },
+    enabled: currentGenNumber !== null,
     refetchInterval: 60000,
   });
 
@@ -170,9 +180,6 @@ export function GenerationComparison() {
 
   const prevGenLabel = data?.prevGen ? `Gen ${data.prevGen.number}` : 'Previous';
   const currentGenLabel = data?.currentGen ? `Gen ${data.currentGen.number}` : 'Current';
-  const titleLabel = data?.prevGen && data?.currentGen 
-    ? `GEN ${data.prevGen.number} VS ${data.currentGen.number}`
-    : 'GENERATION COMPARISON';
 
   return (
     <div className="h-full flex flex-col p-3 gap-2">

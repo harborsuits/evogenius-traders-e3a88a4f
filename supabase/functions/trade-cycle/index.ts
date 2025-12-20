@@ -1528,6 +1528,14 @@ Deno.serve(async (req) => {
         .slice(0, 3)
         .map(([reason, count]) => `${reason}:${count}`);
       
+      // Phase 5: Add regime context for each candidate (HOLD case)
+      const candidatesWithRegime = candidates.map(c => ({
+        symbol: c.symbol,
+        decision: c.decision,
+        confidence: c.confidence,
+        regime_context: classifyMarketRegime(c.market),
+      }));
+      
       await supabase.from('control_events').insert({
         action: 'trade_decision',
         metadata: {
@@ -1541,6 +1549,8 @@ Deno.serve(async (req) => {
           top_hold_reasons: topHoldReasons,
           mode: 'paper',
           thresholds_used: thresholdsUsed,
+          // Phase 5: Regime context for all evaluated candidates
+          candidates_regime: candidatesWithRegime,
           drought_state: {
             detected: droughtResolved.detected,
             active: droughtModeActive,

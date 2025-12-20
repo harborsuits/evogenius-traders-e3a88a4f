@@ -235,8 +235,11 @@ export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
               {(() => {
                 const t = droughtState.adaptiveTuning;
                 const cooldownMins = t.cooldownRemainingSec ? Math.ceil(t.cooldownRemainingSec / 60) : 0;
+                const frozenUntil = t.frozenUntil ? new Date(t.frozenUntil) : null;
+                const isFrozen = frozenUntil && frozenUntil > new Date();
+                const frozenMins = isFrozen ? Math.ceil((frozenUntil.getTime() - Date.now()) / 60000) : 0;
                 
-                let status: 'active' | 'armed' | 'cooldown' | 'off';
+                let status: 'active' | 'armed' | 'cooldown' | 'frozen' | 'off';
                 let statusColor: string;
                 let statusLabel: string;
                 
@@ -244,6 +247,10 @@ export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
                   status = 'off';
                   statusColor = 'text-muted-foreground';
                   statusLabel = 'OFF';
+                } else if (isFrozen) {
+                  status = 'frozen';
+                  statusColor = 'text-destructive';
+                  statusLabel = `FROZEN ${frozenMins}m`;
                 } else if (cooldownMins > 0) {
                   status = 'cooldown';
                   statusColor = 'text-amber-500';
@@ -261,9 +268,14 @@ export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
                 return (
                   <div className="flex items-center justify-between text-[10px]">
                     <span className="text-muted-foreground">Tuning:</span>
-                    <span className={cn('font-mono font-medium', statusColor)}>
-                      {statusLabel}
-                    </span>
+                    <div className="flex items-center gap-1">
+                      {status === 'frozen' && t.frozenReason && (
+                        <span className="text-[8px] text-destructive/70">{t.frozenReason}</span>
+                      )}
+                      <span className={cn('font-mono font-medium', statusColor)}>
+                        {statusLabel}
+                      </span>
+                    </div>
                   </div>
                 );
               })()}

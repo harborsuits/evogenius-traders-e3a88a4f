@@ -165,6 +165,12 @@ interface AdaptiveTuningConfig {
   decay_step_pct: number;
   last_adjusted_at: string | null;
   offsets: Record<string, number>; // gate_name: fractional offset (negative = relax)
+  // Phase 4A Guardrails
+  frozen_until?: string | null;
+  frozen_reason?: string | null;
+  freeze_after_kill_hours?: number;  // e.g. 6
+  freeze_peak_dd_pct?: number;       // e.g. 3.0
+  max_total_relax_pct?: number;      // e.g. 0.25 - global cap on sum(|offsets|)
 }
 
 // Apply adaptive offsets to thresholds
@@ -252,6 +258,114 @@ function pickCandidateGate(
   return failSorted.length > 0 ? failSorted[0][0] : undefined;
 }
 
+// Check if tuning is frozen and should stay frozen
+async function checkTuningFreeze(
+  supabase: any,
+  tuning: AdaptiveTuningConfig,
+  droughtResolved: ResolvedDroughtState,
+  cfg: Record<string, unknown>,
+  configId: string
+): Promise<{ frozen: boolean; reason?: string }> {
+  const now = new Date();
+  
+  // Check existing freeze
+  if (tuning.frozen_until) {
+    const frozenUntilDate = new Date(tuning.frozen_until);
+    if (frozenUntilDate > now) {
+      return { frozen: true, reason: tuning.frozen_reason ?? 'frozen' };
+    }
+    // Freeze expired - clear it
+    await supabase.from('system_config').update({
+      config: {
+        ...cfg,
+        adaptive_tuning: { ...tuning, frozen_until: null, frozen_reason: null },
+      },
+      updated_at: now.toISOString(),
+    }).eq('id', configId);
+  }
+  
+  const freezeAfterKillHours = tuning.freeze_after_kill_hours ?? 6;
+  const freezePeakDdPct = tuning.freeze_peak_dd_pct ?? 3.0;
+  const maxTotalRelaxPct = tuning.max_total_relax_pct ?? 0.25;
+  
+  // Check 1: Recent kill event
+  const killWindowStart = new Date(now.getTime() - freezeAfterKillHours * 60 * 60 * 1000).toISOString();
+  const { count: recentKillCount } = await supabase
+    .from('control_events')
+    .select('*', { count: 'exact', head: true })
+    .eq('action', 'drought_kill')
+    .gte('triggered_at', killWindowStart);
+  
+  if ((recentKillCount ?? 0) > 0) {
+    const freezeReason = `kill_event_within_${freezeAfterKillHours}h`;
+    const freezeUntil = new Date(now.getTime() + freezeAfterKillHours * 60 * 60 * 1000).toISOString();
+    
+    await supabase.from('system_config').update({
+      config: {
+        ...cfg,
+        adaptive_tuning: { ...tuning, frozen_until: freezeUntil, frozen_reason: freezeReason },
+      },
+      updated_at: now.toISOString(),
+    }).eq('id', configId);
+    
+    await supabase.from('control_events').insert({
+      action: 'adaptive_tuning_frozen',
+      metadata: {
+        reason: freezeReason,
+        frozen_until: freezeUntil,
+        trigger: 'kill_event',
+        offsets_snapshot: tuning.offsets,
+      },
+    });
+    
+    console.log(`[adaptive-tuning] FROZEN: ${freezeReason}`);
+    return { frozen: true, reason: freezeReason };
+  }
+  
+  // Check 2: Peak equity drawdown
+  if (droughtResolved.peakEquityDrawdownPct !== undefined && 
+      droughtResolved.peakEquityDrawdownPct > freezePeakDdPct) {
+    const freezeReason = `peak_dd_${droughtResolved.peakEquityDrawdownPct.toFixed(1)}pct`;
+    const freezeUntil = new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(); // 2h freeze
+    
+    await supabase.from('system_config').update({
+      config: {
+        ...cfg,
+        adaptive_tuning: { ...tuning, frozen_until: freezeUntil, frozen_reason: freezeReason },
+      },
+      updated_at: now.toISOString(),
+    }).eq('id', configId);
+    
+    await supabase.from('control_events').insert({
+      action: 'adaptive_tuning_frozen',
+      metadata: {
+        reason: freezeReason,
+        frozen_until: freezeUntil,
+        trigger: 'peak_drawdown',
+        peak_dd_pct: droughtResolved.peakEquityDrawdownPct,
+        threshold: freezePeakDdPct,
+        equity: droughtResolved.equity,
+        peak_equity: droughtResolved.peakEquity,
+        offsets_snapshot: tuning.offsets,
+      },
+    });
+    
+    console.log(`[adaptive-tuning] FROZEN: ${freezeReason}`);
+    return { frozen: true, reason: freezeReason };
+  }
+  
+  // Check 3: Global max relaxation cap
+  const totalRelax = Object.values(tuning.offsets ?? {}).reduce((sum, v) => sum + Math.abs(v), 0);
+  if (totalRelax >= maxTotalRelaxPct) {
+    const freezeReason = `max_relax_${(totalRelax * 100).toFixed(0)}pct`;
+    // Don't set frozen_until - just block further relaxation until offsets decay
+    console.log(`[adaptive-tuning] CAPPED: ${freezeReason} (no new relaxations until decay)`);
+    return { frozen: true, reason: freezeReason };
+  }
+  
+  return { frozen: false };
+}
+
 // Main adaptive tuning logic - run at end of each cycle
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function maybeTuneThresholds(
@@ -298,6 +412,13 @@ async function maybeTuneThresholds(
   
   // Check if override is force_off (don't tune during force_off)
   if (droughtResolved.override === 'force_off') return;
+  
+  // *** PHASE 4A: Check freeze conditions ***
+  const freezeCheck = await checkTuningFreeze(supabase, tuning, droughtResolved, cfg, configId);
+  if (freezeCheck.frozen) {
+    console.log(`[adaptive-tuning] Frozen: ${freezeCheck.reason}`);
+    return;
+  }
   
   // Check cooldown
   if (tuning.last_adjusted_at) {
@@ -380,7 +501,7 @@ async function maybeTuneThresholds(
     updated_at: now.toISOString(),
   }).eq('id', configId);
   
-  // Log the tuning event
+  // Log the tuning event with enhanced audit payload
   await supabase.from('control_events').insert({
     action: 'adaptive_tuning_update',
     metadata: {
@@ -390,6 +511,9 @@ async function maybeTuneThresholds(
       nearest_counts: nearestCounts,
       fail_counts: failCounts,
       window_size: rows.length,
+      mode_active: droughtResolved.detected ? 'drought' : 'normal',
+      baseline_thresholds: BASELINE_THRESHOLDS,
+      effective_thresholds: applyAdaptiveOffsets(BASELINE_THRESHOLDS, offsets),
     },
   });
   
@@ -1315,6 +1439,9 @@ Deno.serve(async (req) => {
                   (new Date(tuning.last_adjusted_at).getTime() + tuning.cooldown_minutes * 60 * 1000 - Date.now()) / 1000
                 ))
               : null,
+            // Phase 4A Guardrails
+            frozen_until: tuning?.frozen_until ?? null,
+            frozen_reason: tuning?.frozen_reason ?? null,
           },
           gate_failures: allGateFailures,
           nearest_pass: nearestPassGlobal ? {
@@ -1498,6 +1625,9 @@ Deno.serve(async (req) => {
                 (new Date(tuning.last_adjusted_at).getTime() + tuning.cooldown_minutes * 60 * 1000 - Date.now()) / 1000
               ))
             : null,
+          // Phase 4A Guardrails
+          frozen_until: tuning?.frozen_until ?? null,
+          frozen_reason: tuning?.frozen_reason ?? null,
         },
         gate_failures: gateFailures,
       },

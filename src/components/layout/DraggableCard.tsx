@@ -14,6 +14,7 @@ interface DraggableCardProps {
   isActive?: boolean;
   onReturnToOrbit?: () => void;
   compact?: boolean;
+  visualScale?: number;
 }
 
 export const DraggableCard = forwardRef<HTMLDivElement, DraggableCardProps>(
@@ -23,6 +24,7 @@ export const DraggableCard = forwardRef<HTMLDivElement, DraggableCardProps>(
     isActive = false,
     onReturnToOrbit,
     compact = false,
+    visualScale = 1,
   }, forwardedRef) {
     const navigate = useNavigate();
     const CardComponent = card.component;
@@ -49,9 +51,14 @@ export const DraggableCard = forwardRef<HTMLDivElement, DraggableCardProps>(
       }
     };
     
+    // Merge dnd-kit transform with visual scale
+    const baseTransform = CSS.Transform.toString(transform);
+    const scaleTransform = visualScale !== 1 ? `scale(${visualScale})` : '';
+    const combinedTransform = [baseTransform, scaleTransform].filter(Boolean).join(' ') || undefined;
+    
     const style = {
-      transform: CSS.Transform.toString(transform),
-      transition,
+      transform: combinedTransform,
+      transition: transition || 'transform 300ms',
     };
     
     const handleDrilldown = (e: React.MouseEvent) => {

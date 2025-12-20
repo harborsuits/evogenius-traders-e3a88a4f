@@ -29,6 +29,7 @@ import {
   MarketRegimeTile,
   TransactionCostTile,
   AuditTile,
+  PassingTradesTile,
 } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PositionsCardContent, ActivityCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
@@ -50,6 +51,7 @@ const staticCards: OrbitalCard[] = [
   { id: 'catalyst-watch', title: 'Catalyst Watch', type: 'cockpit', component: CatalystWatchTile },
   { id: 'autopsy', title: 'Performance Autopsy', type: 'cockpit', component: AutopsyTile },
   { id: 'drought', title: 'Signal Drought', type: 'cockpit', component: DroughtMonitorTile },
+  { id: 'passing-trades', title: 'Passing Trades', type: 'cockpit', component: PassingTradesTile },
   { id: 'gen-compare', title: 'Gen 10 vs 11', type: 'cockpit', component: GenComparisonTile },
   { id: 'lineage', title: 'Lineage', type: 'cockpit', component: LineageTile },
   { id: 'rollover', title: 'Rollover Checklist', type: 'cockpit', component: RolloverTile },

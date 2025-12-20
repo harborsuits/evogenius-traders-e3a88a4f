@@ -8,14 +8,7 @@ import { TrendingUp, TrendingDown, Activity, Gauge, ShieldCheck, ShieldAlert } f
 import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
 
-type Json = Record<string, unknown>;
-
-interface PassingTrade {
-  id: string;
-  triggered_at: string;
-  metadata: Json;
-}
-
+// Proper typing for trade decision metadata
 interface CostContext {
   estimated_fee_pct?: number;
   estimated_slippage_bps?: number;
@@ -27,8 +20,33 @@ interface RegimeContext {
   volatility_level?: string;
 }
 
+interface ConfidenceComponents {
+  signal_confidence?: number;
+  maturity_multiplier?: number;
+  final_confidence?: number;
+}
+
+interface TradeDecisionMeta {
+  decision?: string;
+  symbol?: string;
+  confidence?: number;
+  signal_confidence?: number;
+  maturity_multiplier?: number;
+  confidence_components?: ConfidenceComponents;
+  reasons?: string[];
+  entry_reason?: string[];
+  cost_context?: CostContext;
+  regime_context?: RegimeContext;
+}
+
+interface PassingTrade {
+  id: string;
+  triggered_at: string;
+  metadata: unknown;
+}
+
 export function PassingTradesFeed({ compact }: { compact?: boolean }) {
-  // Fetch last 15 buy/sell decisions
+  // Fetch last 50 trade_decision rows and filter client-side to buy/sell
   const { data: trades, isLoading } = useQuery({
     queryKey: ['passing-trades-feed'],
     queryFn: async () => {
@@ -36,12 +54,18 @@ export function PassingTradesFeed({ compact }: { compact?: boolean }) {
         .from('control_events')
         .select('id, triggered_at, metadata')
         .eq('action', 'trade_decision')
-        .or('metadata->>decision.eq.buy,metadata->>decision.eq.sell')
         .order('triggered_at', { ascending: false })
-        .limit(15);
+        .limit(50);
       
       if (error) throw error;
-      return data as PassingTrade[];
+      
+      // Filter client-side to buy/sell decisions
+      const filtered = (data ?? []).filter((row) => {
+        const meta = row.metadata as TradeDecisionMeta | null;
+        return meta?.decision === 'buy' || meta?.decision === 'sell';
+      });
+      
+      return filtered.slice(0, 15) as PassingTrade[];
     },
     refetchInterval: 30000,
   });
@@ -88,12 +112,12 @@ export function PassingTradesFeed({ compact }: { compact?: boolean }) {
           <ScrollArea className="h-32">
             <div className="space-y-2">
               {trades.slice(0, 5).map((trade) => {
-                const meta = trade.metadata as Json;
-                const decision = meta.decision as string;
-                const symbol = meta.symbol as string;
-                const confidence = meta.confidence as number;
-                const signalConf = (meta.signal_confidence as number) ?? confidence;
-                const maturity = (meta.maturity_multiplier as number) ?? 1;
+                const meta = trade.metadata as TradeDecisionMeta;
+                const decision = meta.decision ?? '';
+                const symbol = meta.symbol ?? '';
+                const confidence = meta.confidence ?? 0;
+                const signalConf = meta.signal_confidence ?? meta.confidence_components?.signal_confidence ?? confidence;
+                const maturity = meta.maturity_multiplier ?? meta.confidence_components?.maturity_multiplier ?? 1;
                 
                 return (
                   <div key={trade.id} className="flex items-center justify-between text-xs">
@@ -135,15 +159,15 @@ export function PassingTradesFeed({ compact }: { compact?: boolean }) {
         <ScrollArea className="h-64">
           <div className="space-y-3">
             {trades.map((trade) => {
-              const meta = trade.metadata as Json;
-              const decision = meta.decision as string;
-              const symbol = meta.symbol as string;
-              const reasons = (meta.reasons as string[]) ?? [];
-              const confidence = meta.confidence as number;
-              const signalConf = (meta.signal_confidence as number) ?? confidence;
-              const maturity = (meta.maturity_multiplier as number) ?? 1;
-              const costContext = meta.cost_context as CostContext | undefined;
-              const regimeContext = meta.regime_context as RegimeContext | undefined;
+              const meta = trade.metadata as TradeDecisionMeta;
+              const decision = meta.decision ?? '';
+              const symbol = meta.symbol ?? '';
+              const reasons = meta.reasons ?? meta.entry_reason ?? [];
+              const confidence = meta.confidence ?? 0;
+              const signalConf = meta.signal_confidence ?? meta.confidence_components?.signal_confidence ?? confidence;
+              const maturity = meta.maturity_multiplier ?? meta.confidence_components?.maturity_multiplier ?? 1;
+              const costContext = meta.cost_context;
+              const regimeContext = meta.regime_context;
               
               const feePct = costContext?.estimated_fee_pct;
               const slippageBps = costContext?.estimated_slippage_bps;

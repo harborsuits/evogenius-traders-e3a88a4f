@@ -1837,7 +1837,7 @@ Deno.serve(async (req) => {
     }
     
     // Use the best candidate
-    const { symbol, market, decision, reasons, confidence, exitReason, positionQty, gateFailures } = bestCandidate;
+    const { symbol, market, decision, reasons, confidence, confidence_components, exitReason, positionQty, gateFailures } = bestCandidate;
     const dataAge = getDataAge(market.updated_at);
     const regime = getRegime(market);
     
@@ -1981,6 +1981,11 @@ Deno.serve(async (req) => {
         symbols_evaluated: symbolsToEvaluate.length,
         evaluations,
         ...tags,
+        // Confidence breakdown at root level for UI (override tags.confidence with split values)
+        signal_confidence: confidence_components.signal_confidence,
+        maturity_multiplier: confidence_components.maturity_multiplier,
+        confidence_components,
+        reasons,
         mode: 'paper',
         thresholds_used: thresholdsUsed,
         drought_state: {

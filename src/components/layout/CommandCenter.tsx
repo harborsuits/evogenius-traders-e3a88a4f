@@ -48,7 +48,7 @@ const RIGHT_COLUMN_IDS = [
   'rollover',
 ];
 
-// Rolodex card component with emphasis effects
+// Rolodex card component with emphasis effects - behaves exactly like orbit cards
 function RolodexCard({ 
   card, 
   isActive, 
@@ -72,21 +72,22 @@ function RolodexCard({
     <div
       onClick={onClick}
       className={cn(
-        "scroll-snap-align-center transition-all duration-300 cursor-pointer",
-        "transform-gpu",
+        "transition-all duration-300 cursor-pointer transform-gpu",
+        // Active card: full visibility + subtle scale
         isActive 
           ? "scale-[1.02] opacity-100" 
-          : "scale-100 opacity-70 hover:opacity-85"
+          // Inactive: dimmed but still readable (not too dark)
+          : "scale-[0.98] opacity-85 hover:opacity-95"
       )}
     >
       <Card 
         variant={isActive ? "glow" : "default"}
         className={cn(
-          "h-full transition-all duration-300",
-          isActive && "ring-1 ring-primary/40 shadow-lg shadow-primary/10"
+          "transition-all duration-300 overflow-hidden",
+          isActive && "ring-1 ring-primary/50 shadow-xl shadow-primary/15"
         )}
       >
-        <CardHeader className="py-2 px-3 flex flex-row items-center justify-between">
+        <CardHeader className="py-3 px-4 flex flex-row items-center justify-between border-b border-border/20">
           <CardTitle className="text-xs font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
             <Grip className="h-3 w-3 opacity-50" />
             {card.title}
@@ -101,7 +102,7 @@ function RolodexCard({
             </button>
           )}
         </CardHeader>
-        <CardContent className="px-3 pb-3 pt-0">
+        <CardContent className="px-4 py-4">
           <CardComponent compact />
         </CardContent>
       </Card>
@@ -109,7 +110,7 @@ function RolodexCard({
   );
 }
 
-// Rolodex column with snap scrolling
+// Rolodex column with snap scrolling - true "one card viewport" experience
 function RolodexColumn({ 
   cards, 
   allCards 
@@ -118,6 +119,7 @@ function RolodexColumn({
   allCards: CommandCard[];
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [activeIndex, setActiveIndex] = useState(0);
   
   // Get card objects
@@ -125,52 +127,56 @@ function RolodexColumn({
     .map(id => allCards.find(c => c.id === id))
     .filter((c): c is CommandCard => c !== undefined);
   
-  // Handle scroll to detect active card
-  const handleScroll = useCallback(() => {
-    if (!scrollRef.current) return;
-    
-    const container = scrollRef.current;
-    const containerRect = container.getBoundingClientRect();
-    const containerCenter = containerRect.top + containerRect.height / 2;
-    
-    const cards = container.querySelectorAll('[data-rolodex-card]');
-    let closestIndex = 0;
-    let closestDistance = Infinity;
-    
-    cards.forEach((card, index) => {
-      const rect = card.getBoundingClientRect();
-      const cardCenter = rect.top + rect.height / 2;
-      const distance = Math.abs(containerCenter - cardCenter);
-      
-      if (distance < closestDistance) {
-        closestDistance = distance;
-        closestIndex = index;
-      }
-    });
-    
-    setActiveIndex(closestIndex);
-  }, []);
-  
+  // IntersectionObserver for detecting active card (more reliable than scroll math)
   useEffect(() => {
     const scrollEl = scrollRef.current;
     if (!scrollEl) return;
     
-    scrollEl.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll(); // Initial check
+    const observerOptions: IntersectionObserverInit = {
+      root: scrollEl,
+      threshold: [0, 0.3, 0.5, 0.7, 1],
+      rootMargin: '-35% 0px -35% 0px', // Focus on center 30% of viewport
+    };
     
-    return () => scrollEl.removeEventListener('scroll', handleScroll);
-  }, [handleScroll]);
+    const intersectionRatios = new Map<number, number>();
+    
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        const index = Number(entry.target.getAttribute('data-card-index'));
+        if (!isNaN(index)) {
+          intersectionRatios.set(index, entry.intersectionRatio);
+        }
+      });
+      
+      // Find the card with highest intersection ratio
+      let maxRatio = 0;
+      let maxIndex = 0;
+      intersectionRatios.forEach((ratio, index) => {
+        if (ratio > maxRatio) {
+          maxRatio = ratio;
+          maxIndex = index;
+        }
+      });
+      
+      if (maxRatio > 0) {
+        setActiveIndex(maxIndex);
+      }
+    }, observerOptions);
+    
+    // Observe all card wrappers
+    cardRefs.current.forEach((el) => {
+      observer.observe(el);
+    });
+    
+    return () => observer.disconnect();
+  }, [columnCards.length]);
   
-  const scrollToCard = (index: number) => {
-    const scrollEl = scrollRef.current;
-    if (!scrollEl) return;
-    
-    const cards = scrollEl.querySelectorAll('[data-rolodex-card]');
-    const card = cards[index];
-    if (card) {
-      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const scrollToCard = useCallback((index: number) => {
+    const cardEl = cardRefs.current.get(index);
+    if (cardEl) {
+      cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-  };
+  }, []);
   
   // Keyboard navigation
   useEffect(() => {
@@ -188,46 +194,46 @@ function RolodexColumn({
     
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeIndex, columnCards.length]);
+  }, [activeIndex, columnCards.length, scrollToCard]);
   
   return (
     <div className="h-full flex flex-col">
-      {/* Scroll container with snap */}
+      {/* Scroll container - fixed viewport height with snap */}
       <div 
         ref={scrollRef}
-        className={cn(
-          "flex-1 overflow-y-auto overflow-x-hidden",
-          "scroll-smooth",
-          "px-3 py-6"
-        )}
+        className="flex-1 overflow-y-auto overflow-x-hidden scroll-smooth"
         style={{
           scrollSnapType: 'y mandatory',
-          scrollPaddingTop: '4rem',
-          scrollPaddingBottom: '4rem',
+          scrollPaddingBlock: '12vh',
         }}
       >
-        {/* Spacer for peeking effect at top */}
-        <div className="h-16" />
+        {/* Top spacer - allows first card to center */}
+        <div className="h-[15vh]" aria-hidden="true" />
         
-        <div className="space-y-6">
-          {columnCards.map((card, index) => (
-            <div 
-              key={card.id}
-              data-rolodex-card
-              className="snap-center"
-              style={{ scrollSnapAlign: 'center' }}
-            >
+        {columnCards.map((card, index) => (
+          <div 
+            key={card.id}
+            ref={(el) => {
+              if (el) cardRefs.current.set(index, el);
+              else cardRefs.current.delete(index);
+            }}
+            data-rolodex-card
+            data-card-index={index}
+            className="min-h-[70vh] flex items-center px-3 py-4"
+            style={{ scrollSnapAlign: 'center' }}
+          >
+            <div className="w-full">
               <RolodexCard 
                 card={card} 
                 isActive={index === activeIndex}
                 onClick={() => scrollToCard(index)}
               />
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
         
-        {/* Spacer for peeking effect at bottom */}
-        <div className="h-16" />
+        {/* Bottom spacer - allows last card to center */}
+        <div className="h-[15vh]" aria-hidden="true" />
       </div>
       
       {/* Position indicator dots */}
@@ -237,10 +243,11 @@ function RolodexColumn({
             <button
               key={index}
               onClick={() => scrollToCard(index)}
+              aria-label={`Go to card ${index + 1}`}
               className={cn(
-                "w-1.5 h-1.5 rounded-full transition-all",
+                "w-1.5 h-1.5 rounded-full transition-all duration-200",
                 index === activeIndex 
-                  ? "bg-primary w-3" 
+                  ? "bg-primary w-4" 
                   : "bg-muted-foreground/30 hover:bg-muted-foreground/50"
               )}
             />

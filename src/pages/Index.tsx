@@ -10,6 +10,11 @@ import { usePerformanceAlerts } from '@/hooks/usePerformanceAlerts';
 import { SystemStatus, Generation } from '@/types/evotrader';
 import { Loader2 } from 'lucide-react';
 
+// Consolidated hero tiles
+import { DecisionStateTile } from '@/components/dashboard/DecisionStateTile';
+import { MarketConditionsTile } from '@/components/dashboard/MarketConditionsTile';
+import { SystemAuditDrawer } from '@/components/dashboard/SystemAuditDrawer';
+
 // Cockpit tiles
 import { 
   TradeCycleTile, 
@@ -20,43 +25,47 @@ import {
   RolloverTile, 
   GenComparisonTile, 
   LineageTile, 
-  DecisionLogTile, 
   AgentInactivityTile, 
   SymbolCoverageTile,
   CatalystWatchTile,
   AutopsyTile,
-  DroughtMonitorTile,
-  MarketRegimeTile,
-  TransactionCostTile,
-  AuditTile,
-  PassingTradesTile,
 } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PositionsCardContent, ActivityCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
 
-// Static cards that don't depend on dynamic data
+// Consolidated layout: ~10 cards reduced to focused hierarchy
+// Row 1 (Hero): Decision State + Capital
+// Row 2 (Context): Market Conditions + Agents
+// Row 3 (Drillable): Activity, Positions, etc.
+// Row 4 (Advanced): System Audit (collapsible)
 const staticCards: OrbitalCard[] = [
-  // Cockpit tiles (not drillable)
-  { id: 'trade-cycle', title: 'Trade Cycle', type: 'cockpit', component: TradeCycleTile },
-  { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
-  { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
+  // ROW 1: Primary status (always visible, high signal)
+  { id: 'decision-state', title: 'Decision State', type: 'cockpit', component: DecisionStateTile },
   { id: 'capital', title: 'Capital Overview', type: 'cockpit', component: CapitalOverviewTile },
-  // Phase 6A: Regime + Cost visibility
-  { id: 'market-regime', title: 'Market Regime', type: 'cockpit', component: MarketRegimeTile },
-  { id: 'transaction-costs', title: 'Transaction Costs', type: 'cockpit', component: TransactionCostTile },
-  { id: 'tuning-audit', title: 'Tuning Audit', type: 'cockpit', component: AuditTile },
-  // Other cockpit tiles
+  
+  // ROW 2: Context cards
+  { id: 'market-conditions', title: 'Market Conditions', type: 'cockpit', component: MarketConditionsTile },
+  { id: 'agent-activity', title: 'Agent Activity', type: 'cockpit', component: AgentInactivityTile },
+  
+  // ROW 3: Operational tiles
+  { id: 'trade-cycle', title: 'Trade Cycle', type: 'cockpit', component: TradeCycleTile },
+  { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
+  { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
+  
+  // ROW 4: Discovery tiles
   { id: 'symbol-coverage', title: 'Symbol Coverage', type: 'cockpit', component: SymbolCoverageTile },
-  { id: 'agent-inactivity', title: 'Agent Activity', type: 'cockpit', component: AgentInactivityTile },
   { id: 'catalyst-watch', title: 'Catalyst Watch', type: 'cockpit', component: CatalystWatchTile },
   { id: 'autopsy', title: 'Performance Autopsy', type: 'cockpit', component: AutopsyTile },
-  { id: 'drought', title: 'Signal Drought', type: 'cockpit', component: DroughtMonitorTile },
-  { id: 'passing-trades', title: 'Passing Trades', type: 'cockpit', component: PassingTradesTile },
+  
+  // ROW 5: Advanced (audit drawer)
+  { id: 'system-audit', title: 'System Audit', type: 'cockpit', component: SystemAuditDrawer },
+  
+  // Evolution comparison (contextual)
   { id: 'gen-compare', title: 'Gen 10 vs 11', type: 'cockpit', component: GenComparisonTile },
   { id: 'lineage', title: 'Lineage', type: 'cockpit', component: LineageTile },
   { id: 'rollover', title: 'Rollover Checklist', type: 'cockpit', component: RolloverTile },
-  // Drillable cards
-  { id: 'decision-log', title: 'Decision Log', type: 'drillable', drilldownPath: '/decisions', component: DecisionLogTile },
+  
+  // Drillable cards (deep dive)
   { id: 'activity', title: 'Activity', type: 'drillable', drilldownPath: '/trades', component: ActivityCardContent },
   { id: 'agents', title: 'Agent Leaderboard', type: 'drillable', drilldownPath: '/agents', component: AgentsCardContent },
   { id: 'positions', title: 'Positions', type: 'drillable', drilldownPath: '/positions', component: PositionsCardContent },
@@ -75,7 +84,7 @@ const Index = () => {
   const status = (systemState?.status ?? 'stopped') as SystemStatus;
   const currentGenId = systemState?.current_generation_id;
 
-  // Build cards with dynamic genId path for GEN_010 Health
+  // Build cards with dynamic genId path for GEN Health
   const orbitalCards = useMemo<OrbitalCard[]>(() => {
     const genHealthPath = currentGenId 
       ? `/generations/${currentGenId}` 
@@ -83,17 +92,17 @@ const Index = () => {
     
     const genHealthCard: OrbitalCard = {
       id: 'gen-health',
-      title: 'GEN_010 Health',
+      title: 'GEN Health',
       type: 'drillable',
       drilldownPath: genHealthPath,
       component: GenHealthTile,
     };
     
-    // Put gen-health first among drillables for visibility
+    // Insert gen-health after the first 4 cards (hero + context rows)
     return [
-      ...staticCards.slice(0, 4), // cockpit tiles
+      ...staticCards.slice(0, 4),
       genHealthCard,
-      ...staticCards.slice(4), // other drillables
+      ...staticCards.slice(4),
     ];
   }, [currentGenId]);
 

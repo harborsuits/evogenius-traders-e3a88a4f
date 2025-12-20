@@ -433,115 +433,17 @@ export function CommandCenter({ cards }: CommandCenterProps) {
   };
   
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={pointerWithin}
-      onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDragEnd={handleDragEnd}
-      measuring={{
-        droppable: { strategy: MeasuringStrategy.Always },
-      }}
-    >
-      {/* Debug overlay - shows what dnd-kit sees */}
-      {activeId && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] bg-black/90 text-white px-4 py-2 rounded-lg font-mono text-xs shadow-lg">
-          <div>active: <span className="text-yellow-400">{activeId}</span></div>
-          <div>over: <span className={lastOverId?.startsWith('lane:') ? 'text-green-400' : 'text-red-400'}>{lastOverId ?? 'null'}</span></div>
-        </div>
-      )}
+    <div className="h-[100dvh] w-full flex flex-col bg-background overflow-hidden">
+      <LayoutToolbar onReset={resetLayout} />
       
-      {/* Desktop: 3-column grid */}
-      <div className="hidden lg:flex h-[100dvh] w-full flex-col bg-background overflow-hidden">
-        <LayoutToolbar onReset={resetLayout} />
-        
-        <div className="flex-1 min-h-0 grid grid-cols-12 gap-0 overflow-hidden">
-          {/* Left: Orbit (Card Tray) - special rolodex behavior */}
-          <div className="col-span-4 h-full min-h-0 overflow-hidden border-r border-border/30 bg-muted/5">
-            <OrbitLane 
-              cardIds={layout.orbit} 
-              allCards={cards}
-              onReturnToOrbit={handleReturnToOrbit}
-            />
-          </div>
-          
-          {/* Middle: Column A (Workspace) - uses LaneShell */}
-          <div className="col-span-4 h-full min-h-0 overflow-hidden border-r border-border/30">
-            <LaneShell lane="A" title="WORKSPACE A" cardIds={layout.A}>
-              {getCardsForLane(layout.A).map(card => (
-                <DraggableCard 
-                  key={card.id}
-                  card={card} 
-                  lane="A"
-                  onReturnToOrbit={() => handleReturnToOrbit(card.id)}
-                  compact
-                />
-              ))}
-            </LaneShell>
-          </div>
-          
-          {/* Right: Column B (Workspace) - uses LaneShell (IDENTICAL to A) */}
-          <div className="col-span-4 h-full min-h-0 overflow-hidden">
-            <LaneShell lane="B" title="WORKSPACE B" cardIds={layout.B}>
-              {getCardsForLane(layout.B).map(card => (
-                <DraggableCard 
-                  key={card.id}
-                  card={card} 
-                  lane="B"
-                  onReturnToOrbit={() => handleReturnToOrbit(card.id)}
-                  compact
-                />
-              ))}
-            </LaneShell>
-          </div>
-        </div>
-      </div>
-      
-      {/* Tablet: 2-column grid */}
-      <div className="hidden md:flex lg:hidden h-[100dvh] w-full flex-col bg-background overflow-hidden">
-        <LayoutToolbar onReset={resetLayout} />
-        
-        <div className="flex-1 min-h-0 grid grid-cols-2 gap-0 overflow-hidden">
-          {/* Left: Orbit */}
-          <div className="h-full min-h-0 overflow-hidden border-r border-border/30 bg-muted/5">
-            <OrbitLane 
-              cardIds={layout.orbit} 
-              allCards={cards}
-              onReturnToOrbit={handleReturnToOrbit}
-            />
-          </div>
-          
-          {/* Right: Combined workspace */}
-          <div className="h-full min-h-0 overflow-hidden">
-            <LaneShell lane="A" title="WORKSPACE" cardIds={[...layout.A, ...layout.B]}>
-              {getCardsForLane([...layout.A, ...layout.B]).map(card => (
-                <DraggableCard 
-                  key={card.id}
-                  card={card} 
-                  lane={layout.A.includes(card.id) ? 'A' : 'B'}
-                  onReturnToOrbit={() => handleReturnToOrbit(card.id)}
-                  compact
-                />
-              ))}
-            </LaneShell>
-          </div>
-        </div>
-      </div>
-      
-      {/* Mobile: Single column (simplified, no DnD) */}
-      <div className="md:hidden h-[100dvh] w-full bg-background overflow-y-auto">
-        <MobileSection 
-          title="All Cards" 
-          cards={[...layout.orbit, ...layout.A, ...layout.B]} 
-          allCards={cards} 
-          defaultOpen={true} 
+      {/* Single Orbit lane - full width */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <OrbitLane 
+          cardIds={allCardIds} 
+          allCards={cards}
+          onReturnToOrbit={handleReturnToOrbit}
         />
       </div>
-      
-      {/* Drag overlay */}
-      <DragOverlay>
-        {activeCard ? <DragOverlayCard card={activeCard} /> : null}
-      </DragOverlay>
-    </DndContext>
+    </div>
   );
 }

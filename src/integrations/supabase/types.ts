@@ -22,6 +22,7 @@ export type Database = {
           genes: Json
           id: string
           is_elite: boolean
+          role: Database["public"]["Enums"]["agent_role"]
           status: Database["public"]["Enums"]["agent_status"]
           strategy_template: Database["public"]["Enums"]["strategy_template"]
         }
@@ -32,6 +33,7 @@ export type Database = {
           genes: Json
           id?: string
           is_elite?: boolean
+          role?: Database["public"]["Enums"]["agent_role"]
           status?: Database["public"]["Enums"]["agent_status"]
           strategy_template: Database["public"]["Enums"]["strategy_template"]
         }
@@ -42,6 +44,7 @@ export type Database = {
           genes?: Json
           id?: string
           is_elite?: boolean
+          role?: Database["public"]["Enums"]["agent_role"]
           status?: Database["public"]["Enums"]["agent_status"]
           strategy_template?: Database["public"]["Enums"]["strategy_template"]
         }
@@ -346,6 +349,8 @@ export type Database = {
           created_at: string
           id: string
           name: string
+          peak_equity: number
+          peak_equity_updated_at: string
           starting_cash: number
           updated_at: string
         }
@@ -355,6 +360,8 @@ export type Database = {
           created_at?: string
           id?: string
           name?: string
+          peak_equity?: number
+          peak_equity_updated_at?: string
           starting_cash?: number
           updated_at?: string
         }
@@ -364,6 +371,8 @@ export type Database = {
           created_at?: string
           id?: string
           name?: string
+          peak_equity?: number
+          peak_equity_updated_at?: string
           starting_cash?: number
           updated_at?: string
         }
@@ -766,6 +775,7 @@ export type Database = {
       start_new_generation: { Args: never; Returns: string }
     }
     Enums: {
+      agent_role: "core" | "explorer"
       agent_status: "elite" | "active" | "probation" | "removed"
       generation_termination_reason: "time" | "trades" | "drawdown"
       paper_order_side: "buy" | "sell"
@@ -902,6 +912,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      agent_role: ["core", "explorer"],
       agent_status: ["elite", "active", "probation", "removed"],
       generation_termination_reason: ["time", "trades", "drawdown"],
       paper_order_side: ["buy", "sell"],

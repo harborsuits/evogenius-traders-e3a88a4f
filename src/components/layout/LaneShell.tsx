@@ -13,18 +13,10 @@ interface LaneShellProps {
 }
 
 /**
- * LaneShell - Unified container for Orbit, A, and B lanes
+ * LaneShell - Unified container for A and B lanes
  * 
- * Responsibilities:
- * - Owns useDroppable({ id: 'lane:<lane>' }) on outer wrapper
- * - Enforces correct scroll chain
- * - Consistent padding/spacing
- * - Highlights when isOver
- * 
- * Structure (copy EXACTLY):
- * - Outer wrapper: h-full min-h-0 flex flex-col overflow-hidden rounded-xl border
- * - Header: flex-none sticky top-0 z-10 px-3 py-2 text-[11px] tracking-widest
- * - Body: flex-1 min-h-0 overflow-y-auto p-2 space-y-2
+ * CRITICAL: The outer div MUST receive setNodeRef for droppable to work.
+ * The droppable ref must be on a sized element (h-full).
  */
 export function LaneShell({ lane, title, cardIds, children }: LaneShellProps) {
   const { isOver, setNodeRef } = useDroppable({
@@ -39,7 +31,7 @@ export function LaneShell({ lane, title, cardIds, children }: LaneShellProps) {
       ref={setNodeRef}
       className={cn(
         "h-full min-h-0 flex flex-col overflow-hidden",
-        isOver && "bg-primary/5"
+        isOver && "ring-2 ring-primary/60 bg-primary/5"
       )}
       style={{ transform: 'none' }} // NO transforms on droppable wrapper
     >

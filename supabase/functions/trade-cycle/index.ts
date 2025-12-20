@@ -20,6 +20,8 @@ interface MarketData {
   updated_at: string;
 }
 
+type AgentRole = 'core' | 'explorer';
+
 interface Agent {
   id: string;
   generation_id: string;
@@ -27,6 +29,7 @@ interface Agent {
   genes: Record<string, number>;
   capital_allocation: number;
   status: string;
+  role: AgentRole;
 }
 
 interface TradeTags {
@@ -38,6 +41,7 @@ interface TradeTags {
   pattern_id: string;
   test_mode?: boolean;
   drought_mode?: boolean;
+  explorer_mode?: boolean;
   market_snapshot: {
     price: number;
     change_24h: number;
@@ -107,6 +111,13 @@ const DROUGHT_SAFETY = {
   min_cash_pct: 50,            // Must have 50%+ cash to trade in drought
   vol_spike_atr: 1.8,          // Exit drought if ATR ratio > 1.8
   kill_cooldown_hours: 4,      // Cooldown after a kill
+};
+
+// EXPLORER AGENT CONSTRAINTS (stricter than general drought)
+const EXPLORER_CONSTRAINTS = {
+  size_multiplier: 0.25,       // 25% normal size (half of drought)
+  max_trades_per_hour: 1,      // Stricter cap
+  min_confidence: 0.55,        // Higher quality floor
 };
 
 // TEST MODE THRESHOLDS - VERY loose for pipeline validation only
@@ -247,6 +258,9 @@ interface ResolvedDroughtState {
   override: 'auto' | 'force_off' | 'force_on';
   detection: DroughtState;
   equityDrawdownPct?: number;
+  peakEquityDrawdownPct?: number;
+  equity?: number;
+  peakEquity?: number;
 }
 
 // Compute true equity = cash + sum(position_qty * current_price)
@@ -254,14 +268,15 @@ async function computeEquity(
   supabase: any,
   accountId: string,
   marketBySymbol: Map<string, MarketData>
-): Promise<{ cash: number; positionsValue: number; equity: number }> {
+): Promise<{ cash: number; positionsValue: number; equity: number; peakEquity: number }> {
   const { data: account } = await supabase
     .from('paper_accounts')
-    .select('cash')
+    .select('cash, peak_equity')
     .eq('id', accountId)
     .single();
   
   const cash = account?.cash ?? 0;
+  const peakEquity = account?.peak_equity ?? 1000;
   
   const { data: positions } = await supabase
     .from('paper_positions')
@@ -276,7 +291,22 @@ async function computeEquity(
     }
   }
   
-  return { cash, positionsValue, equity: cash + positionsValue };
+  const equity = cash + positionsValue;
+  
+  // Update peak equity if current equity is higher
+  if (equity > peakEquity) {
+    await supabase
+      .from('paper_accounts')
+      .update({ 
+        peak_equity: equity, 
+        peak_equity_updated_at: new Date().toISOString() 
+      })
+      .eq('id', accountId);
+    
+    return { cash, positionsValue, equity, peakEquity: equity };
+  }
+  
+  return { cash, positionsValue, equity, peakEquity };
 }
 
 async function resolveDroughtMode(
@@ -336,13 +366,18 @@ async function resolveDroughtMode(
   // 6. Determine if should be active (auto or force_on)
   const shouldBeActive = override === 'force_on' || detection.isActive;
   
-  // 7. Compute TRUE equity (not just cash)
-  const { cash, positionsValue, equity } = await computeEquity(supabase, accountId, marketBySymbol);
+  // 7. Compute TRUE equity (not just cash) and get peak equity
+  const { cash, positionsValue, equity, peakEquity } = await computeEquity(supabase, accountId, marketBySymbol);
+  
+  // Calculate both metrics:
+  // - equityDrawdownPct: vs starting cash (legacy/informational)
+  // - peakEquityDrawdownPct: vs peak equity (true max drawdown - used for kill)
   const equityDrawdownPct = ((startingCash - equity) / startingCash) * 100;
+  const peakEquityDrawdownPct = peakEquity > 0 ? ((peakEquity - equity) / peakEquity) * 100 : 0;
   const cashPct = (cash / startingCash) * 100;
   
-  // 8. Kill check: equity drawdown (true drawdown, not cash depletion)
-  if (shouldBeActive && configId && equityDrawdownPct > DROUGHT_SAFETY.max_drawdown_pct) {
+  // 8. Kill check: drawdown FROM PEAK (true max drawdown)
+  if (shouldBeActive && configId && peakEquityDrawdownPct > DROUGHT_SAFETY.max_drawdown_pct) {
     const cooldownEnd = new Date(now.getTime() + DROUGHT_SAFETY.kill_cooldown_hours * 60 * 60 * 1000).toISOString();
     
     await supabase
@@ -356,10 +391,12 @@ async function resolveDroughtMode(
     await supabase.from('control_events').insert({
       action: 'drought_kill',
       metadata: {
-        reason: 'equity_drawdown',
+        reason: 'peak_equity_drawdown',
         equity,
+        peak_equity: peakEquity,
         starting_cash: startingCash,
-        drawdown_pct: equityDrawdownPct,
+        drawdown_from_peak_pct: peakEquityDrawdownPct,
+        drawdown_from_start_pct: equityDrawdownPct,
         threshold: DROUGHT_SAFETY.max_drawdown_pct,
         cooldown_until: cooldownEnd,
       },
@@ -370,11 +407,14 @@ async function resolveDroughtMode(
       active: false,
       blocked: false,
       killed: true,
-      killReason: `equity_drawdown_${equityDrawdownPct.toFixed(1)}pct`,
+      killReason: `peak_drawdown_${peakEquityDrawdownPct.toFixed(1)}pct`,
       cooldownUntil: cooldownEnd,
       override,
       detection,
       equityDrawdownPct,
+      peakEquityDrawdownPct,
+      equity,
+      peakEquity,
     };
   }
   
@@ -395,6 +435,9 @@ async function resolveDroughtMode(
         override,
         detection,
         equityDrawdownPct,
+        peakEquityDrawdownPct,
+        equity,
+        peakEquity,
       };
     }
   }
@@ -410,6 +453,9 @@ async function resolveDroughtMode(
       override,
       detection,
       equityDrawdownPct,
+      peakEquityDrawdownPct,
+      equity,
+      peakEquity,
     };
   }
   
@@ -435,6 +481,9 @@ async function resolveDroughtMode(
       override,
       detection,
       equityDrawdownPct,
+      peakEquityDrawdownPct,
+      equity,
+      peakEquity,
     };
   }
   
@@ -446,6 +495,9 @@ async function resolveDroughtMode(
     override,
     detection,
     equityDrawdownPct,
+    peakEquityDrawdownPct,
+    equity,
+    peakEquity,
   };
 }
 
@@ -769,19 +821,39 @@ Deno.serve(async (req) => {
       console.log(`[trade-cycle] DROUGHT MODE KILLED: ${droughtKillReason}`);
     }
 
-    // 5. Get active agents
-    const { data: agents, error: agentsError } = await supabase
+    // 5. Get active agents - fetch all, then filter by role based on drought state
+    const { data: allAgents, error: agentsError } = await supabase
       .from('agents')
       .select('*')
       .eq('status', 'active')
       .limit(100);
 
-    if (agentsError || !agents || agents.length === 0) {
+    if (agentsError || !allAgents || allAgents.length === 0) {
       console.log('[trade-cycle] No active agents found');
       return new Response(
         JSON.stringify({ ok: true, skipped: true, reason: 'no_agents' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+    
+    // Filter agents by role based on drought state
+    // - Drought active: prefer explorer agents (they can use relaxed thresholds)
+    // - Normal mode: use core agents only
+    const explorerAgents = allAgents.filter((a: Agent) => a.role === 'explorer');
+    const coreAgents = allAgents.filter((a: Agent) => a.role === 'core' || !a.role);
+    
+    let agents: Agent[];
+    let usingExplorerAgent = false;
+    
+    if (droughtModeActive && explorerAgents.length > 0) {
+      agents = explorerAgents as Agent[];
+      usingExplorerAgent = true;
+      console.log(`[trade-cycle] DROUGHT MODE: Using ${explorerAgents.length} explorer agents`);
+    } else {
+      agents = coreAgents as Agent[];
+      if (droughtModeActive && explorerAgents.length === 0) {
+        console.log('[trade-cycle] DROUGHT MODE: No explorer agents available, using core agents conservatively');
+      }
     }
 
     // 6. Get current positions
@@ -798,6 +870,7 @@ Deno.serve(async (req) => {
     // 8. Pick one agent for this cycle
     const agentIndex = Math.floor(Date.now() / 60000) % agents.length;
     const agent = agents[agentIndex] as Agent;
+    const isExplorerTrade = usingExplorerAgent && agent.role === 'explorer';
     
     // 9. Pick symbols using deterministic rotation
     const SYMBOLS_PER_AGENT = 3;
@@ -959,6 +1032,9 @@ Deno.serve(async (req) => {
             holds_48h: droughtResolved.detection.longWindowHolds,
             orders_48h: droughtResolved.detection.longWindowOrders,
             equity_drawdown_pct: droughtResolved.equityDrawdownPct,
+            peak_equity_drawdown_pct: droughtResolved.peakEquityDrawdownPct,
+            equity: droughtResolved.equity,
+            peak_equity: droughtResolved.peakEquity,
           },
           gate_failures: allGateFailures,
           nearest_pass: nearestPassGlobal ? {
@@ -988,9 +1064,64 @@ Deno.serve(async (req) => {
     const dataAge = getDataAge(market.updated_at);
     const regime = getRegime(market);
     
-    // Calculate qty with drought mode adjustment
+    // Explorer agent: enforce stricter hourly cap
+    if (isExplorerTrade) {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const { data: explorerOrders } = await supabase
+        .from('paper_orders')
+        .select('tags')
+        .gte('created_at', oneHourAgo)
+        .eq('status', 'filled')
+        .eq('agent_id', agent.id);
+      
+      const explorerOrderCount = (explorerOrders ?? []).filter(
+        (o: { tags: { explorer_mode?: boolean } }) => o.tags?.explorer_mode === true
+      ).length;
+      
+      if (explorerOrderCount >= EXPLORER_CONSTRAINTS.max_trades_per_hour) {
+        console.log(`[trade-cycle] Explorer agent ${agent.id.substring(0, 8)} hit hourly cap (${explorerOrderCount})`);
+        await supabase.from('control_events').insert({
+          action: 'trade_decision',
+          metadata: {
+            cycle_id: cycleId,
+            agent_id: agent.id,
+            decision: 'hold',
+            reason: 'explorer_hourly_cap',
+            explorer_orders_1h: explorerOrderCount,
+          },
+        });
+        return new Response(
+          JSON.stringify({ ok: true, decision: 'hold', reason: 'explorer_hourly_cap' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      // Explorer agent: enforce stricter confidence floor
+      if (confidence < EXPLORER_CONSTRAINTS.min_confidence) {
+        console.log(`[trade-cycle] Explorer confidence ${confidence.toFixed(2)} < ${EXPLORER_CONSTRAINTS.min_confidence}, skipping`);
+        await supabase.from('control_events').insert({
+          action: 'trade_decision',
+          metadata: {
+            cycle_id: cycleId,
+            agent_id: agent.id,
+            decision: 'hold',
+            reason: 'explorer_low_confidence',
+            confidence,
+            min_required: EXPLORER_CONSTRAINTS.min_confidence,
+          },
+        });
+        return new Response(
+          JSON.stringify({ ok: true, decision: 'hold', reason: 'explorer_low_confidence' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+    
+    // Calculate qty with drought/explorer mode adjustment
     const baseQty = symbol === 'BTC-USD' ? 0.0001 : 0.001;
-    const sizeMultiplier = droughtModeActive ? DROUGHT_SAFETY.size_multiplier : 1.0;
+    const sizeMultiplier = isExplorerTrade 
+      ? EXPLORER_CONSTRAINTS.size_multiplier 
+      : (droughtModeActive ? DROUGHT_SAFETY.size_multiplier : 1.0);
     const plannedQty = decision === 'sell' 
       ? Math.min(baseQty * sizeMultiplier, positionQty) 
       : baseQty * sizeMultiplier;
@@ -1014,6 +1145,11 @@ Deno.serve(async (req) => {
         age_seconds: dataAge,
       },
     };
+    
+    // Add explorer_mode tag for tracking
+    if (isExplorerTrade) {
+      (tags as TradeTags & { explorer_mode?: boolean }).explorer_mode = true;
+    }
 
     const evaluations = candidates
       .sort((a, b) => b.confidence - a.confidence)
@@ -1058,6 +1194,9 @@ Deno.serve(async (req) => {
           override: droughtResolved.override,
           reason: droughtResolved.detection.reason,
           equity_drawdown_pct: droughtResolved.equityDrawdownPct,
+          peak_equity_drawdown_pct: droughtResolved.peakEquityDrawdownPct,
+          equity: droughtResolved.equity,
+          peak_equity: droughtResolved.peakEquity,
         },
         gate_failures: gateFailures,
       },
@@ -1080,7 +1219,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`[trade-cycle] BEST: ${decision.toUpperCase()} ${finalQty} ${symbol} | conf=${confidence.toFixed(2)} | drought=${droughtModeActive} | reasons=${reasons.join(',')}`);
+    console.log(`[trade-cycle] BEST: ${decision.toUpperCase()} ${finalQty} ${symbol} | conf=${confidence.toFixed(2)} | drought=${droughtModeActive} | explorer=${isExplorerTrade} | reasons=${reasons.join(',')}`);
 
     // Submit to trade-execute
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
@@ -1111,10 +1250,12 @@ Deno.serve(async (req) => {
         ok: true,
         decision,
         agent_id: agent.id,
+        agent_role: agent.role,
         symbol,
         qty: finalQty,
         symbols_evaluated: symbolsToEvaluate,
         drought_mode: droughtModeActive,
+        explorer_mode: isExplorerTrade,
         execute_result: executeResult,
         duration_ms: Date.now() - startTime,
       }),

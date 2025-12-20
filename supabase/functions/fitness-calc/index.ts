@@ -55,6 +55,9 @@ interface FitnessComponents {
   net_pnl_after_costs: number;  // realized_pnl with explicit cost accounting
   cost_drag_pct: number;        // fees as % of gross profit (0-100+)
   avg_cost_per_trade: number;   // average fee per trade
+  // Phase 6B: Robust cost efficiency metrics
+  cost_efficiency: number;      // net_pnl / max(1, fees) - $ earned per $ spent on fees
+  fee_burden_pct: number;       // fees / (|pnl| + fees) * 100 - stable even when pnl near zero
 }
 
 // Filter out test mode trades
@@ -276,6 +279,8 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
       net_pnl_after_costs: 0,
       cost_drag_pct: 0,
       avg_cost_per_trade: 0,
+      cost_efficiency: 0,
+      fee_burden_pct: 0,
     };
   }
 
@@ -351,6 +356,10 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
   const avgCostPerTrade = learnableTrades.length > 0 
     ? pnlResult.totalFees / learnableTrades.length 
     : 0;
+  
+  // Phase 6B: Robust cost efficiency metrics (stable even with small/zero pnl)
+  const costEfficiency = netPnlAfterCosts / Math.max(1, pnlResult.totalFees);
+  const feeBurdenPct = (pnlResult.totalFees / Math.max(1, Math.abs(pnlResult.realizedPnl) + pnlResult.totalFees)) * 100;
 
   return {
     normalized_pnl: normalizedPnl,
@@ -368,6 +377,8 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
     net_pnl_after_costs: netPnlAfterCosts,
     cost_drag_pct: costDragPct,
     avg_cost_per_trade: avgCostPerTrade,
+    cost_efficiency: costEfficiency,
+    fee_burden_pct: feeBurdenPct,
   };
 }
 
@@ -859,14 +870,23 @@ Deno.serve(async (req) => {
           trades: r.fitness.total_trades,
           sharpe: r.fitness.sharpe_ratio.toFixed(2),
           drawdown: (r.fitness.max_drawdown * 100).toFixed(1) + '%',
+          total_fees: r.fitness.total_fees.toFixed(4),
           // Phase 6B: Net-cost metrics
           cost_drag_pct: r.fitness.cost_drag_pct.toFixed(1) + '%',
           avg_cost_per_trade: r.fitness.avg_cost_per_trade.toFixed(4),
+          cost_efficiency: r.fitness.cost_efficiency.toFixed(2),
+          fee_burden_pct: r.fitness.fee_burden_pct.toFixed(1) + '%',
         })),
         // Phase 6B: Aggregate cost metrics
         total_fees_all_agents: results.reduce((sum, r) => sum + r.fitness.total_fees, 0).toFixed(2),
         avg_cost_drag_pct: results.length > 0 
           ? (results.reduce((sum, r) => sum + r.fitness.cost_drag_pct, 0) / results.length).toFixed(1) + '%'
+          : '0%',
+        avg_cost_efficiency: results.length > 0
+          ? (results.reduce((sum, r) => sum + r.fitness.cost_efficiency, 0) / results.length).toFixed(2)
+          : '0',
+        avg_fee_burden_pct: results.length > 0
+          ? (results.reduce((sum, r) => sum + r.fitness.fee_burden_pct, 0) / results.length).toFixed(1) + '%'
           : '0%',
         duration_ms: Date.now() - startTime,
       },

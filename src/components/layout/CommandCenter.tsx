@@ -189,8 +189,9 @@ function OrbitLane({
                   else cardRefs.current.delete(index);
                 }}
                 data-card-index={index}
-                className="flex items-center px-3 py-2"
+                className="flex items-center justify-center px-3 py-2"
                 style={{ 
+                  height: 240,
                   scrollSnapAlign: 'center',
                   opacity: visualOpacity,
                   transition: 'opacity 300ms',

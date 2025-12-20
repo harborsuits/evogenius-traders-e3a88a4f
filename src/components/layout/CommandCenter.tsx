@@ -502,9 +502,9 @@ export function CommandCenter({ cards }: CommandCenterProps) {
       <div className="hidden lg:flex h-[100dvh] w-full flex-col bg-background overflow-hidden">
         <LayoutToolbar onReset={resetLayout} />
         
-        <div className="flex-1 min-h-0 grid grid-cols-12 gap-0">
+        <div className="flex-1 min-h-0 grid grid-cols-12 gap-0 overflow-hidden">
           {/* Left: Orbit (Card Tray) */}
-          <div className="col-span-4 h-full min-h-0 border-r border-border/30 bg-muted/5">
+          <div className="col-span-4 h-full min-h-0 overflow-hidden border-r border-border/30 bg-muted/5">
             <OrbitLane 
               cardIds={layout.orbit} 
               allCards={cards}
@@ -513,7 +513,7 @@ export function CommandCenter({ cards }: CommandCenterProps) {
           </div>
           
           {/* Middle: Column A (Workspace) */}
-          <div className="col-span-4 h-full min-h-0 border-r border-border/30">
+          <div className="col-span-4 h-full min-h-0 overflow-hidden border-r border-border/30">
             <WorkspaceColumn 
               lane="A"
               title="Column A"
@@ -524,7 +524,7 @@ export function CommandCenter({ cards }: CommandCenterProps) {
           </div>
           
           {/* Right: Column B (Workspace) */}
-          <div className="col-span-4 h-full min-h-0">
+          <div className="col-span-4 h-full min-h-0 overflow-hidden">
             <WorkspaceColumn 
               lane="B"
               title="Column B"
@@ -540,9 +540,9 @@ export function CommandCenter({ cards }: CommandCenterProps) {
       <div className="hidden md:flex lg:hidden h-[100dvh] w-full flex-col bg-background overflow-hidden">
         <LayoutToolbar onReset={resetLayout} />
         
-        <div className="flex-1 min-h-0 grid grid-cols-2 gap-0">
+        <div className="flex-1 min-h-0 grid grid-cols-2 gap-0 overflow-hidden">
           {/* Left: Orbit */}
-          <div className="h-full min-h-0 border-r border-border/30 bg-muted/5">
+          <div className="h-full min-h-0 overflow-hidden border-r border-border/30 bg-muted/5">
             <OrbitLane 
               cardIds={layout.orbit} 
               allCards={cards}
@@ -551,12 +551,14 @@ export function CommandCenter({ cards }: CommandCenterProps) {
           </div>
           
           {/* Right: Combined columns - make it a droppable */}
-          <TabletWorkspaceColumn
-            cardIds={[...layout.A, ...layout.B]}
-            allCards={cards}
-            layoutA={layout.A}
-            onReturnToOrbit={handleReturnToOrbit}
-          />
+          <div className="h-full min-h-0 overflow-hidden">
+            <TabletWorkspaceColumn
+              cardIds={[...layout.A, ...layout.B]}
+              allCards={cards}
+              layoutA={layout.A}
+              onReturnToOrbit={handleReturnToOrbit}
+            />
+          </div>
         </div>
       </div>
       

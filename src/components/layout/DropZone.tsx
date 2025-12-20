@@ -12,6 +12,7 @@ interface DropZoneProps {
 
 // DropZone is now VISUAL ONLY - no useDroppable here
 // The droppable ref is on the parent column container
+// IMPORTANT: Does NOT create its own scroll container - parent owns scrolling
 export function DropZone({ 
   lane, 
   title,
@@ -20,30 +21,30 @@ export function DropZone({
   children,
 }: DropZoneProps) {
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      {/* Sticky header */}
-      <div className="shrink-0 bg-background/95 backdrop-blur-sm border-b border-border/30 px-3 py-2">
+    <>
+      {/* Header - non-scrolling */}
+      <div className="flex-none bg-background/95 backdrop-blur-sm border-b border-border/30 px-3 py-2 z-10">
         <h2 className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
           {title}
         </h2>
       </div>
       
-      {/* Scrollable content area */}
+      {/* Scrollable content area - THE ONLY overflow-y-auto in the chain */}
       <div 
         className={cn(
-          "flex-1 overflow-y-auto transition-colors duration-200",
+          "flex-1 min-h-0 overflow-y-auto transition-colors duration-200 p-3",
           isOver && "bg-primary/10"
         )}
       >
         {isEmpty ? (
           <EmptyDropZone isOver={isOver} />
         ) : (
-          <div className="p-3 space-y-3">
+          <div className="space-y-3">
             {children}
           </div>
         )}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -51,7 +52,7 @@ function EmptyDropZone({ isOver }: { isOver: boolean }) {
   return (
     <div 
       className={cn(
-        "h-[60vh] flex flex-col items-center justify-center p-6 m-3",
+        "min-h-[200px] flex flex-col items-center justify-center p-6",
         "border-2 border-dashed rounded-lg transition-all duration-200",
         isOver 
           ? "border-primary bg-primary/10 shadow-lg shadow-primary/20 ring-2 ring-primary/30" 

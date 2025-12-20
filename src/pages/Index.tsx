@@ -60,7 +60,7 @@ const staticCards: CommandCard[] = [
   { id: 'agents', title: 'Agent Leaderboard', type: 'drillable', drilldownPath: '/agents', component: AgentsCardContent },
   { id: 'generations', title: 'Generations', type: 'drillable', drilldownPath: '/generations', component: GenerationsCardContent },
   { id: 'alerts', title: 'Alerts', type: 'drillable', drilldownPath: '/alerts', component: AlertsCardContent },
-  { id: 'gen-compare', title: 'Gen 10 vs 11', type: 'cockpit', component: GenComparisonTile },
+  { id: 'gen-compare', title: 'Generation Comparison', type: 'cockpit', component: GenComparisonTile },
   { id: 'lineage', title: 'Lineage', type: 'cockpit', component: LineageTile },
   { id: 'rollover', title: 'Rollover Checklist', type: 'cockpit', component: RolloverTile },
 ];

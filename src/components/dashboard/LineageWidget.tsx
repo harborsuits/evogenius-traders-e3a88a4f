@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useGenerationSelection } from '@/hooks/useGenerationSelection';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { CheckCircle2, XCircle, Users } from 'lucide-react';
@@ -13,35 +14,44 @@ interface AgentLineage {
   lineage_type: 'elite' | 'parent' | 'offspring' | 'seed';
 }
 
-export function LineageWidget() {
+interface LineageWidgetProps {
+  currentGenNumber?: number;
+  compareGenNumber?: number;
+}
+
+export function LineageWidget({ currentGenNumber: propCurrentGen, compareGenNumber: propCompareGen }: LineageWidgetProps) {
+  // Use hook if props not provided
+  const selection = useGenerationSelection();
+  const currentGenNumber = propCurrentGen ?? selection.currentGenNumber;
+  const compareGenNumber = propCompareGen ?? selection.compareGenNumber;
+
   const { data, isLoading } = useQuery({
-    queryKey: ['agent-lineage'],
+    queryKey: ['agent-lineage', currentGenNumber, compareGenNumber],
     queryFn: async () => {
-      // Get current generation from system state
-      const { data: sysState } = await supabase
-        .from('system_state')
-        .select('current_generation_id')
-        .single();
+      if (currentGenNumber === null) return { traders: [], total: 0, currentGenNumber: null, prevGenNumber: null };
 
-      if (!sysState?.current_generation_id) return { traders: [], total: 0, currentGenNumber: null, prevGenNumber: null };
-
-      const currentGenId = sysState.current_generation_id;
-
-      // Get current generation details
+      // Get current generation by number
       const { data: currentGen } = await supabase
         .from('generations')
         .select('id, generation_number, start_time')
-        .eq('id', currentGenId)
-        .single();
+        .eq('generation_number', currentGenNumber)
+        .maybeSingle();
 
       if (!currentGen) return { traders: [], total: 0, currentGenNumber: null, prevGenNumber: null };
 
-      // Get previous generation
-      const { data: prevGen } = await supabase
-        .from('generations')
-        .select('id, generation_number, start_time')
-        .eq('generation_number', currentGen.generation_number - 1)
-        .single();
+      const currentGenId = currentGen.id;
+
+      // Get previous/compare generation by number
+      let prevGen = null;
+      const prevGenNum = compareGenNumber ?? (currentGenNumber > 1 ? currentGenNumber - 1 : null);
+      if (prevGenNum !== null) {
+        const { data: prevData } = await supabase
+          .from('generations')
+          .select('id, generation_number, start_time')
+          .eq('generation_number', prevGenNum)
+          .maybeSingle();
+        prevGen = prevData;
+      }
 
       // Get agents in current generation with fill counts
       const { data: fills } = await supabase
@@ -131,6 +141,7 @@ export function LineageWidget() {
         prevGenNumber: prevGen?.generation_number ?? null
       };
     },
+    enabled: currentGenNumber !== null,
     refetchInterval: 30000,
   });
 

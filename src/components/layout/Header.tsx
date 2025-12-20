@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import { StatusIndicator } from '@/components/dashboard/StatusIndicator';
 import { TradeModeToggle } from '@/components/dashboard/TradeModeToggle';
+import { GenerationSelector } from '@/components/dashboard/GenerationSelector';
+import { EliteRotationModal } from '@/components/dashboard/EliteRotationModal';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SystemStatus } from '@/types/evotrader';
@@ -10,7 +13,7 @@ import { useStrategyTestMode } from '@/hooks/useSystemConfig';
 import { supabase } from '@/integrations/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/hooks/use-toast';
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 
 interface HeaderProps {
   status: SystemStatus;
@@ -24,6 +27,7 @@ export function Header({ status, generationNumber }: HeaderProps) {
   const queryClient = useQueryClient();
   const [emergencyStopping, setEmergencyStopping] = useState(false);
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState<number | null>(null);
+  const [rotationModalOpen, setRotationModalOpen] = useState(false);
 
   const mode = tradeMode ?? 'paper';
   const isLive = mode === 'live';
@@ -141,8 +145,12 @@ export function Header({ status, generationNumber }: HeaderProps) {
           </div>
         </div>
 
-        {/* Right: Toggle + Kill + Coinbase */}
+        {/* Right: Gen Selector + Toggle + Kill + Coinbase */}
         <div className="flex items-center gap-1.5 shrink-0">
+          <div className="hidden md:flex">
+            <GenerationSelector onShowRotation={() => setRotationModalOpen(true)} />
+          </div>
+          
           <TradeModeToggle compact />
 
           <Button
@@ -166,6 +174,8 @@ export function Header({ status, generationNumber }: HeaderProps) {
           </Button>
         </div>
       </div>
+      
+      <EliteRotationModal open={rotationModalOpen} onOpenChange={setRotationModalOpen} />
     </header>
   );
 }

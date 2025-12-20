@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { 
   DndContext, 
   DragOverlay, 
-  closestCenter,
+  pointerWithin,
   KeyboardSensor,
   PointerSensor,
   useSensor,
@@ -10,6 +10,7 @@ import {
   DragStartEvent,
   DragEndEvent,
   useDroppable,
+  MeasuringStrategy,
 } from '@dnd-kit/core';
 import { 
   SortableContext, 
@@ -51,9 +52,9 @@ function OrbitLane({
   const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [activeIndex, setActiveIndex] = useState(0);
   
-  // Make orbit a droppable zone
+  // Make orbit a droppable zone with lane: prefix for clear identification
   const { isOver, setNodeRef } = useDroppable({
-    id: 'orbit',
+    id: 'lane:orbit',
     data: { lane: 'orbit' },
   });
   
@@ -174,8 +175,9 @@ function OrbitLane({
           {columnCards.map((card, index) => {
             const distance = index - activeIndex;
             const absDistance = Math.abs(distance);
-            const scale = Math.max(0.8, 1 - absDistance * 0.08);
-            const opacity = Math.max(0.5, 1 - absDistance * 0.2);
+            // Visual-only scale/opacity applied to inner content, NOT the droppable wrapper
+            const visualScale = Math.max(0.8, 1 - absDistance * 0.08);
+            const visualOpacity = Math.max(0.5, 1 - absDistance * 0.2);
             
             return (
               <div 
@@ -188,17 +190,25 @@ function OrbitLane({
                 className="min-h-[35vh] flex items-center px-3 py-2"
                 style={{ 
                   scrollSnapAlign: 'center',
-                  transform: `scale(${scale})`,
-                  opacity,
-                  transition: 'transform 300ms, opacity 300ms',
+                  // NO transform here - transforms break dnd-kit measurements
                 }}
               >
-                <DraggableCard 
-                  card={card} 
-                  lane="orbit"
-                  isActive={index === activeIndex}
-                  onReturnToOrbit={() => onReturnToOrbit(card.id)}
-                />
+                {/* Visual wrapper with transforms - separate from drag system */}
+                <div 
+                  style={{ 
+                    transform: `scale(${visualScale})`,
+                    opacity: visualOpacity,
+                    transition: 'transform 300ms, opacity 300ms',
+                    width: '100%',
+                  }}
+                >
+                  <DraggableCard 
+                    card={card} 
+                    lane="orbit"
+                    isActive={index === activeIndex}
+                    onReturnToOrbit={() => onReturnToOrbit(card.id)}
+                  />
+                </div>
               </div>
             );
           })}
@@ -420,9 +430,10 @@ export function CommandCenter({ cards }: CommandCenterProps) {
     let toLane: Lane;
     let toIndex: number | undefined;
     
-    // Check if dropped on a lane directly
-    if (overId === 'orbit' || overId === 'A' || overId === 'B') {
-      toLane = overId as Lane;
+    // Check if dropped on a lane container (prefixed with "lane:")
+    if (overId.startsWith('lane:')) {
+      const laneName = overId.replace('lane:', '') as Lane;
+      toLane = laneName;
       toIndex = layout[toLane].length;
     } else {
       // Dropped on another card - find its lane
@@ -454,9 +465,12 @@ export function CommandCenter({ cards }: CommandCenterProps) {
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={pointerWithin}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
+      measuring={{
+        droppable: { strategy: MeasuringStrategy.Always },
+      }}
     >
       {/* Desktop: 3-column grid */}
       <div className="hidden lg:flex h-[100dvh] w-full flex-col bg-background overflow-hidden">

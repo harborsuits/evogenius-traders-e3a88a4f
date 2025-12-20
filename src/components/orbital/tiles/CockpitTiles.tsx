@@ -1777,3 +1777,6 @@ export function AuditTile({ compact }: { compact?: boolean }) {
 export function PassingTradesTile({ compact }: { compact?: boolean }) {
   return <PassingTradesFeed compact={compact} />;
 }
+
+// System Vitals Tile - Agent heartbeat, decision throughput, learning status
+export { SystemVitals as SystemVitalsTile } from '@/components/dashboard/SystemVitals';

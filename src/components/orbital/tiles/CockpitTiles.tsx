@@ -231,12 +231,42 @@ export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
           {/* Adaptive Tuning Status */}
           {droughtState.adaptiveTuning && (
             <div className="mt-2 pt-2 border-t border-border/30 space-y-1">
-              <div className="flex items-center justify-between text-[10px]">
-                <span className="text-muted-foreground">Tuning:</span>
-                <span className={droughtState.adaptiveTuning.enabled ? 'text-emerald-500' : 'text-amber-500'}>
-                  {droughtState.adaptiveTuning.enabled ? 'ON' : 'OFF'} ({droughtState.adaptiveTuning.mode})
-                </span>
-              </div>
+              {/* Tuning state badge */}
+              {(() => {
+                const t = droughtState.adaptiveTuning;
+                const cooldownMins = t.cooldownRemainingSec ? Math.ceil(t.cooldownRemainingSec / 60) : 0;
+                
+                let status: 'active' | 'armed' | 'cooldown' | 'off';
+                let statusColor: string;
+                let statusLabel: string;
+                
+                if (!t.enabled) {
+                  status = 'off';
+                  statusColor = 'text-muted-foreground';
+                  statusLabel = 'OFF';
+                } else if (cooldownMins > 0) {
+                  status = 'cooldown';
+                  statusColor = 'text-amber-500';
+                  statusLabel = `COOLDOWN ${cooldownMins}m`;
+                } else if (t.applied) {
+                  status = 'active';
+                  statusColor = 'text-emerald-500';
+                  statusLabel = 'ACTIVE';
+                } else {
+                  status = 'armed';
+                  statusColor = 'text-amber-500';
+                  statusLabel = 'ARMED';
+                }
+                
+                return (
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-muted-foreground">Tuning:</span>
+                    <span className={cn('font-mono font-medium', statusColor)}>
+                      {statusLabel}
+                    </span>
+                  </div>
+                );
+              })()}
               
               {(() => {
                 const topOffsets = Object.entries(droughtState.adaptiveTuning.offsets ?? {})

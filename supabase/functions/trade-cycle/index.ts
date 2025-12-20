@@ -864,11 +864,22 @@ function isLearnableTrade(tags: TradeTagsForLearning): boolean {
   return true;
 }
 
-// Confidence calibration
-function calibrateConfidence(rawConfidence: number, tradeCount: number): number {
+// Confidence calibration - returns split components for observability
+interface ConfidenceComponents {
+  signal_confidence: number;      // Raw setup/signal quality (0-1)
+  maturity_multiplier: number;    // Agent experience factor (0.1-1.0)  
+  final_confidence: number;       // Combined final confidence
+}
+
+function calibrateConfidence(rawConfidence: number, tradeCount: number): ConfidenceComponents {
   const MIN_TRADES_FOR_FULL_CONFIDENCE = 30;
-  const scaleFactor = Math.min(1, tradeCount / MIN_TRADES_FOR_FULL_CONFIDENCE);
-  return rawConfidence * scaleFactor;
+  const MIN_MATURITY = 0.1; // Floor so new agents aren't completely crushed
+  const maturityMultiplier = Math.max(MIN_MATURITY, Math.min(1, tradeCount / MIN_TRADES_FOR_FULL_CONFIDENCE));
+  return {
+    signal_confidence: rawConfidence,
+    maturity_multiplier: maturityMultiplier,
+    final_confidence: rawConfidence * maturityMultiplier,
+  };
 }
 
 // ===========================================================================
@@ -1292,13 +1303,14 @@ function makeDecision(
 ): { 
   decision: Decision; 
   reasons: string[]; 
-  confidence: number; 
+  confidence: number;
+  confidence_components: ConfidenceComponents;
   exitReason?: string;
   gateFailures: GateFailure[];
   nearestPass?: GateFailure;
 } {
   const reasons: string[] = [];
-  let confidence = 0.5;
+  let confidenceComponents: ConfidenceComponents = { signal_confidence: 0.5, maturity_multiplier: 1, final_confidence: 0.5 };
   let exitReason: string | undefined;
   
   const regime = getRegime(market);
@@ -1341,15 +1353,15 @@ function makeDecision(
       if (testMode) reasons.push('test_mode');
       if (droughtMode) reasons.push('drought_mode');
       const rawConfidence = 0.6 + Math.min(0.2, Math.abs(market.ema_50_slope) * 5);
-      confidence = calibrateConfidence(rawConfidence, agentTradeCount);
-      return { decision: 'buy', reasons, confidence, gateFailures, nearestPass };
+      confidenceComponents = calibrateConfidence(rawConfidence, agentTradeCount);
+      return { decision: 'buy', reasons, confidence: confidenceComponents.final_confidence, confidence_components: confidenceComponents, gateFailures, nearestPass };
     }
     
     if (hasPosition && market.ema_50_slope < 0) {
       reasons.push('trend_reversal');
       exitReason = 'trend_reversal';
-      confidence = calibrateConfidence(0.65, agentTradeCount);
-      return { decision: 'sell', reasons, confidence, exitReason, gateFailures, nearestPass };
+      confidenceComponents = calibrateConfidence(0.65, agentTradeCount);
+      return { decision: 'sell', reasons, confidence: confidenceComponents.final_confidence, confidence_components: confidenceComponents, exitReason, gateFailures, nearestPass };
     }
   }
   
@@ -1363,15 +1375,15 @@ function makeDecision(
       if (testMode) reasons.push('test_mode');
       if (droughtMode) reasons.push('drought_mode');
       const rawConfidence = 0.55 + Math.min(0.2, Math.abs(market.change_24h) / 20);
-      confidence = calibrateConfidence(rawConfidence, agentTradeCount);
-      return { decision: 'buy', reasons, confidence, gateFailures, nearestPass };
+      confidenceComponents = calibrateConfidence(rawConfidence, agentTradeCount);
+      return { decision: 'buy', reasons, confidence: confidenceComponents.final_confidence, confidence_components: confidenceComponents, gateFailures, nearestPass };
     }
     
     if (overbought && hasPosition) {
       reasons.push('overbought', 'take_profit');
       exitReason = 'take_profit';
-      confidence = calibrateConfidence(0.6, agentTradeCount);
-      return { decision: 'sell', reasons, confidence, exitReason, gateFailures, nearestPass };
+      confidenceComponents = calibrateConfidence(0.6, agentTradeCount);
+      return { decision: 'sell', reasons, confidence: confidenceComponents.final_confidence, confidence_components: confidenceComponents, exitReason, gateFailures, nearestPass };
     }
   }
   
@@ -1384,20 +1396,21 @@ function makeDecision(
       if (testMode) reasons.push('test_mode');
       if (droughtMode) reasons.push('drought_mode');
       const rawConfidence = 0.5 + Math.min(0.15, (1 - market.atr_ratio) * 0.5);
-      confidence = calibrateConfidence(rawConfidence, agentTradeCount);
-      return { decision: 'buy', reasons, confidence, gateFailures, nearestPass };
+      confidenceComponents = calibrateConfidence(rawConfidence, agentTradeCount);
+      return { decision: 'buy', reasons, confidence: confidenceComponents.final_confidence, confidence_components: confidenceComponents, gateFailures, nearestPass };
     }
     
     if (hasPosition && market.atr_ratio > (thresholds.vol_expansion_exit ?? 1.4)) {
       reasons.push('volatility_spike', 'exit_breakout');
       exitReason = 'exit_breakout';
-      confidence = calibrateConfidence(0.55, agentTradeCount);
-      return { decision: 'sell', reasons, confidence, exitReason, gateFailures, nearestPass };
+      confidenceComponents = calibrateConfidence(0.55, agentTradeCount);
+      return { decision: 'sell', reasons, confidence: confidenceComponents.final_confidence, confidence_components: confidenceComponents, exitReason, gateFailures, nearestPass };
     }
   }
   
   reasons.push('no_signal');
-  return { decision: 'hold', reasons, confidence: 0.5, gateFailures, nearestPass };
+  const holdConfidence = { signal_confidence: 0.5, maturity_multiplier: 1, final_confidence: 0.5 };
+  return { decision: 'hold', reasons, confidence: 0.5, confidence_components: holdConfidence, gateFailures, nearestPass };
 }
 
 // Generate pattern ID from decision context
@@ -1638,6 +1651,7 @@ Deno.serve(async (req) => {
       decision: Decision;
       reasons: string[];
       confidence: number;
+      confidence_components: ConfidenceComponents;
       exitReason?: string;
       positionQty: number;
       gateFailures: GateFailure[];
@@ -1670,13 +1684,14 @@ Deno.serve(async (req) => {
         decision: result.decision,
         reasons: result.reasons,
         confidence: result.confidence,
+        confidence_components: result.confidence_components,
         exitReason: result.exitReason,
         positionQty: posQty,
         gateFailures: result.gateFailures,
         nearestPass: result.nearestPass,
       });
       
-      console.log(`[trade-cycle] ${sym}: ${result.decision} (conf=${result.confidence.toFixed(2)}, reasons=${result.reasons.join(',')})`);
+      console.log(`[trade-cycle] ${sym}: ${result.decision} (signal=${result.confidence_components.signal_confidence.toFixed(2)}, maturity=${result.confidence_components.maturity_multiplier.toFixed(2)}, final=${result.confidence.toFixed(2)}, reasons=${result.reasons.join(',')})`);
     }
     
     // Pick best actionable candidate
@@ -1938,6 +1953,9 @@ Deno.serve(async (req) => {
           decision: c.decision,
           reasons: c.reasons,
           confidence: c.confidence,
+          // Split confidence for observability
+          signal_confidence: c.confidence_components?.signal_confidence ?? c.confidence,
+          maturity_multiplier: c.confidence_components?.maturity_multiplier ?? 1,
           gate_failures: c.gateFailures,
           market: {
             price: c.market.price,

@@ -20,8 +20,9 @@ export function DropZone({
   isEmpty,
   children,
 }: DropZoneProps) {
+  // Use lane: prefix for consistent identification in drag handlers
   const { isOver, setNodeRef } = useDroppable({
-    id: lane,
+    id: `lane:${lane}`,
     data: { lane },
   });
   
@@ -60,10 +61,10 @@ function EmptyDropZone({ isOver }: { isOver: boolean }) {
   return (
     <div 
       className={cn(
-        "h-full min-h-[200px] flex flex-col items-center justify-center p-6",
+        "flex-1 min-h-[60vh] flex flex-col items-center justify-center p-6",
         "border-2 border-dashed rounded-lg m-3 transition-all duration-200",
         isOver 
-          ? "border-primary bg-primary/10 shadow-lg shadow-primary/20" 
+          ? "border-primary bg-primary/10 shadow-lg shadow-primary/20 ring-2 ring-primary/30" 
           : "border-muted-foreground/20 hover:border-muted-foreground/40"
       )}
     >

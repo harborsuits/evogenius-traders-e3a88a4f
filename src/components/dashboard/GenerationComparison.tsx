@@ -9,8 +9,8 @@ type MetricType = 'agents' | 'fills' | 'symbols';
 
 interface DataPoint {
   hour: number;
-  gen10?: number;
-  gen11?: number;
+  prev?: number;
+  current?: number;
 }
 
 export function GenerationComparison() {
@@ -19,23 +19,43 @@ export function GenerationComparison() {
   const { data, isLoading } = useQuery({
     queryKey: ['generation-comparison', metric],
     queryFn: async () => {
-      // Fetch Gen 10 and Gen 11 info
-      const { data: generations } = await supabase
+      // Get current generation from system state
+      const { data: sysState } = await supabase
+        .from('system_state')
+        .select('current_generation_id')
+        .single();
+
+      if (!sysState?.current_generation_id) {
+        return { points: [], prevGen: null, currentGen: null, prevHours: 0, currentHours: 0 };
+      }
+
+      // Fetch current generation details
+      const { data: currentGenData } = await supabase
         .from('generations')
         .select('id, generation_number, start_time, end_time')
-        .in('generation_number', [10, 11])
-        .order('generation_number');
+        .eq('id', sysState.current_generation_id)
+        .single();
 
-      if (!generations || generations.length < 2) return { points: [], gen10Hours: 0, gen11Hours: 0 };
+      if (!currentGenData) {
+        return { points: [], prevGen: null, currentGen: null, prevHours: 0, currentHours: 0 };
+      }
 
-      const gen10 = generations.find(g => g.generation_number === 10);
-      const gen11 = generations.find(g => g.generation_number === 11);
-      if (!gen10 || !gen11) return { points: [], gen10Hours: 0, gen11Hours: 0 };
+      // Fetch previous generation (generation_number - 1)
+      const { data: prevGenData } = await supabase
+        .from('generations')
+        .select('id, generation_number, start_time, end_time')
+        .eq('generation_number', currentGenData.generation_number - 1)
+        .single();
 
-      const gen10Hours = gen10.end_time 
-        ? (new Date(gen10.end_time).getTime() - new Date(gen10.start_time).getTime()) / 3600000
+      const currentGen = currentGenData;
+      const prevGen = prevGenData;
+
+      const prevHours = prevGen?.end_time 
+        ? (new Date(prevGen.end_time).getTime() - new Date(prevGen.start_time).getTime()) / 3600000
+        : prevGen?.start_time
+        ? (Date.now() - new Date(prevGen.start_time).getTime()) / 3600000
         : 0;
-      const gen11Hours = (Date.now() - new Date(gen11.start_time).getTime()) / 3600000;
+      const currentHours = (Date.now() - new Date(currentGen.start_time).getTime()) / 3600000;
 
       // Build participation curves based on metric
       const buildCurve = async (genId: string, startTime: string) => {
@@ -104,36 +124,42 @@ export function GenerationComparison() {
         }
       };
 
-      const [gen10Curve, gen11Curve] = await Promise.all([
-        buildCurve(gen10.id, gen10.start_time),
-        buildCurve(gen11.id, gen11.start_time),
+      const [prevCurve, currentCurve] = await Promise.all([
+        prevGen ? buildCurve(prevGen.id, prevGen.start_time) : Promise.resolve([]),
+        buildCurve(currentGen.id, currentGen.start_time),
       ]);
 
       // Merge into unified points
       const allHours = new Set<number>();
-      gen10Curve.forEach(p => allHours.add(p.hour));
-      gen11Curve.forEach(p => allHours.add(p.hour));
+      prevCurve.forEach(p => allHours.add(p.hour));
+      currentCurve.forEach(p => allHours.add(p.hour));
 
-      const gen10Map = new Map(gen10Curve.map(p => [p.hour, p.value]));
-      const gen11Map = new Map(gen11Curve.map(p => [p.hour, p.value]));
+      const prevMap = new Map(prevCurve.map(p => [p.hour, p.value]));
+      const currentMap = new Map(currentCurve.map(p => [p.hour, p.value]));
 
       // Fill in cumulative values
       const sortedAllHours = [...allHours].sort((a, b) => a - b);
       const points: DataPoint[] = [];
-      let lastGen10 = 0;
-      let lastGen11 = 0;
+      let lastPrev = 0;
+      let lastCurrent = 0;
 
       sortedAllHours.forEach(hour => {
-        if (gen10Map.has(hour)) lastGen10 = gen10Map.get(hour)!;
-        if (gen11Map.has(hour)) lastGen11 = gen11Map.get(hour)!;
+        if (prevMap.has(hour)) lastPrev = prevMap.get(hour)!;
+        if (currentMap.has(hour)) lastCurrent = currentMap.get(hour)!;
         points.push({
           hour,
-          gen10: hour <= gen10Hours ? lastGen10 : undefined,
-          gen11: hour <= gen11Hours ? lastGen11 : undefined,
+          prev: prevGen && hour <= prevHours ? lastPrev : undefined,
+          current: hour <= currentHours ? lastCurrent : undefined,
         });
       });
 
-      return { points, gen10Hours: Math.round(gen10Hours), gen11Hours: Math.round(gen11Hours * 10) / 10 };
+      return { 
+        points, 
+        prevGen: prevGen ? { number: prevGen.generation_number } : null,
+        currentGen: { number: currentGen.generation_number },
+        prevHours: Math.round(prevHours), 
+        currentHours: Math.round(currentHours * 10) / 10 
+      };
     },
     refetchInterval: 60000,
   });
@@ -142,11 +168,19 @@ export function GenerationComparison() {
     : metric === 'fills' ? 'Cumulative Fills' 
     : 'Unique Symbols';
 
+  const prevGenLabel = data?.prevGen ? `Gen ${data.prevGen.number}` : 'Previous';
+  const currentGenLabel = data?.currentGen ? `Gen ${data.currentGen.number}` : 'Current';
+  const titleLabel = data?.prevGen && data?.currentGen 
+    ? `GEN ${data.prevGen.number} VS ${data.currentGen.number}`
+    : 'GENERATION COMPARISON';
+
   return (
     <div className="h-full flex flex-col p-3 gap-2">
       <div className="flex items-center justify-between">
         <div className="text-xs text-muted-foreground font-mono">
-          Gen 10: {data?.gen10Hours || 0}h | Gen 11: {data?.gen11Hours || 0}h
+          {data?.prevGen ? `${prevGenLabel}: ${data.prevHours || 0}h` : ''} 
+          {data?.prevGen ? ' | ' : ''}
+          {currentGenLabel}: {data?.currentHours || 0}h
         </div>
         <ToggleGroup type="single" value={metric} onValueChange={(v) => v && setMetric(v as MetricType)} size="sm">
           <ToggleGroupItem value="agents" className="text-xs px-2">
@@ -195,19 +229,21 @@ export function GenerationComparison() {
                 wrapperStyle={{ fontSize: '10px' }}
                 formatter={(value) => <span className="text-xs">{value}</span>}
               />
+              {data?.prevGen && (
+                <Line 
+                  type="stepAfter" 
+                  dataKey="prev" 
+                  name={prevGenLabel} 
+                  stroke="hsl(var(--muted-foreground))" 
+                  strokeWidth={2}
+                  dot={false}
+                  connectNulls={false}
+                />
+              )}
               <Line 
                 type="stepAfter" 
-                dataKey="gen10" 
-                name="Gen 10" 
-                stroke="hsl(var(--muted-foreground))" 
-                strokeWidth={2}
-                dot={false}
-                connectNulls={false}
-              />
-              <Line 
-                type="stepAfter" 
-                dataKey="gen11" 
-                name="Gen 11" 
+                dataKey="current" 
+                name={currentGenLabel} 
                 stroke="hsl(var(--primary))" 
                 strokeWidth={2}
                 dot={false}

@@ -9,7 +9,7 @@ interface AgentLineage {
   fills: number;
   strategy_template: string;
   is_elite: boolean;
-  was_gen10_active: boolean;
+  was_prev_gen_active: boolean;
   lineage_type: 'elite' | 'parent' | 'offspring' | 'seed';
 }
 
@@ -17,27 +17,31 @@ export function LineageWidget() {
   const { data, isLoading } = useQuery({
     queryKey: ['agent-lineage'],
     queryFn: async () => {
-      // Get current generation (Gen 11)
+      // Get current generation from system state
       const { data: sysState } = await supabase
         .from('system_state')
         .select('current_generation_id')
         .single();
 
-      if (!sysState?.current_generation_id) return { traders: [], total: 0 };
+      if (!sysState?.current_generation_id) return { traders: [], total: 0, currentGenNumber: null, prevGenNumber: null };
 
       const currentGenId = sysState.current_generation_id;
 
-      // Get Gen 10 and Gen 11 info
-      const { data: generations } = await supabase
+      // Get current generation details
+      const { data: currentGen } = await supabase
         .from('generations')
         .select('id, generation_number, start_time')
-        .in('generation_number', [10, 11])
-        .order('generation_number');
+        .eq('id', currentGenId)
+        .single();
 
-      const gen10 = generations?.find(g => g.generation_number === 10);
-      const gen11 = generations?.find(g => g.generation_number === 11);
+      if (!currentGen) return { traders: [], total: 0, currentGenNumber: null, prevGenNumber: null };
 
-      if (!gen11) return { traders: [], total: 0 };
+      // Get previous generation
+      const { data: prevGen } = await supabase
+        .from('generations')
+        .select('id, generation_number, start_time')
+        .eq('generation_number', currentGen.generation_number - 1)
+        .single();
 
       // Get agents in current generation with fill counts
       const { data: fills } = await supabase
@@ -54,47 +58,57 @@ export function LineageWidget() {
         fillCounts.set(f.agent_id, (fillCounts.get(f.agent_id) ?? 0) + 1);
       });
 
-      // Get Gen 10 active agents
-      const gen10ActiveAgents = new Set<string>();
-      if (gen10) {
-        const { data: gen10Fills } = await supabase
+      // Get previous generation active agents
+      const prevGenActiveAgents = new Set<string>();
+      if (prevGen) {
+        const { data: prevGenFills } = await supabase
           .from('paper_orders')
           .select('agent_id, tags')
-          .eq('generation_id', gen10.id)
+          .eq('generation_id', prevGen.id)
           .eq('status', 'filled');
         
-        gen10Fills?.forEach(f => {
+        prevGenFills?.forEach(f => {
           const tags = f.tags as Record<string, unknown> | null;
           if (!tags?.test_mode) {
-            gen10ActiveAgents.add(f.agent_id);
+            prevGenActiveAgents.add(f.agent_id);
           }
         });
       }
 
       // Get agent details
       const tradingAgentIds = [...fillCounts.keys()];
-      if (tradingAgentIds.length === 0) return { traders: [], total: 0 };
+      if (tradingAgentIds.length === 0) return { 
+        traders: [], 
+        total: 0, 
+        currentGenNumber: currentGen.generation_number, 
+        prevGenNumber: prevGen?.generation_number ?? null 
+      };
 
       const { data: agents } = await supabase
         .from('agents')
         .select('id, strategy_template, is_elite, status, created_at')
         .in('id', tradingAgentIds);
 
-      if (!agents) return { traders: [], total: 0 };
+      if (!agents) return { 
+        traders: [], 
+        total: 0, 
+        currentGenNumber: currentGen.generation_number, 
+        prevGenNumber: prevGen?.generation_number ?? null 
+      };
 
-      // Determine lineage type based on creation time vs gen11 start
-      const gen11Start = gen11.start_time ? new Date(gen11.start_time).getTime() : Date.now();
+      // Determine lineage type based on creation time vs current gen start
+      const currentGenStart = currentGen.start_time ? new Date(currentGen.start_time).getTime() : Date.now();
       
       const traders: AgentLineage[] = agents.map(agent => {
         const createdAt = new Date(agent.created_at).getTime();
-        const isNewOffspring = createdAt >= gen11Start - 60000; // Within 1 min of gen start
+        const isNewOffspring = createdAt >= currentGenStart - 60000; // Within 1 min of gen start
         
         let lineageType: 'elite' | 'parent' | 'offspring' | 'seed';
         if (agent.is_elite) {
           lineageType = 'elite';
         } else if (isNewOffspring) {
           lineageType = 'offspring';
-        } else if (gen10ActiveAgents.has(agent.id)) {
+        } else if (prevGenActiveAgents.has(agent.id)) {
           lineageType = 'parent';
         } else {
           lineageType = 'seed';
@@ -105,12 +119,17 @@ export function LineageWidget() {
           fills: fillCounts.get(agent.id) ?? 0,
           strategy_template: agent.strategy_template,
           is_elite: agent.is_elite,
-          was_gen10_active: gen10ActiveAgents.has(agent.id),
+          was_prev_gen_active: prevGenActiveAgents.has(agent.id),
           lineage_type: lineageType,
         };
       }).sort((a, b) => b.fills - a.fills);
 
-      return { traders, total: tradingAgentIds.length };
+      return { 
+        traders, 
+        total: tradingAgentIds.length,
+        currentGenNumber: currentGen.generation_number,
+        prevGenNumber: prevGen?.generation_number ?? null
+      };
     },
     refetchInterval: 30000,
   });
@@ -124,12 +143,15 @@ export function LineageWidget() {
     }
   };
 
+  const currentGenLabel = data?.currentGenNumber ? `Gen ${data.currentGenNumber}` : 'Current Gen';
+  const prevGenLabel = data?.prevGenNumber ? `Gen${data.prevGenNumber}` : 'Prev Gen';
+
   return (
     <div className="h-full flex flex-col p-3 gap-2">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-primary" />
-          <span className="text-sm font-medium">Gen 11 Lineage</span>
+          <span className="text-sm font-medium">{currentGenLabel} Lineage</span>
         </div>
         <Badge variant="outline" className="font-mono text-xs">
           {data?.total ?? 0} traders
@@ -163,7 +185,7 @@ export function LineageWidget() {
                   <span className="text-xs font-mono font-medium tabular-nums">
                     {agent.fills}
                   </span>
-                  {agent.was_gen10_active ? (
+                  {agent.was_prev_gen_active ? (
                     <CheckCircle2 className="h-3 w-3 text-green-500" />
                   ) : (
                     <XCircle className="h-3 w-3 text-muted-foreground/50" />
@@ -177,10 +199,10 @@ export function LineageWidget() {
 
       <div className="flex gap-2 text-[9px] text-muted-foreground border-t border-border/50 pt-2">
         <span className="flex items-center gap-1">
-          <CheckCircle2 className="h-2.5 w-2.5 text-green-500" /> Gen10 active
+          <CheckCircle2 className="h-2.5 w-2.5 text-green-500" /> {prevGenLabel} active
         </span>
         <span className="flex items-center gap-1">
-          <XCircle className="h-2.5 w-2.5 text-muted-foreground/50" /> New to Gen11
+          <XCircle className="h-2.5 w-2.5 text-muted-foreground/50" /> New to {currentGenLabel}
         </span>
       </div>
     </div>

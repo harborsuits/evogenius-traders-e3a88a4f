@@ -1,6 +1,16 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
+export interface AdaptiveTuningState {
+  enabled: boolean;
+  mode: 'drought_only' | 'always' | string;
+  offsets: Record<string, number>;
+  lastAdjustedAt: string | null;
+  cooldownMinutes: number | null;
+  baselineThresholds?: Record<string, number>;
+  effectiveThresholds?: Record<string, number>;
+}
+
 export interface DroughtState {
   detected: boolean;
   isActive: boolean;
@@ -27,6 +37,8 @@ export interface DroughtState {
   peakEquity?: number;
   equityDrawdownPct?: number;      // vs starting cash
   peakEquityDrawdownPct?: number;  // vs peak equity (kill metric)
+  // Adaptive tuning
+  adaptiveTuning?: AdaptiveTuningState;
 }
 
 export function useDroughtState() {
@@ -64,6 +76,16 @@ export function useDroughtState() {
         peak_equity_drawdown_pct?: number;
       } | undefined;
       
+      const adaptiveTuningRaw = latestMeta.adaptive_tuning as {
+        enabled?: boolean;
+        mode?: string;
+        offsets?: Record<string, number>;
+        last_adjusted_at?: string | null;
+        cooldown_minutes?: number | null;
+        baseline_thresholds?: Record<string, number>;
+        effective_thresholds?: Record<string, number>;
+      } | undefined;
+      
       const gateFailures = (latestMeta.gate_failures ?? {}) as Record<string, { count: number; avgMargin: number }>;
       const nearestPass = latestMeta.nearest_pass as DroughtState['nearestPass'];
       
@@ -88,6 +110,16 @@ export function useDroughtState() {
         peakEquity: droughtState?.peak_equity,
         equityDrawdownPct: droughtState?.equity_drawdown_pct,
         peakEquityDrawdownPct: droughtState?.peak_equity_drawdown_pct,
+        // Adaptive tuning
+        adaptiveTuning: adaptiveTuningRaw ? {
+          enabled: adaptiveTuningRaw.enabled ?? false,
+          mode: adaptiveTuningRaw.mode ?? 'drought_only',
+          offsets: adaptiveTuningRaw.offsets ?? {},
+          lastAdjustedAt: adaptiveTuningRaw.last_adjusted_at ?? null,
+          cooldownMinutes: adaptiveTuningRaw.cooldown_minutes ?? null,
+          baselineThresholds: adaptiveTuningRaw.baseline_thresholds,
+          effectiveThresholds: adaptiveTuningRaw.effective_thresholds,
+        } : undefined,
       };
     },
     refetchInterval: 30000,

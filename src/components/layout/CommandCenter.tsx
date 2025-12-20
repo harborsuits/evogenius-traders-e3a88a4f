@@ -190,25 +190,17 @@ function OrbitLane({
                 className="min-h-[35vh] flex items-center px-3 py-2"
                 style={{ 
                   scrollSnapAlign: 'center',
-                  // NO transform here - transforms break dnd-kit measurements
+                  opacity: visualOpacity,
+                  transition: 'opacity 300ms',
                 }}
               >
-                {/* Visual wrapper with transforms - separate from drag system */}
-                <div 
-                  style={{ 
-                    transform: `scale(${visualScale})`,
-                    opacity: visualOpacity,
-                    transition: 'transform 300ms, opacity 300ms',
-                    width: '100%',
-                  }}
-                >
-                  <DraggableCard 
-                    card={card} 
-                    lane="orbit"
-                    isActive={index === activeIndex}
-                    onReturnToOrbit={() => onReturnToOrbit(card.id)}
-                  />
-                </div>
+                <DraggableCard 
+                  card={card} 
+                  lane="orbit"
+                  isActive={index === activeIndex}
+                  onReturnToOrbit={() => onReturnToOrbit(card.id)}
+                  visualScale={visualScale}
+                />
               </div>
             );
           })}

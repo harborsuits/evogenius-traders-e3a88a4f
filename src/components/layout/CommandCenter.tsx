@@ -258,19 +258,25 @@ function RolodexColumn({
   );
 }
 
-// Standard dock column (middle/right)
+// Standard dock column (middle/right) with optional "More" section
 function DockColumn({ 
   cards, 
   allCards,
-  title 
+  title,
+  extraCards = [],
 }: { 
   cards: string[]; 
   allCards: CommandCard[];
   title: string;
+  extraCards?: string[];
 }) {
   const navigate = useNavigate();
   
   const columnCards = cards
+    .map(id => allCards.find(c => c.id === id))
+    .filter((c): c is CommandCard => c !== undefined);
+  
+  const extraColumnCards = extraCards
     .map(id => allCards.find(c => c.id === id))
     .filter((c): c is CommandCard => c !== undefined);
   
@@ -311,6 +317,42 @@ function DockColumn({
               </Card>
             );
           })}
+          
+          {/* "More" section for extra/unassigned cards */}
+          {extraColumnCards.length > 0 && (
+            <>
+              <div className="pt-4 pb-2 border-t border-border/30 mt-4">
+                <h3 className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground/70">
+                  More
+                </h3>
+              </div>
+              {extraColumnCards.map(card => {
+                const CardComponent = card.component;
+                
+                return (
+                  <Card key={card.id} variant="default" className="overflow-hidden">
+                    <CardHeader className="py-2 px-3 flex flex-row items-center justify-between border-b border-border/20">
+                      <CardTitle className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+                        {card.title}
+                      </CardTitle>
+                      {card.type === 'drillable' && card.drilldownPath && (
+                        <button
+                          onClick={() => navigate(card.drilldownPath!)}
+                          className="flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors"
+                        >
+                          <span>View</span>
+                          <ChevronRight className="h-3 w-3" />
+                        </button>
+                      )}
+                    </CardHeader>
+                    <CardContent className="px-3 py-3">
+                      <CardComponent compact />
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </>
+          )}
         </div>
       </ScrollArea>
     </div>
@@ -382,15 +424,28 @@ function MobileSection({
 }
 
 export function CommandCenter({ cards }: CommandCenterProps) {
-  // Filter cards into columns, falling back to reasonable defaults
-  const leftCards = LEFT_COLUMN_IDS.filter(id => cards.some(c => c.id === id));
-  const middleCards = MIDDLE_COLUMN_IDS.filter(id => cards.some(c => c.id === id));
-  const rightCards = RIGHT_COLUMN_IDS.filter(id => cards.some(c => c.id === id));
+  // Build index map for O(1) lookups
+  const byId = new Map(cards.map(c => [c.id, c]));
   
-  // Any cards not in the predefined lists go to the right column
-  const assignedIds = [...LEFT_COLUMN_IDS, ...MIDDLE_COLUMN_IDS, ...RIGHT_COLUMN_IDS];
-  const unassignedCards = cards.filter(c => !assignedIds.includes(c.id)).map(c => c.id);
-  const finalRightCards = [...rightCards, ...unassignedCards];
+  // Build each column list using IDs that actually exist in the cards prop
+  const leftCards = LEFT_COLUMN_IDS.filter(id => byId.has(id));
+  const middleCards = MIDDLE_COLUMN_IDS.filter(id => byId.has(id));
+  const rightCards = RIGHT_COLUMN_IDS.filter(id => byId.has(id));
+  
+  // Track which cards have been assigned
+  const assigned = new Set([...leftCards, ...middleCards, ...rightCards]);
+  
+  // Find any cards NOT in the predefined lists (extras go to "More" section)
+  const extraCards = cards.map(c => c.id).filter(id => !assigned.has(id));
+  
+  // Final right column includes extras under "More" section
+  const finalRightCards = rightCards;
+  const hasExtras = extraCards.length > 0;
+  
+  // Debug: log missing cards in development
+  if (import.meta.env.DEV && extraCards.length > 0) {
+    console.warn('[CommandCenter] Cards not in column lists:', extraCards);
+  }
   
   return (
     <>
@@ -406,9 +461,14 @@ export function CommandCenter({ cards }: CommandCenterProps) {
           <DockColumn cards={middleCards} allCards={cards} title="Operations" />
         </div>
         
-        {/* Right: Activity Dock (4 cols) */}
+        {/* Right: Activity Dock (4 cols) - includes "More" section for extras */}
         <div className="col-span-4">
-          <DockColumn cards={finalRightCards} allCards={cards} title="Activity" />
+          <DockColumn 
+            cards={finalRightCards} 
+            allCards={cards} 
+            title="Activity" 
+            extraCards={extraCards}
+          />
         </div>
       </div>
       
@@ -419,12 +479,13 @@ export function CommandCenter({ cards }: CommandCenterProps) {
           <RolodexColumn cards={leftCards} allCards={cards} />
         </div>
         
-        {/* Right: Combined docks with tabs could go here, for now stacked */}
+        {/* Right: Combined docks with extras */}
         <div className="overflow-y-auto">
           <DockColumn 
             cards={[...middleCards, ...finalRightCards]} 
             allCards={cards} 
             title="Dashboard" 
+            extraCards={extraCards}
           />
         </div>
       </div>
@@ -447,6 +508,14 @@ export function CommandCenter({ cards }: CommandCenterProps) {
           cards={finalRightCards} 
           allCards={cards} 
         />
+        {/* Mobile: Show extras in their own section */}
+        {extraCards.length > 0 && (
+          <MobileSection 
+            title="More" 
+            cards={extraCards} 
+            allCards={cards} 
+          />
+        )}
       </div>
     </>
   );

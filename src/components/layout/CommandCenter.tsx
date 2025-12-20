@@ -24,7 +24,7 @@ import { ChevronRight, Grip, RotateCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLayoutState, Lane } from '@/hooks/useLayoutState';
 import { DraggableCard } from './DraggableCard';
-import { DropZone } from './DropZone';
+import { LaneShell } from './LaneShell';
 
 export interface CommandCard {
   id: string;
@@ -40,6 +40,7 @@ interface CommandCenterProps {
 
 
 // Orbit lane with vertical snap scrolling and 3D carousel effect
+// Uses special rolodex behavior but SAME card height as workspaces
 function OrbitLane({ 
   cardIds, 
   allCards,
@@ -128,7 +129,7 @@ function OrbitLane({
     return (
       <div className="h-full min-h-0 flex flex-col">
         <div className="shrink-0 sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/30 px-3 py-2">
-          <h2 className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+          <h2 className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground">
             Orbit
           </h2>
         </div>
@@ -149,7 +150,7 @@ function OrbitLane({
     <div className="h-full min-h-0 flex flex-col">
       {/* Header */}
       <div className="shrink-0 sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/30 px-3 py-2">
-        <h2 className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+        <h2 className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground">
           Orbit
         </h2>
       </div>
@@ -188,7 +189,7 @@ function OrbitLane({
                   else cardRefs.current.delete(index);
                 }}
                 data-card-index={index}
-                className="min-h-[35vh] flex items-center px-3 py-2"
+                className="flex items-center px-3 py-2"
                 style={{ 
                   scrollSnapAlign: 'center',
                   opacity: visualOpacity,
@@ -233,62 +234,6 @@ function OrbitLane({
   );
 }
 
-// Workspace column - THIS is the droppable container
-// CRITICAL: Correct scroll chain:
-// 1. Outer wrapper: h-full min-h-0 flex flex-col overflow-hidden
-// 2. Header: flex-none (non-scrolling)
-// 3. Body: flex-1 min-h-0 overflow-y-auto (ONLY scrolling element)
-function WorkspaceColumn({ 
-  lane,
-  title,
-  cardIds, 
-  allCards,
-  onReturnToOrbit,
-}: { 
-  lane: Lane;
-  title: string;
-  cardIds: string[]; 
-  allCards: CommandCard[];
-  onReturnToOrbit: (cardId: string) => void;
-}) {
-  // Make the ENTIRE column a droppable target
-  const { isOver, setNodeRef } = useDroppable({
-    id: `lane:${lane}`,
-    data: { lane },
-  });
-  
-  const columnCards = cardIds
-    .map(id => allCards.find(c => c.id === id))
-    .filter((c): c is CommandCard => c !== undefined);
-  
-  return (
-    <div 
-      ref={setNodeRef}
-      className="h-full min-h-0 flex flex-col overflow-hidden"
-      style={{ transform: 'none' }}
-    >
-      <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
-        <DropZone 
-          lane={lane} 
-          title={title}
-          isEmpty={columnCards.length === 0}
-          isOver={isOver}
-        >
-          {columnCards.map(card => (
-            <DraggableCard 
-              key={card.id}
-              card={card} 
-              lane={lane}
-              onReturnToOrbit={() => onReturnToOrbit(card.id)}
-              compact
-            />
-          ))}
-        </DropZone>
-      </SortableContext>
-    </div>
-  );
-}
-
 // Layout toolbar
 function LayoutToolbar({ onReset }: { onReset: () => void }) {
   return (
@@ -314,14 +259,14 @@ function DragOverlayCard({ card }: { card: CommandCard }) {
   const CardComponent = card.component;
   
   return (
-    <Card className="shadow-2xl ring-2 ring-primary/50 opacity-90 max-w-sm">
-      <CardHeader className="py-2 px-3 border-b border-border/20">
+    <Card className="shadow-2xl ring-2 ring-primary/50 opacity-90 w-80" style={{ height: '220px' }}>
+      <CardHeader className="py-2 px-3 border-b border-border/20 flex-none">
         <CardTitle className="text-xs font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
           <Grip className="h-3 w-3 opacity-50" />
           {card.title}
         </CardTitle>
       </CardHeader>
-      <CardContent className="px-3 py-3">
+      <CardContent className="px-3 py-3 flex-1 overflow-hidden">
         <CardComponent compact />
       </CardContent>
     </Card>
@@ -479,6 +424,13 @@ export function CommandCenter({ cards }: CommandCenterProps) {
       returnToOrbit(cardId, lane);
     }
   };
+
+  // Build cards for each lane
+  const getCardsForLane = (cardIds: string[]) => {
+    return cardIds
+      .map(id => cards.find(c => c.id === id))
+      .filter((c): c is CommandCard => c !== undefined);
+  };
   
   return (
     <DndContext
@@ -498,12 +450,13 @@ export function CommandCenter({ cards }: CommandCenterProps) {
           <div>over: <span className={lastOverId?.startsWith('lane:') ? 'text-green-400' : 'text-red-400'}>{lastOverId ?? 'null'}</span></div>
         </div>
       )}
+      
       {/* Desktop: 3-column grid */}
       <div className="hidden lg:flex h-[100dvh] w-full flex-col bg-background overflow-hidden">
         <LayoutToolbar onReset={resetLayout} />
         
         <div className="flex-1 min-h-0 grid grid-cols-12 gap-0 overflow-hidden">
-          {/* Left: Orbit (Card Tray) */}
+          {/* Left: Orbit (Card Tray) - special rolodex behavior */}
           <div className="col-span-4 h-full min-h-0 overflow-hidden border-r border-border/30 bg-muted/5">
             <OrbitLane 
               cardIds={layout.orbit} 
@@ -512,26 +465,34 @@ export function CommandCenter({ cards }: CommandCenterProps) {
             />
           </div>
           
-          {/* Middle: Column A (Workspace) */}
+          {/* Middle: Column A (Workspace) - uses LaneShell */}
           <div className="col-span-4 h-full min-h-0 overflow-hidden border-r border-border/30">
-            <WorkspaceColumn 
-              lane="A"
-              title="Column A"
-              cardIds={layout.A} 
-              allCards={cards}
-              onReturnToOrbit={handleReturnToOrbit}
-            />
+            <LaneShell lane="A" title="WORKSPACE A" cardIds={layout.A}>
+              {getCardsForLane(layout.A).map(card => (
+                <DraggableCard 
+                  key={card.id}
+                  card={card} 
+                  lane="A"
+                  onReturnToOrbit={() => handleReturnToOrbit(card.id)}
+                  compact
+                />
+              ))}
+            </LaneShell>
           </div>
           
-          {/* Right: Column B (Workspace) */}
+          {/* Right: Column B (Workspace) - uses LaneShell (IDENTICAL to A) */}
           <div className="col-span-4 h-full min-h-0 overflow-hidden">
-            <WorkspaceColumn 
-              lane="B"
-              title="Column B"
-              cardIds={layout.B} 
-              allCards={cards}
-              onReturnToOrbit={handleReturnToOrbit}
-            />
+            <LaneShell lane="B" title="WORKSPACE B" cardIds={layout.B}>
+              {getCardsForLane(layout.B).map(card => (
+                <DraggableCard 
+                  key={card.id}
+                  card={card} 
+                  lane="B"
+                  onReturnToOrbit={() => handleReturnToOrbit(card.id)}
+                  compact
+                />
+              ))}
+            </LaneShell>
           </div>
         </div>
       </div>
@@ -550,14 +511,19 @@ export function CommandCenter({ cards }: CommandCenterProps) {
             />
           </div>
           
-          {/* Right: Combined columns - make it a droppable */}
+          {/* Right: Combined workspace */}
           <div className="h-full min-h-0 overflow-hidden">
-            <TabletWorkspaceColumn
-              cardIds={[...layout.A, ...layout.B]}
-              allCards={cards}
-              layoutA={layout.A}
-              onReturnToOrbit={handleReturnToOrbit}
-            />
+            <LaneShell lane="A" title="WORKSPACE" cardIds={[...layout.A, ...layout.B]}>
+              {getCardsForLane([...layout.A, ...layout.B]).map(card => (
+                <DraggableCard 
+                  key={card.id}
+                  card={card} 
+                  lane={layout.A.includes(card.id) ? 'A' : 'B'}
+                  onReturnToOrbit={() => handleReturnToOrbit(card.id)}
+                  compact
+                />
+              ))}
+            </LaneShell>
           </div>
         </div>
       </div>
@@ -577,54 +543,5 @@ export function CommandCenter({ cards }: CommandCenterProps) {
         {activeCard ? <DragOverlayCard card={activeCard} /> : null}
       </DragOverlay>
     </DndContext>
-  );
-}
-
-// Tablet workspace column - droppable container with correct scroll chain
-function TabletWorkspaceColumn({
-  cardIds,
-  allCards,
-  layoutA,
-  onReturnToOrbit,
-}: {
-  cardIds: string[];
-  allCards: CommandCard[];
-  layoutA: string[];
-  onReturnToOrbit: (cardId: string) => void;
-}) {
-  const { isOver, setNodeRef } = useDroppable({
-    id: 'lane:A',
-    data: { lane: 'A' },
-  });
-  
-  const columnCards = cardIds
-    .map(id => allCards.find(c => c.id === id))
-    .filter((c): c is CommandCard => c !== undefined);
-  
-  return (
-    <div 
-      ref={setNodeRef}
-      className="h-full min-h-0 flex flex-col overflow-hidden"
-      style={{ transform: 'none' }}
-    >
-      <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
-        <DropZone 
-          lane="A"
-          title="Workspace"
-          isEmpty={columnCards.length === 0}
-          isOver={isOver}
-        >
-          {columnCards.map(card => (
-            <DraggableCard 
-              key={card.id}
-              card={card} 
-              lane={layoutA.includes(card.id) ? 'A' : 'B'}
-              onReturnToOrbit={() => onReturnToOrbit(card.id)}
-              compact
-            />
-          ))}
-        </DropZone>
-      </SortableContext>
-    </div>
   );
 }

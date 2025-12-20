@@ -73,6 +73,9 @@ export const DraggableCard = forwardRef<HTMLDivElement, DraggableCardProps>(
       onReturnToOrbit?.();
     };
     
+    // Fixed height for uniform card sizing: 220px
+    const CARD_HEIGHT = 220;
+
     return (
       <div
         ref={combinedRef}
@@ -89,15 +92,14 @@ export const DraggableCard = forwardRef<HTMLDivElement, DraggableCardProps>(
         <Card 
           variant={isActive ? "glow" : "default"}
           className={cn(
-            "transition-all duration-200 overflow-hidden pointer-events-auto",
+            "transition-all duration-200 overflow-hidden pointer-events-auto flex flex-col",
             isDragging && "shadow-2xl ring-2 ring-primary/50",
             isActive && "ring-1 ring-primary/50 shadow-xl shadow-primary/15"
           )}
+          style={{ height: `${CARD_HEIGHT}px`, minHeight: `${CARD_HEIGHT}px`, maxHeight: `${CARD_HEIGHT}px` }}
         >
-          <CardHeader className={cn(
-            "flex flex-row items-center justify-between border-b border-border/20",
-            compact ? "py-2 px-3" : "py-3 px-4"
-          )}>
+          {/* Header - fixed, non-scrolling */}
+          <CardHeader className="flex-none flex flex-row items-center justify-between border-b border-border/20 py-2 px-3">
             <CardTitle className="text-xs font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
               <Grip className="h-3 w-3 opacity-50" />
               {card.title}
@@ -126,8 +128,10 @@ export const DraggableCard = forwardRef<HTMLDivElement, DraggableCardProps>(
               )}
             </div>
           </CardHeader>
+          
+          {/* Content - scrollable */}
           <CardContent 
-            className={cn(compact ? "px-3 py-3" : "px-4 py-4")}
+            className="flex-1 min-h-0 overflow-y-auto px-3 py-3"
             onPointerDown={(e) => e.stopPropagation()}
           >
             <CardComponent compact />

@@ -20,18 +20,18 @@ export function DropZone({
   children,
 }: DropZoneProps) {
   return (
-    <div className="h-full min-h-0 flex flex-col">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* Sticky header */}
-      <div className="shrink-0 sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/30 px-3 py-2">
+      <div className="shrink-0 bg-background/95 backdrop-blur-sm border-b border-border/30 px-3 py-2">
         <h2 className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
           {title}
         </h2>
       </div>
       
-      {/* Content area - takes full remaining height */}
+      {/* Scrollable content area */}
       <div 
         className={cn(
-          "flex-1 min-h-0 overflow-y-auto transition-colors duration-200",
+          "flex-1 overflow-y-auto transition-colors duration-200",
           isOver && "bg-primary/10"
         )}
       >

@@ -51,9 +51,12 @@ interface TradeTags {
   };
   // Phase 5: Transaction cost awareness (DATA ONLY)
   cost_context?: {
-    estimated_fee_pct: number;      // Expected fee %
-    estimated_slippage_bps: number; // Expected slippage basis points
-    spread_bps?: number;            // Bid-ask spread if available
+    estimated_fee_rate: number;      // Fee as fraction (0.006 = 0.6%)
+    fee_assumption?: string;         // e.g., 'base_tier_taker'
+    estimated_slippage_bps: number;  // Expected slippage basis points
+    slippage_model?: string;         // e.g., 'atr_ratio_x5'
+    is_estimate?: boolean;           // Always true for estimates
+    spread_bps?: number;             // Bid-ask spread if available
   };
   // Phase 5: Market regime context (READ-ONLY)
   regime_context?: MarketRegimeContext;
@@ -1945,10 +1948,13 @@ Deno.serve(async (req) => {
         atr_ratio: market.atr_ratio,
         age_seconds: dataAge,
       },
-      // Phase 5: Cost context (DATA ONLY)
+      // Phase 5: Cost context (DATA ONLY) - consistent with HOLD schema
       cost_context: {
-        estimated_fee_pct: estimatedFeePct,
+        estimated_fee_rate: estimatedFeePct,  // Already fraction (0.006 = 0.6%)
+        fee_assumption: 'base_tier_taker',
         estimated_slippage_bps: estimatedSlippageBps,
+        slippage_model: 'atr_ratio_x5',
+        is_estimate: true,
       },
       // Phase 5: Regime context (READ-ONLY)
       regime_context: regimeContext,

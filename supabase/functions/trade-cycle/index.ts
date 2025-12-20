@@ -143,6 +143,260 @@ const DROUGHT_DETECTION = {
 };
 
 // ===========================================================================
+// ADAPTIVE TUNING - Gate classification for offset direction
+// ===========================================================================
+type GateKind = 'min' | 'max';
+
+// Gate classification: 'min' = relax by lowering, 'max' = relax by raising
+const GATE_KINDS: Record<string, GateKind> = {
+  trend: 'min',          // min_confidence-like: lower = easier to pass
+  rsi: 'min',            // min threshold: lower = easier to pass  
+  pullback: 'max',       // max pullback tolerance: higher = easier to pass
+  vol_contraction: 'max', // max ATR ratio: higher = easier to pass
+};
+
+interface AdaptiveTuningConfig {
+  enabled: boolean;
+  mode: 'drought_only' | 'always';
+  window_decisions: number;
+  cooldown_minutes: number;
+  step_pct: number;
+  max_relax_pct: number;
+  decay_step_pct: number;
+  last_adjusted_at: string | null;
+  offsets: Record<string, number>; // gate_name: fractional offset (negative = relax)
+}
+
+// Apply adaptive offsets to thresholds
+function applyAdaptiveOffsets(
+  thresholds: typeof BASELINE_THRESHOLDS,
+  offsets: Record<string, number> | undefined
+): typeof BASELINE_THRESHOLDS {
+  if (!offsets || Object.keys(offsets).length === 0) {
+    return thresholds;
+  }
+  
+  const out = { ...thresholds };
+  
+  // Map gate names to threshold keys
+  const gateToThreshold: Record<string, keyof typeof BASELINE_THRESHOLDS> = {
+    trend: 'trend_threshold',
+    rsi: 'rsi_threshold',
+    pullback: 'pullback_pct',
+    vol_contraction: 'vol_contraction',
+  };
+  
+  for (const [gate, offset] of Object.entries(offsets)) {
+    const thresholdKey = gateToThreshold[gate];
+    if (!thresholdKey || !(thresholdKey in out)) continue;
+    
+    const kind = GATE_KINDS[gate];
+    if (!kind) continue;
+    
+    const base = out[thresholdKey] as number;
+    const delta = Math.abs(base * offset);
+    
+    // offset < 0 relaxes the gate
+    // - 'min' gates: relax by subtracting (lower threshold = easier)
+    // - 'max' gates: relax by adding (higher threshold = easier)
+    if (kind === 'min') {
+      (out as Record<string, number>)[thresholdKey] = offset < 0 ? base - delta : base + delta;
+    } else {
+      (out as Record<string, number>)[thresholdKey] = offset < 0 ? base + delta : base - delta;
+    }
+  }
+  
+  return out;
+}
+
+// Decay offsets back toward 0 when not in drought
+function decayOffsets(
+  offsets: Record<string, number>,
+  decayStep: number,
+  maxRelax: number
+): Record<string, number> {
+  const out: Record<string, number> = { ...offsets };
+  
+  for (const k of Object.keys(out)) {
+    const v = out[k];
+    if (v < 0) out[k] = Math.min(0, v + decayStep);  // Move toward 0
+    if (v > 0) out[k] = Math.max(0, v - decayStep);
+    // Clamp
+    out[k] = Math.max(-maxRelax, Math.min(maxRelax, out[k]));
+    // Remove negligible offsets
+    if (Math.abs(out[k]) < 0.001) delete out[k];
+  }
+  
+  return out;
+}
+
+// Pick the best gate to relax: prioritize nearest_pass counts, then failure counts
+function pickCandidateGate(
+  nearestCounts: Record<string, number>,
+  failCounts: Record<string, number>
+): string | undefined {
+  // Sort by nearest_pass frequency (most blocked gate that almost passes)
+  const nearestSorted = Object.entries(nearestCounts)
+    .filter(([gate]) => gate in GATE_KINDS)
+    .sort((a, b) => b[1] - a[1]);
+  
+  if (nearestSorted.length > 0) {
+    return nearestSorted[0][0];
+  }
+  
+  // Fallback: most frequently failing gate
+  const failSorted = Object.entries(failCounts)
+    .filter(([gate]) => gate in GATE_KINDS)
+    .sort((a, b) => b[1] - a[1]);
+  
+  return failSorted.length > 0 ? failSorted[0][0] : undefined;
+}
+
+// Main adaptive tuning logic - run at end of each cycle
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function maybeTuneThresholds(
+  supabase: any,
+  droughtResolved: ResolvedDroughtState
+): Promise<void> {
+  // Fetch config with id
+  const { data: cfgRow } = await supabase
+    .from('system_config')
+    .select('id, config')
+    .limit(1)
+    .single();
+  
+  if (!cfgRow) return;
+  
+  const configId = cfgRow.id as string;
+  const cfg = (cfgRow.config ?? {}) as Record<string, unknown>;
+  const tuning = cfg.adaptive_tuning as AdaptiveTuningConfig | undefined;
+  
+  if (!tuning?.enabled) return;
+  
+  const now = new Date();
+  
+  // drought_only mode: decay if not in drought
+  if (tuning.mode === 'drought_only' && !droughtResolved.detected) {
+    const currentOffsets = tuning.offsets ?? {};
+    if (Object.keys(currentOffsets).length === 0) return;
+    
+    const nextOffsets = decayOffsets(currentOffsets, tuning.decay_step_pct, tuning.max_relax_pct);
+    
+    if (JSON.stringify(nextOffsets) !== JSON.stringify(currentOffsets)) {
+      await supabase.from('system_config').update({
+        config: { 
+          ...cfg, 
+          adaptive_tuning: { ...tuning, offsets: nextOffsets } 
+        },
+        updated_at: now.toISOString(),
+      }).eq('id', configId);
+      
+      console.log('[adaptive-tuning] Decayed offsets:', nextOffsets);
+    }
+    return;
+  }
+  
+  // Check if override is force_off (don't tune during force_off)
+  if (droughtResolved.override === 'force_off') return;
+  
+  // Check cooldown
+  if (tuning.last_adjusted_at) {
+    const msSinceAdjust = now.getTime() - new Date(tuning.last_adjusted_at).getTime();
+    if (msSinceAdjust < tuning.cooldown_minutes * 60 * 1000) {
+      console.log(`[adaptive-tuning] In cooldown (${Math.round(msSinceAdjust / 60000)}m of ${tuning.cooldown_minutes}m)`);
+      return;
+    }
+  }
+  
+  // Read last N decisions
+  const { data: decisions } = await supabase
+    .from('control_events')
+    .select('metadata')
+    .eq('action', 'trade_decision')
+    .order('triggered_at', { ascending: false })
+    .limit(tuning.window_decisions);
+  
+  const rows = (decisions ?? []) as Array<{ metadata: Record<string, unknown> | null }>;
+  const minRequired = Math.floor(tuning.window_decisions * 0.6);
+  
+  if (rows.length < minRequired) {
+    console.log(`[adaptive-tuning] Not enough decisions (${rows.length}/${minRequired})`);
+    return;
+  }
+  
+  // Aggregate gate telemetry
+  const failCounts: Record<string, number> = {};
+  const nearestCounts: Record<string, number> = {};
+  
+  for (const r of rows) {
+    const m = (r.metadata ?? {}) as Record<string, unknown>;
+    
+    // Count nearest_pass occurrences
+    const nearestPass = m.nearest_pass as { gate?: string } | undefined;
+    if (nearestPass?.gate) {
+      nearestCounts[nearestPass.gate] = (nearestCounts[nearestPass.gate] ?? 0) + 1;
+    }
+    
+    // Count gate failures
+    const gateFailures = (m.gate_failures ?? {}) as Record<string, { count?: number }>;
+    for (const [gate, stats] of Object.entries(gateFailures)) {
+      const c = stats?.count ?? 1;
+      failCounts[gate] = (failCounts[gate] ?? 0) + c;
+    }
+  }
+  
+  // Pick candidate gate to relax
+  const candidate = pickCandidateGate(nearestCounts, failCounts);
+  if (!candidate) {
+    console.log('[adaptive-tuning] No candidate gate found');
+    return;
+  }
+  
+  const offsets = { ...(tuning.offsets ?? {}) };
+  const currentOffset = offsets[candidate] ?? 0;
+  
+  // Relax = make more negative, bounded by max_relax_pct
+  const nextOffset = Math.max(currentOffset - tuning.step_pct, -tuning.max_relax_pct);
+  
+  // Only update if there's a change
+  if (Math.abs(nextOffset - currentOffset) < 0.001) {
+    console.log(`[adaptive-tuning] Gate ${candidate} already at max relax (${currentOffset})`);
+    return;
+  }
+  
+  offsets[candidate] = nextOffset;
+  
+  const nextConfig = {
+    ...cfg,
+    adaptive_tuning: {
+      ...tuning,
+      offsets,
+      last_adjusted_at: now.toISOString(),
+    },
+  };
+  
+  await supabase.from('system_config').update({
+    config: nextConfig,
+    updated_at: now.toISOString(),
+  }).eq('id', configId);
+  
+  // Log the tuning event
+  await supabase.from('control_events').insert({
+    action: 'adaptive_tuning_update',
+    metadata: {
+      gate: candidate,
+      previous_offset: currentOffset,
+      new_offset: nextOffset,
+      nearest_counts: nearestCounts,
+      fail_counts: failCounts,
+      window_size: rows.length,
+    },
+  });
+  
+  console.log(`[adaptive-tuning] Relaxed gate '${candidate}': ${currentOffset.toFixed(3)} → ${nextOffset.toFixed(3)}`);
+}
+
+// ===========================================================================
 // LEARNABLE TRADE FILTER
 // ===========================================================================
 interface TradeTagsForLearning {
@@ -601,13 +855,14 @@ function makeDecision(
   
   // Threshold selection priority:
   // 1. Test mode: use TEST_MODE_THRESHOLDS
-  // 2. Drought mode: use DROUGHT_THRESHOLDS
+  // 2. Drought mode: use DROUGHT_THRESHOLDS (with adaptive offsets applied)
   // 3. Normal mode: use agent genes or BASELINE_THRESHOLDS
   let thresholds: typeof BASELINE_THRESHOLDS;
   if (testMode) {
     thresholds = TEST_MODE_THRESHOLDS;
   } else if (droughtMode) {
     thresholds = DROUGHT_THRESHOLDS;
+    // Note: adaptive offsets are applied in the main handler where we have config access
   } else {
     thresholds = {
       trend_threshold: genes.trend_threshold ?? BASELINE_THRESHOLDS.trend_threshold,
@@ -1046,6 +1301,9 @@ Deno.serve(async (req) => {
         },
       });
       
+      // Run adaptive tuning check at end of cycle
+      await maybeTuneThresholds(supabase, droughtResolved);
+      
       return new Response(
         JSON.stringify({
           ok: true,
@@ -1244,6 +1502,9 @@ Deno.serve(async (req) => {
     const executeResult = await executeResponse.json();
     
     console.log(`[trade-cycle] Execute result:`, executeResult);
+
+    // Run adaptive tuning check at end of cycle
+    await maybeTuneThresholds(supabase, droughtResolved);
 
     return new Response(
       JSON.stringify({

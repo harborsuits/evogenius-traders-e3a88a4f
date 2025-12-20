@@ -265,16 +265,19 @@ async function checkTuningFreeze(
   droughtResolved: ResolvedDroughtState,
   cfg: Record<string, unknown>,
   configId: string
-): Promise<{ frozen: boolean; reason?: string }> {
+): Promise<{ frozen: boolean; reason?: string; capped?: boolean }> {
   const now = new Date();
+  const alreadyFrozenUntil = tuning.frozen_until ? new Date(tuning.frozen_until) : null;
+  const alreadyFrozen = alreadyFrozenUntil && alreadyFrozenUntil > now;
+  const currentReason = tuning.frozen_reason ?? null;
   
-  // Check existing freeze
-  if (tuning.frozen_until) {
-    const frozenUntilDate = new Date(tuning.frozen_until);
-    if (frozenUntilDate > now) {
-      return { frozen: true, reason: tuning.frozen_reason ?? 'frozen' };
-    }
-    // Freeze expired - clear it
+  // Check existing freeze - still valid?
+  if (alreadyFrozen) {
+    return { frozen: true, reason: currentReason ?? 'frozen' };
+  }
+  
+  // Freeze expired - clear it (only if there was one)
+  if (tuning.frozen_until && !alreadyFrozen) {
     await supabase.from('system_config').update({
       config: {
         ...cfg,
@@ -288,17 +291,9 @@ async function checkTuningFreeze(
   const freezePeakDdPct = tuning.freeze_peak_dd_pct ?? 3.0;
   const maxTotalRelaxPct = tuning.max_total_relax_pct ?? 0.25;
   
-  // Check 1: Recent kill event
-  const killWindowStart = new Date(now.getTime() - freezeAfterKillHours * 60 * 60 * 1000).toISOString();
-  const { count: recentKillCount } = await supabase
-    .from('control_events')
-    .select('*', { count: 'exact', head: true })
-    .eq('action', 'drought_kill')
-    .gte('triggered_at', killWindowStart);
-  
-  if ((recentKillCount ?? 0) > 0) {
-    const freezeReason = `kill_event_within_${freezeAfterKillHours}h`;
-    const freezeUntil = new Date(now.getTime() + freezeAfterKillHours * 60 * 60 * 1000).toISOString();
+  // Helper to persist freeze and log event (only when transitioning)
+  const applyFreeze = async (freezeUntil: string, freezeReason: string, trigger: string, extraMeta: Record<string, unknown> = {}) => {
+    const isNewFreeze = !alreadyFrozen || currentReason !== freezeReason;
     
     await supabase.from('system_config').update({
       config: {
@@ -308,18 +303,42 @@ async function checkTuningFreeze(
       updated_at: now.toISOString(),
     }).eq('id', configId);
     
-    await supabase.from('control_events').insert({
-      action: 'adaptive_tuning_frozen',
-      metadata: {
-        reason: freezeReason,
-        frozen_until: freezeUntil,
-        trigger: 'kill_event',
-        offsets_snapshot: tuning.offsets,
-      },
-    });
+    // Only log event on transition (not every cycle)
+    if (isNewFreeze) {
+      await supabase.from('control_events').insert({
+        action: 'adaptive_tuning_frozen',
+        metadata: {
+          reason: freezeReason,
+          frozen_until: freezeUntil,
+          trigger,
+          offsets_snapshot: tuning.offsets,
+          ...extraMeta,
+        },
+      });
+      console.log(`[adaptive-tuning] FROZEN: ${freezeReason} until ${freezeUntil}`);
+    }
+  };
+  
+  // Check 1: Recent kill event - freeze until (kill_time + freezeAfterKillHours)
+  const { data: lastKill } = await supabase
+    .from('control_events')
+    .select('triggered_at, metadata')
+    .eq('action', 'drought_kill')
+    .order('triggered_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  
+  if (lastKill?.triggered_at) {
+    const killAt = new Date(lastKill.triggered_at);
+    const freezeUntilFromKill = new Date(killAt.getTime() + freezeAfterKillHours * 60 * 60 * 1000);
     
-    console.log(`[adaptive-tuning] FROZEN: ${freezeReason}`);
-    return { frozen: true, reason: freezeReason };
+    if (freezeUntilFromKill > now) {
+      const freezeReason = `kill_event_${freezeAfterKillHours}h`;
+      await applyFreeze(freezeUntilFromKill.toISOString(), freezeReason, 'kill_event', {
+        kill_at: lastKill.triggered_at,
+      });
+      return { frozen: true, reason: freezeReason };
+    }
   }
   
   // Check 2: Peak equity drawdown
@@ -328,39 +347,29 @@ async function checkTuningFreeze(
     const freezeReason = `peak_dd_${droughtResolved.peakEquityDrawdownPct.toFixed(1)}pct`;
     const freezeUntil = new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(); // 2h freeze
     
-    await supabase.from('system_config').update({
-      config: {
-        ...cfg,
-        adaptive_tuning: { ...tuning, frozen_until: freezeUntil, frozen_reason: freezeReason },
-      },
-      updated_at: now.toISOString(),
-    }).eq('id', configId);
-    
-    await supabase.from('control_events').insert({
-      action: 'adaptive_tuning_frozen',
-      metadata: {
-        reason: freezeReason,
-        frozen_until: freezeUntil,
-        trigger: 'peak_drawdown',
-        peak_dd_pct: droughtResolved.peakEquityDrawdownPct,
-        threshold: freezePeakDdPct,
-        equity: droughtResolved.equity,
-        peak_equity: droughtResolved.peakEquity,
-        offsets_snapshot: tuning.offsets,
-      },
+    await applyFreeze(freezeUntil, freezeReason, 'peak_drawdown', {
+      peak_dd_pct: droughtResolved.peakEquityDrawdownPct,
+      threshold: freezePeakDdPct,
+      equity: droughtResolved.equity,
+      peak_equity: droughtResolved.peakEquity,
     });
     
-    console.log(`[adaptive-tuning] FROZEN: ${freezeReason}`);
     return { frozen: true, reason: freezeReason };
   }
   
-  // Check 3: Global max relaxation cap
+  // Check 3: Global max relaxation cap - treat as CAPPED (short 15m freeze, decays naturally)
   const totalRelax = Object.values(tuning.offsets ?? {}).reduce((sum, v) => sum + Math.abs(v), 0);
   if (totalRelax >= maxTotalRelaxPct) {
-    const freezeReason = `max_relax_${(totalRelax * 100).toFixed(0)}pct`;
-    // Don't set frozen_until - just block further relaxation until offsets decay
-    console.log(`[adaptive-tuning] CAPPED: ${freezeReason} (no new relaxations until decay)`);
-    return { frozen: true, reason: freezeReason };
+    const freezeReason = `capped_${(totalRelax * 100).toFixed(0)}pct`;
+    const freezeUntil = new Date(now.getTime() + 15 * 60 * 1000).toISOString(); // 15m cap-freeze
+    
+    await applyFreeze(freezeUntil, freezeReason, 'global_cap', {
+      total_relax_pct: totalRelax,
+      threshold: maxTotalRelaxPct,
+    });
+    
+    console.log(`[adaptive-tuning] CAPPED: ${freezeReason} (15m pause, offsets will decay)`);
+    return { frozen: true, reason: freezeReason, capped: true };
   }
   
   return { frozen: false };

@@ -51,6 +51,10 @@ interface FitnessComponents {
   gross_profit: number;
   total_fees: number;
   symbols_traded: number;
+  // Phase 6B: Net-cost metrics for auditing
+  net_pnl_after_costs: number;  // realized_pnl with explicit cost accounting
+  cost_drag_pct: number;        // fees as % of gross profit (0-100+)
+  avg_cost_per_trade: number;   // average fee per trade
 }
 
 // Filter out test mode trades
@@ -269,6 +273,9 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
       gross_profit: 0,
       total_fees: 0,
       symbols_traded: 0,
+      net_pnl_after_costs: 0,
+      cost_drag_pct: 0,
+      avg_cost_per_trade: 0,
     };
   }
 
@@ -336,6 +343,15 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
     fitnessScore *= (1 - samplePenalty);  // Up to 50% reduction for 0 trades
   }
 
+  // Phase 6B: Calculate net-cost metrics
+  const netPnlAfterCosts = pnlResult.realizedPnl; // Already includes fees in calculation
+  const costDragPct = pnlResult.grossProfit > 0 
+    ? (pnlResult.totalFees / pnlResult.grossProfit) * 100 
+    : 0;
+  const avgCostPerTrade = learnableTrades.length > 0 
+    ? pnlResult.totalFees / learnableTrades.length 
+    : 0;
+
   return {
     normalized_pnl: normalizedPnl,
     sharpe_ratio: sharpe,
@@ -349,6 +365,9 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
     gross_profit: pnlResult.grossProfit,
     total_fees: pnlResult.totalFees,
     symbols_traded: symbolsTraded,
+    net_pnl_after_costs: netPnlAfterCosts,
+    cost_drag_pct: costDragPct,
+    avg_cost_per_trade: avgCostPerTrade,
   };
 }
 
@@ -840,7 +859,15 @@ Deno.serve(async (req) => {
           trades: r.fitness.total_trades,
           sharpe: r.fitness.sharpe_ratio.toFixed(2),
           drawdown: (r.fitness.max_drawdown * 100).toFixed(1) + '%',
+          // Phase 6B: Net-cost metrics
+          cost_drag_pct: r.fitness.cost_drag_pct.toFixed(1) + '%',
+          avg_cost_per_trade: r.fitness.avg_cost_per_trade.toFixed(4),
         })),
+        // Phase 6B: Aggregate cost metrics
+        total_fees_all_agents: results.reduce((sum, r) => sum + r.fitness.total_fees, 0).toFixed(2),
+        avg_cost_drag_pct: results.length > 0 
+          ? (results.reduce((sum, r) => sum + r.fitness.cost_drag_pct, 0) / results.length).toFixed(1) + '%'
+          : '0%',
         duration_ms: Date.now() - startTime,
       },
     });

@@ -59,8 +59,10 @@ export function DraggableCard({
     <div
       ref={setNodeRef}
       style={style}
+      {...attributes}
+      {...listeners}
       className={cn(
-        "transition-all duration-200",
+        "transition-all duration-200 touch-none cursor-grab active:cursor-grabbing",
         isDragging && "opacity-50 z-50",
         isActive && "scale-[1.02]",
         !isActive && lane === 'orbit' && "opacity-85 hover:opacity-95"
@@ -69,7 +71,7 @@ export function DraggableCard({
       <Card 
         variant={isActive ? "glow" : "default"}
         className={cn(
-          "transition-all duration-200 overflow-hidden",
+          "transition-all duration-200 overflow-hidden pointer-events-auto",
           isDragging && "shadow-2xl ring-2 ring-primary/50",
           isActive && "ring-1 ring-primary/50 shadow-xl shadow-primary/15"
         )}
@@ -79,24 +81,16 @@ export function DraggableCard({
           compact ? "py-2 px-3" : "py-3 px-4"
         )}>
           <CardTitle className="text-xs font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-            {/* Drag handle */}
-            <button
-              {...attributes}
-              {...listeners}
-              className="cursor-grab active:cursor-grabbing touch-none p-0.5 -ml-1 rounded hover:bg-muted/50"
-              aria-label="Drag to reorder"
-            >
-              <Grip className="h-3 w-3 opacity-50" />
-            </button>
+            <Grip className="h-3 w-3 opacity-50" />
             {card.title}
           </CardTitle>
           
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2" onPointerDown={(e) => e.stopPropagation()}>
             {/* Return to orbit button (only shown in A/B columns) */}
             {lane !== 'orbit' && onReturnToOrbit && (
               <button
                 onClick={handleReturnToOrbit}
-                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 title="Return to Orbit"
               >
                 <RotateCcw className="h-3 w-3" />
@@ -106,7 +100,7 @@ export function DraggableCard({
             {card.type === 'drillable' && card.drilldownPath && (
               <button
                 onClick={handleDrilldown}
-                className="flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors"
+                className="flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors cursor-pointer"
               >
                 <span>View</span>
                 <ChevronRight className="h-3 w-3" />
@@ -114,9 +108,10 @@ export function DraggableCard({
             )}
           </div>
         </CardHeader>
-        <CardContent className={cn(
-          compact ? "px-3 py-3" : "px-4 py-4"
-        )}>
+        <CardContent 
+          className={cn(compact ? "px-3 py-3" : "px-4 py-4")}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
           <CardComponent compact />
         </CardContent>
       </Card>

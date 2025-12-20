@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
-import { OrbitalCommandCenter } from '@/components/orbital';
-import { OrbitalCard } from '@/contexts/OrbitalContext';
+import { CommandCenter, CommandCard } from '@/components/layout/CommandCenter';
 import { Header } from '@/components/layout/Header';
 import { LiveLockedWorkspace } from '@/components/dashboard/LiveLockedWorkspace';
 import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
@@ -33,51 +32,42 @@ import {
 // Drillable cards
 import { PositionsCardContent, ActivityCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
 
-// Consolidated layout: ~10 cards reduced to focused hierarchy
-// Row 1 (Hero): Decision State + Capital
-// Row 2 (Context): Market Conditions + Agents
-// Row 3 (Drillable): Activity, Positions, etc.
-// Row 4 (Advanced): System Audit (collapsible)
-const staticCards: OrbitalCard[] = [
-  // ROW 1: Primary status (always visible, high signal)
+// Card definitions for the 3-column Command Center layout
+// LEFT COLUMN (Rolodex): Primary status and context
+// MIDDLE COLUMN: Operational controls
+// RIGHT COLUMN: Activity and drillable views
+const staticCards: CommandCard[] = [
+  // Left column - Rolodex (primary status)
   { id: 'decision-state', title: 'Decision State', type: 'cockpit', component: DecisionStateTile },
-  { id: 'capital', title: 'Capital Overview', type: 'cockpit', component: CapitalOverviewTile },
-  
-  // ROW 2: Context cards
   { id: 'market-conditions', title: 'Market Conditions', type: 'cockpit', component: MarketConditionsTile },
+  { id: 'capital', title: 'Capital Overview', type: 'cockpit', component: CapitalOverviewTile },
   { id: 'agent-activity', title: 'Agent Activity', type: 'cockpit', component: AgentInactivityTile },
+  { id: 'symbol-coverage', title: 'Symbol Coverage', type: 'cockpit', component: SymbolCoverageTile },
   
-  // ROW 3: Operational tiles
+  // Middle column - Operations
   { id: 'trade-cycle', title: 'Trade Cycle', type: 'cockpit', component: TradeCycleTile },
   { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
   { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
-  
-  // ROW 4: Discovery tiles
-  { id: 'symbol-coverage', title: 'Symbol Coverage', type: 'cockpit', component: SymbolCoverageTile },
   { id: 'catalyst-watch', title: 'Catalyst Watch', type: 'cockpit', component: CatalystWatchTile },
   { id: 'autopsy', title: 'Performance Autopsy', type: 'cockpit', component: AutopsyTile },
-  
-  // ROW 5: Advanced (audit drawer)
   { id: 'system-audit', title: 'System Audit', type: 'cockpit', component: SystemAuditDrawer },
   
-  // Evolution comparison (contextual)
+  // Right column - Activity & Drillables
+  { id: 'activity', title: 'Activity', type: 'drillable', drilldownPath: '/trades', component: ActivityCardContent },
+  { id: 'positions', title: 'Positions', type: 'drillable', drilldownPath: '/positions', component: PositionsCardContent },
+  { id: 'agents', title: 'Agent Leaderboard', type: 'drillable', drilldownPath: '/agents', component: AgentsCardContent },
+  { id: 'generations', title: 'Generations', type: 'drillable', drilldownPath: '/generations', component: GenerationsCardContent },
+  { id: 'alerts', title: 'Alerts', type: 'drillable', drilldownPath: '/alerts', component: AlertsCardContent },
   { id: 'gen-compare', title: 'Gen 10 vs 11', type: 'cockpit', component: GenComparisonTile },
   { id: 'lineage', title: 'Lineage', type: 'cockpit', component: LineageTile },
   { id: 'rollover', title: 'Rollover Checklist', type: 'cockpit', component: RolloverTile },
-  
-  // Drillable cards (deep dive)
-  { id: 'activity', title: 'Activity', type: 'drillable', drilldownPath: '/trades', component: ActivityCardContent },
-  { id: 'agents', title: 'Agent Leaderboard', type: 'drillable', drilldownPath: '/agents', component: AgentsCardContent },
-  { id: 'positions', title: 'Positions', type: 'drillable', drilldownPath: '/positions', component: PositionsCardContent },
-  { id: 'generations', title: 'Generations', type: 'drillable', drilldownPath: '/generations', component: GenerationsCardContent },
-  { id: 'alerts', title: 'Alerts', type: 'drillable', drilldownPath: '/alerts', component: AlertsCardContent },
 ];
 
 const Index = () => {
   const { isLive, isLiveArmed } = useCurrentTradeMode();
   useRealtimeSubscriptions();
-  useBaselineInvariants(); // Dev-only baseline guard
-  usePerformanceAlerts(); // Performance alert evaluations
+  useBaselineInvariants();
+  usePerformanceAlerts();
   const { data: systemState, isLoading } = useSystemState();
   
   const currentGeneration = systemState?.generations as Generation | null;
@@ -85,12 +75,12 @@ const Index = () => {
   const currentGenId = systemState?.current_generation_id;
 
   // Build cards with dynamic genId path for GEN Health
-  const orbitalCards = useMemo<OrbitalCard[]>(() => {
+  const commandCards = useMemo<CommandCard[]>(() => {
     const genHealthPath = currentGenId 
       ? `/generations/${currentGenId}` 
       : '/generations';
     
-    const genHealthCard: OrbitalCard = {
+    const genHealthCard: CommandCard = {
       id: 'gen-health',
       title: 'GEN Health',
       type: 'drillable',
@@ -98,11 +88,12 @@ const Index = () => {
       component: GenHealthTile,
     };
     
-    // Insert gen-health after the first 4 cards (hero + context rows)
+    // Insert gen-health into the left column cards (after capital)
+    const leftColumnEnd = staticCards.findIndex(c => c.id === 'symbol-coverage');
     return [
-      ...staticCards.slice(0, 4),
+      ...staticCards.slice(0, leftColumnEnd),
       genHealthCard,
-      ...staticCards.slice(4),
+      ...staticCards.slice(leftColumnEnd),
     ];
   }, [currentGenId]);
 
@@ -132,7 +123,7 @@ const Index = () => {
     <div className="h-screen flex flex-col overflow-hidden">
       <Header status={status} generationNumber={currentGeneration?.generation_number} />
       <div className="flex-1 overflow-hidden">
-        <OrbitalCommandCenter cards={orbitalCards} />
+        <CommandCenter cards={commandCards} />
       </div>
     </div>
   );

@@ -308,6 +308,11 @@ export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
   );
 }
 
+// Elite Rotation Tile
+export function EliteRotationTile({ compact }: { compact?: boolean }) {
+  return <EliteRotationCard />;
+}
+
 // Trade Cycle Status Tile
 export function TradeCycleTile({ compact }: { compact?: boolean }) {
   return <TradeCycleStatus />;

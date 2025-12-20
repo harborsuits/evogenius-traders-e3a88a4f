@@ -1,6 +1,8 @@
-import { X, Plus } from 'lucide-react';
+import { useState } from 'react';
+import { X, Plus, Maximize2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
 
@@ -25,6 +27,7 @@ interface GridSlotProps {
 
 export function GridSlot({ row, col, card, isArmed, onArmSlot, onRemoveCard }: GridSlotProps) {
   const navigate = useNavigate();
+  const [expanded, setExpanded] = useState(false);
   
   // Empty slot
   if (!card) {
@@ -58,47 +61,75 @@ export function GridSlot({ row, col, card, isArmed, onArmSlot, onRemoveCard }: G
   // Filled slot
   const CardComponent = card.component;
   
+  const handleViewClick = () => {
+    if (card.type === 'drillable' && card.drilldownPath) {
+      navigate(card.drilldownPath);
+    } else {
+      setExpanded(true);
+    }
+  };
+  
   return (
-    <Card 
-      variant="default"
-      className="w-full flex flex-col overflow-hidden relative group"
-      style={{
-        height: CARD_HEIGHT,
-        minHeight: CARD_HEIGHT,
-        maxHeight: CARD_HEIGHT,
-      }}
-    >
-      {/* Remove button */}
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onRemoveCard}
-        className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity z-10 bg-background/80 hover:bg-destructive hover:text-destructive-foreground"
+    <>
+      <Card 
+        variant="default"
+        className="w-full flex flex-col overflow-hidden relative"
+        style={{
+          height: CARD_HEIGHT,
+          minHeight: CARD_HEIGHT,
+          maxHeight: CARD_HEIGHT,
+        }}
       >
-        <X className="h-3 w-3" />
-      </Button>
+        {/* Header with controls */}
+        <CardHeader className="flex-none py-2 px-3 border-b border-border/20 flex flex-row items-center justify-between gap-2">
+          <CardTitle className="text-xs font-mono uppercase tracking-wider text-muted-foreground truncate flex-1">
+            {card.title}
+          </CardTitle>
+          
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Expand/View button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleViewClick}
+              className="h-6 w-6 text-muted-foreground hover:text-primary"
+              title={card.drilldownPath ? "View full page" : "Expand"}
+            >
+              <Maximize2 className="h-3 w-3" />
+            </Button>
+            
+            {/* Remove button - always visible */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onRemoveCard}
+              className="h-6 w-6 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
+              title="Return to Orbit"
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          </div>
+        </CardHeader>
+        
+        {/* Content with internal scroll */}
+        <CardContent className="flex-1 min-h-0 overflow-y-auto px-3 py-2">
+          <CardComponent compact />
+        </CardContent>
+      </Card>
       
-      {/* Header */}
-      <CardHeader className="flex-none py-2 px-3 border-b border-border/20 flex flex-row items-center justify-between">
-        <CardTitle className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
-          {card.title}
-        </CardTitle>
-        {card.type === 'drillable' && card.drilldownPath && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate(card.drilldownPath!)}
-            className="h-5 px-1.5 text-[10px] text-primary hover:text-primary/80"
-          >
-            View →
-          </Button>
-        )}
-      </CardHeader>
-      
-      {/* Content with internal scroll */}
-      <CardContent className="flex-1 min-h-0 overflow-y-auto px-3 py-2">
-        <CardComponent compact />
-      </CardContent>
-    </Card>
+      {/* Expanded view dialog (for cockpit cards without dedicated pages) */}
+      <Dialog open={expanded} onOpenChange={setExpanded}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader className="shrink-0">
+            <DialogTitle className="font-mono uppercase tracking-wider">
+              {card.title}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 min-h-0 overflow-y-auto py-4">
+            <CardComponent compact={false} />
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

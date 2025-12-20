@@ -73,8 +73,8 @@ export const DraggableCard = forwardRef<HTMLDivElement, DraggableCardProps>(
       onReturnToOrbit?.();
     };
     
-    // Fixed height for uniform card sizing: 220px
-    const CARD_HEIGHT = 220;
+    // Fixed height for uniform card sizing
+    const CARD_HEIGHT = 240;
 
     return (
       <div

@@ -1,31 +1,24 @@
 import React from 'react';
-import { useDroppable } from '@dnd-kit/core';
-import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { cn } from '@/lib/utils';
 import { Plus } from 'lucide-react';
-import type { Lane } from '@/hooks/useLayoutState';
 
 interface DropZoneProps {
-  lane: Lane;
-  cardIds: string[];
+  lane: string;
   title: string;
   isEmpty: boolean;
+  isOver: boolean;
   children: React.ReactNode;
 }
 
+// DropZone is now VISUAL ONLY - no useDroppable here
+// The droppable ref is on the parent column container
 export function DropZone({ 
   lane, 
-  cardIds, 
   title,
   isEmpty,
+  isOver,
   children,
 }: DropZoneProps) {
-  // Use lane: prefix for consistent identification in drag handlers
-  const { isOver, setNodeRef } = useDroppable({
-    id: `lane:${lane}`,
-    data: { lane },
-  });
-  
   return (
     <div className="h-full min-h-0 flex flex-col">
       {/* Sticky header */}
@@ -35,23 +28,20 @@ export function DropZone({
         </h2>
       </div>
       
-      {/* Droppable area */}
+      {/* Content area - takes full remaining height */}
       <div 
-        ref={setNodeRef}
         className={cn(
           "flex-1 min-h-0 overflow-y-auto transition-colors duration-200",
-          isOver && "bg-primary/5"
+          isOver && "bg-primary/10"
         )}
       >
-        <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
-          {isEmpty ? (
-            <EmptyDropZone isOver={isOver} />
-          ) : (
-            <div className="p-3 space-y-3">
-              {children}
-            </div>
-          )}
-        </SortableContext>
+        {isEmpty ? (
+          <EmptyDropZone isOver={isOver} />
+        ) : (
+          <div className="p-3 space-y-3">
+            {children}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -61,8 +51,8 @@ function EmptyDropZone({ isOver }: { isOver: boolean }) {
   return (
     <div 
       className={cn(
-        "flex-1 min-h-[60vh] flex flex-col items-center justify-center p-6",
-        "border-2 border-dashed rounded-lg m-3 transition-all duration-200",
+        "h-[60vh] flex flex-col items-center justify-center p-6 m-3",
+        "border-2 border-dashed rounded-lg transition-all duration-200",
         isOver 
           ? "border-primary bg-primary/10 shadow-lg shadow-primary/20 ring-2 ring-primary/30" 
           : "border-muted-foreground/20 hover:border-muted-foreground/40"

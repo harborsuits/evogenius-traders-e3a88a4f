@@ -1718,13 +1718,27 @@ Deno.serve(async (req) => {
         .slice(0, 3)
         .map(([reason, count]) => `${reason}:${count}`);
       
-      // Phase 5: Add regime context for each candidate (HOLD case)
-      const candidatesWithRegime = candidates.map(c => ({
-        symbol: c.symbol,
-        decision: c.decision,
-        confidence: c.confidence,
-        regime_context: classifyMarketRegime(c.market),
-      }));
+      // Phase 5: Add full context for each candidate (HOLD case) - matches BUY/SELL structure
+      const candidatesContext = candidates.map(c => {
+        const regimeCtx = classifyMarketRegime(c.market);
+        return {
+          symbol: c.symbol,
+          decision: c.decision,
+          confidence: c.confidence,
+          // Phase 5a: Market regime context
+          regime_context: regimeCtx,
+          // Phase 5b: Transaction cost context (estimates)
+          cost_context: {
+            estimated_fee_pct: 0.006,  // 0.6% Coinbase taker fee estimate
+            estimated_slippage_bps: Math.round(c.market.atr_ratio * 5), // ATR-based slippage estimate
+          },
+          // Phase 5c: Multi-timeframe context (from regime classifier)
+          htf_context: {
+            trend_bias: regimeCtx.htf_trend_bias,
+            volatility_state: regimeCtx.htf_volatility_state,
+          },
+        };
+      });
       
       await supabase.from('control_events').insert({
         action: 'trade_decision',
@@ -1739,8 +1753,8 @@ Deno.serve(async (req) => {
           top_hold_reasons: topHoldReasons,
           mode: 'paper',
           thresholds_used: thresholdsUsed,
-          // Phase 5: Regime context for all evaluated candidates
-          candidates_regime: candidatesWithRegime,
+          // Phase 5: Full context for all evaluated candidates
+          candidates_context: candidatesContext,
           drought_state: {
             detected: droughtResolved.detected,
             active: droughtModeActive,

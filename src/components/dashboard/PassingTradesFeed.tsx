@@ -59,10 +59,11 @@ export function PassingTradesFeed({ compact }: { compact?: boolean }) {
       
       if (error) throw error;
       
-      // Filter client-side to buy/sell decisions
+      // Filter client-side to buy/sell decisions (normalize to lowercase)
       const filtered = (data ?? []).filter((row) => {
         const meta = row.metadata as TradeDecisionMeta | null;
-        return meta?.decision === 'buy' || meta?.decision === 'sell';
+        const d = (meta?.decision ?? '').toLowerCase();
+        return d === 'buy' || d === 'sell';
       });
       
       return filtered.slice(0, 15) as PassingTrade[];
@@ -162,7 +163,7 @@ export function PassingTradesFeed({ compact }: { compact?: boolean }) {
               const meta = trade.metadata as TradeDecisionMeta;
               const decision = meta.decision ?? '';
               const symbol = meta.symbol ?? '';
-              const reasons = meta.reasons ?? meta.entry_reason ?? [];
+              const reasons = meta.reasons ?? (typeof meta.entry_reason === 'string' ? [meta.entry_reason] : meta.entry_reason ?? []);
               const confidence = meta.confidence ?? 0;
               const signalConf = meta.signal_confidence ?? meta.confidence_components?.signal_confidence ?? confidence;
               const maturity = meta.maturity_multiplier ?? meta.confidence_components?.maturity_multiplier ?? 1;

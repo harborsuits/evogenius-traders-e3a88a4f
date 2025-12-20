@@ -2,6 +2,18 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
+export interface AdaptiveTuningConfig {
+  enabled?: boolean;
+  mode?: 'drought_only' | 'always';
+  window_decisions?: number;
+  cooldown_minutes?: number;
+  step_pct?: number;
+  max_relax_pct?: number;
+  decay_step_pct?: number;
+  last_adjusted_at?: string | null;
+  offsets?: Record<string, number>;
+}
+
 export interface SystemConfig {
   capital?: {
     active_pool_pct?: number;
@@ -33,6 +45,9 @@ export interface SystemConfig {
     symbols?: string[];
   };
   strategy_test_mode?: boolean;
+  drought_override?: 'auto' | 'force_off' | 'force_on';
+  drought_cooldown_until?: string;
+  adaptive_tuning?: AdaptiveTuningConfig;
 }
 
 export function useSystemConfig() {

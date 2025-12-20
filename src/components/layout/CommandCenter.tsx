@@ -9,6 +9,7 @@ import {
   useSensors,
   DragStartEvent,
   DragEndEvent,
+  DragOverEvent,
   useDroppable,
   MeasuringStrategy,
 } from '@dnd-kit/core';
@@ -232,7 +233,7 @@ function OrbitLane({
   );
 }
 
-// Workspace column with drop zone
+// Workspace column - THIS is the droppable container
 function WorkspaceColumn({ 
   lane,
   title,
@@ -246,27 +247,41 @@ function WorkspaceColumn({
   allCards: CommandCard[];
   onReturnToOrbit: (cardId: string) => void;
 }) {
+  // Make the ENTIRE column a droppable target
+  const { isOver, setNodeRef } = useDroppable({
+    id: `lane:${lane}`,
+    data: { lane },
+  });
+  
   const columnCards = cardIds
     .map(id => allCards.find(c => c.id === id))
     .filter((c): c is CommandCard => c !== undefined);
   
   return (
-    <DropZone 
-      lane={lane} 
-      cardIds={cardIds} 
-      title={title}
-      isEmpty={columnCards.length === 0}
+    <div 
+      ref={setNodeRef}
+      className="h-full min-h-0 flex flex-col"
+      style={{ transform: 'none' }} // Prevent any transform inheritance
     >
-      {columnCards.map(card => (
-        <DraggableCard 
-          key={card.id}
-          card={card} 
-          lane={lane}
-          onReturnToOrbit={() => onReturnToOrbit(card.id)}
-          compact
-        />
-      ))}
-    </DropZone>
+      <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
+        <DropZone 
+          lane={lane} 
+          title={title}
+          isEmpty={columnCards.length === 0}
+          isOver={isOver}
+        >
+          {columnCards.map(card => (
+            <DraggableCard 
+              key={card.id}
+              card={card} 
+              lane={lane}
+              onReturnToOrbit={() => onReturnToOrbit(card.id)}
+              compact
+            />
+          ))}
+        </DropZone>
+      </SortableContext>
+    </div>
   );
 }
 
@@ -380,8 +395,9 @@ export function CommandCenter({ cards }: CommandCenterProps) {
   // Layout state with persistence
   const { layout, moveCard, reorderCard, resetLayout, returnToOrbit } = useLayoutState(allCardIds);
   
-  // Track active drag
+  // Track active drag and debug info
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [lastOverId, setLastOverId] = useState<string | null>(null);
   const activeCard = activeId ? cards.find(c => c.id === activeId) : null;
   
   // DnD sensors
@@ -404,11 +420,17 @@ export function CommandCenter({ cards }: CommandCenterProps) {
   
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(event.active.id as string);
+    setLastOverId(null);
+  };
+  
+  const handleDragOver = (event: DragOverEvent) => {
+    setLastOverId(event.over?.id?.toString() ?? null);
   };
   
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     setActiveId(null);
+    setLastOverId(null);
     
     if (!over) return;
     
@@ -459,11 +481,19 @@ export function CommandCenter({ cards }: CommandCenterProps) {
       sensors={sensors}
       collisionDetection={pointerWithin}
       onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
       measuring={{
         droppable: { strategy: MeasuringStrategy.Always },
       }}
     >
+      {/* Debug overlay - shows what dnd-kit sees */}
+      {activeId && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] bg-black/90 text-white px-4 py-2 rounded-lg font-mono text-xs shadow-lg">
+          <div>active: <span className="text-yellow-400">{activeId}</span></div>
+          <div>over: <span className={lastOverId?.startsWith('lane:') ? 'text-green-400' : 'text-red-400'}>{lastOverId ?? 'null'}</span></div>
+        </div>
+      )}
       {/* Desktop: 3-column grid */}
       <div className="hidden lg:flex h-[100dvh] w-full flex-col bg-background overflow-hidden">
         <LayoutToolbar onReset={resetLayout} />
@@ -516,28 +546,13 @@ export function CommandCenter({ cards }: CommandCenterProps) {
             />
           </div>
           
-          {/* Right: Combined columns */}
-          <div className="h-full min-h-0 overflow-y-auto">
-            <DropZone 
-              lane="A"
-              cardIds={[...layout.A, ...layout.B]} 
-              title="Workspace"
-              isEmpty={layout.A.length === 0 && layout.B.length === 0}
-            >
-              {[...layout.A, ...layout.B]
-                .map(id => cards.find(c => c.id === id))
-                .filter((c): c is CommandCard => c !== undefined)
-                .map(card => (
-                  <DraggableCard 
-                    key={card.id}
-                    card={card} 
-                    lane={layout.A.includes(card.id) ? 'A' : 'B'}
-                    onReturnToOrbit={() => handleReturnToOrbit(card.id)}
-                    compact
-                  />
-                ))}
-            </DropZone>
-          </div>
+          {/* Right: Combined columns - make it a droppable */}
+          <TabletWorkspaceColumn
+            cardIds={[...layout.A, ...layout.B]}
+            allCards={cards}
+            layoutA={layout.A}
+            onReturnToOrbit={handleReturnToOrbit}
+          />
         </div>
       </div>
       
@@ -556,5 +571,54 @@ export function CommandCenter({ cards }: CommandCenterProps) {
         {activeCard ? <DragOverlayCard card={activeCard} /> : null}
       </DragOverlay>
     </DndContext>
+  );
+}
+
+// Tablet workspace column - droppable container
+function TabletWorkspaceColumn({
+  cardIds,
+  allCards,
+  layoutA,
+  onReturnToOrbit,
+}: {
+  cardIds: string[];
+  allCards: CommandCard[];
+  layoutA: string[];
+  onReturnToOrbit: (cardId: string) => void;
+}) {
+  const { isOver, setNodeRef } = useDroppable({
+    id: 'lane:A',
+    data: { lane: 'A' },
+  });
+  
+  const columnCards = cardIds
+    .map(id => allCards.find(c => c.id === id))
+    .filter((c): c is CommandCard => c !== undefined);
+  
+  return (
+    <div 
+      ref={setNodeRef}
+      className="h-full min-h-0 overflow-y-auto"
+      style={{ transform: 'none' }}
+    >
+      <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
+        <DropZone 
+          lane="A"
+          title="Workspace"
+          isEmpty={columnCards.length === 0}
+          isOver={isOver}
+        >
+          {columnCards.map(card => (
+            <DraggableCard 
+              key={card.id}
+              card={card} 
+              lane={layoutA.includes(card.id) ? 'A' : 'B'}
+              onReturnToOrbit={() => onReturnToOrbit(card.id)}
+              compact
+            />
+          ))}
+        </DropZone>
+      </SortableContext>
+    </div>
   );
 }

@@ -1308,56 +1308,70 @@ export function MarketRegimeTile({ compact }: { compact?: boolean }) {
       if (!events?.length) return null;
       
       // Extract regime context from candidates_context (HOLD) or regime_context (BUY/SELL)
+      // Field names in metadata: regime, trend_strength, volatility_level, htf_trend_bias, htf_volatility_state
       const regimesBySymbol: Record<string, {
         regime: string;
         strength: number;
-        volatility_state: string;
+        volatility_level: string;
         htf_bias?: string;
-        cost_fee_pct?: number;
-        cost_slippage_bps?: number;
+        htf_volatility?: string;
       }> = {};
       
       for (const e of events) {
-        const meta = e.metadata as any;
+        const meta = e.metadata as Record<string, unknown>;
+        const decision = (meta?.decision as string)?.toLowerCase();
         
-        // Try candidates_context (HOLD decisions)
-        const candidates = meta?.candidates_context || [];
-        for (const c of candidates) {
-          if (c.regime_context && !regimesBySymbol[c.symbol]) {
-            regimesBySymbol[c.symbol] = {
-              regime: c.regime_context.regime,
-              strength: c.regime_context.strength,
-              volatility_state: c.regime_context.volatility_state,
-              htf_bias: c.htf_context?.trend_bias,
-              cost_fee_pct: c.cost_context?.estimated_fee_pct,
-              cost_slippage_bps: c.cost_context?.estimated_slippage_bps,
-            };
+        // For 'hold' decisions: use candidates_context array
+        if (decision === 'hold') {
+          const candidates = (meta?.candidates_context as Array<Record<string, unknown>>) || [];
+          for (const c of candidates) {
+            const symbol = c.symbol as string;
+            const regimeCtx = c.regime_context as Record<string, unknown> | undefined;
+            const htfCtx = c.htf_context as Record<string, unknown> | undefined;
+            
+            if (regimeCtx && symbol && !regimesBySymbol[symbol]) {
+              regimesBySymbol[symbol] = {
+                regime: (regimeCtx.regime as string) ?? 'unknown',
+                strength: (regimeCtx.trend_strength as number) ?? 0,
+                volatility_level: (regimeCtx.volatility_level as string) ?? 'normal',
+                htf_bias: htfCtx?.trend_bias as string | undefined,
+                htf_volatility: htfCtx?.volatility_state as string | undefined,
+              };
+            }
           }
         }
         
-        // Try evaluations (BUY/SELL decisions)
-        const evals = meta?.evaluations || [];
-        for (const ev of evals) {
-          if (ev.regime_context && !regimesBySymbol[ev.symbol]) {
-            regimesBySymbol[ev.symbol] = {
-              regime: ev.regime_context.regime,
-              strength: ev.regime_context.strength,
-              volatility_state: ev.regime_context.volatility_state,
-              htf_bias: ev.regime_context.htf_trend_bias,
+        // For 'buy'/'sell' decisions: use root-level regime_context
+        if (decision === 'buy' || decision === 'sell') {
+          const symbol = meta?.symbol as string;
+          const regimeCtx = meta?.regime_context as Record<string, unknown> | undefined;
+          
+          if (regimeCtx && symbol && !regimesBySymbol[symbol]) {
+            regimesBySymbol[symbol] = {
+              regime: (regimeCtx.regime as string) ?? 'unknown',
+              strength: (regimeCtx.trend_strength as number) ?? 0,
+              volatility_level: (regimeCtx.volatility_level as string) ?? 'normal',
+              htf_bias: regimeCtx.htf_trend_bias as string | undefined,
+              htf_volatility: regimeCtx.htf_volatility_state as string | undefined,
             };
           }
-        }
-        
-        // Try root-level regime_context (BUY/SELL chosen candidate)
-        if (meta?.regime_context && meta?.symbol && !regimesBySymbol[meta.symbol]) {
-          regimesBySymbol[meta.symbol] = {
-            regime: meta.regime_context.regime,
-            strength: meta.regime_context.strength,
-            volatility_state: meta.regime_context.volatility_state,
-            htf_bias: meta.regime_context.htf_trend_bias,
-            cost_fee_pct: meta.cost_context?.estimated_fee_pct,
-            cost_slippage_bps: meta.cost_context?.estimated_slippage_bps,
-          };
+          
+          // Also check evaluations array for other symbols
+          const evals = (meta?.evaluations as Array<Record<string, unknown>>) || [];
+          for (const ev of evals) {
+            const evSymbol = ev.symbol as string;
+            const evRegime = ev.regime_context as Record<string, unknown> | undefined;
+            
+            if (evRegime && evSymbol && !regimesBySymbol[evSymbol]) {
+              regimesBySymbol[evSymbol] = {
+                regime: (evRegime.regime as string) ?? 'unknown',
+                strength: (evRegime.trend_strength as number) ?? 0,
+                volatility_level: (evRegime.volatility_level as string) ?? 'normal',
+                htf_bias: evRegime.htf_trend_bias as string | undefined,
+                htf_volatility: evRegime.htf_volatility_state as string | undefined,
+              };
+            }
+          }
         }
       }
       
@@ -1452,12 +1466,14 @@ export function MarketRegimeTile({ compact }: { compact?: boolean }) {
                 <Badge variant="outline" className={cn("text-[8px] px-1 py-0", getRegimeColor(data.regime))}>
                   {data.regime}
                 </Badge>
-                <span className="text-muted-foreground">str:{(data.strength * 100).toFixed(0)}%</span>
+                <span className="text-muted-foreground">
+                  str:{typeof data.strength === 'number' ? (data.strength * 100).toFixed(0) : '0'}%
+                </span>
                 {data.htf_bias && (
                   <span className={cn(
                     "text-[8px]",
-                    data.htf_bias === 'bullish' ? 'text-success' : 
-                    data.htf_bias === 'bearish' ? 'text-destructive' : 'text-muted-foreground'
+                    data.htf_bias === 'bullish' ? 'text-emerald-500' : 
+                    data.htf_bias === 'bearish' ? 'text-red-500' : 'text-muted-foreground'
                   )}>
                     HTF:{data.htf_bias}
                   </span>
@@ -1499,28 +1515,37 @@ export function TransactionCostTile({ compact }: { compact?: boolean }) {
       }> = [];
       
       for (const e of events) {
-        const meta = e.metadata as any;
-        const decision = meta?.decision?.toLowerCase();
+        const meta = e.metadata as Record<string, unknown>;
+        const decision = (meta?.decision as string)?.toLowerCase();
         
         if (decision === 'buy' || decision === 'sell') {
-          const costCtx = meta?.cost_context;
-          const confidence = meta?.confidence ?? 0;
+          const costCtx = meta?.cost_context as Record<string, unknown> | undefined;
+          const confidence = (meta?.confidence as number) ?? 0;
+          const symbol = meta?.symbol as string;
           
-          if (costCtx) {
-            const feePct = costCtx.estimated_fee_pct ?? 0.006;
-            const slippageBps = costCtx.estimated_slippage_bps ?? 0;
-            const slippagePct = slippageBps / 100;
-            const totalCostPct = feePct + slippagePct;
+          // Only process if we have a valid symbol
+          if (symbol && costCtx) {
+            // fee_pct is stored as fraction (e.g., 0.006 = 0.6%)
+            const feeFraction = (costCtx.estimated_fee_pct as number) ?? 0.006;
+            const slippageBps = (costCtx.estimated_slippage_bps as number) ?? 0;
             
-            // Net edge = confidence * 100 (as %) - total cost %
-            // This is a rough proxy: "expected return" - "transaction friction"
+            // Convert to percentages for display math:
+            // fee: 0.006 * 100 = 0.6%
+            // slippage: 5 bps / 100 = 0.05%
+            const feeDisplayPct = feeFraction * 100;
+            const slippageDisplayPct = slippageBps / 100;
+            const totalCostPct = feeDisplayPct + slippageDisplayPct;
+            
+            // Net edge proxy = (confidence * 100) - total cost %
+            // E.g., confidence=0.65 → 65% - 0.65% costs ≈ 64.35% "proxy edge"
+            // Label clearly as "proxy" in UI
             const netEdge = (confidence * 100) - totalCostPct;
             
             trades.push({
-              symbol: meta.symbol,
+              symbol,
               decision,
               confidence,
-              fee_pct: feePct * 100,
+              fee_pct: feeDisplayPct,
               slippage_bps: slippageBps,
               net_edge: netEdge,
               triggered_at: e.triggered_at,
@@ -1581,7 +1606,7 @@ export function TransactionCostTile({ compact }: { compact?: boolean }) {
               <div className="text-sm font-bold font-mono">
                 {costData.avgNetEdge >= 0 ? '+' : ''}{costData.avgNetEdge.toFixed(2)}%
               </div>
-              <div className="text-[9px] opacity-70">Avg Net Edge After Costs</div>
+              <div className="text-[9px] opacity-70">Net Edge Proxy (conf − costs)</div>
             </div>
           </div>
           

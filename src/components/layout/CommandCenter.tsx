@@ -178,15 +178,14 @@ function RolodexColumn({
     }
   }, []);
   
-  // Keyboard navigation
+  // Keyboard navigation - only j/k, don't block arrow keys globally
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'j' || e.key === 'ArrowDown') {
-        e.preventDefault();
+      // Only handle j/k for rolodex navigation (don't block arrow keys)
+      if (e.key === 'j') {
         const newIndex = Math.min(activeIndex + 1, columnCards.length - 1);
         scrollToCard(newIndex);
-      } else if (e.key === 'k' || e.key === 'ArrowUp') {
-        e.preventDefault();
+      } else if (e.key === 'k') {
         const newIndex = Math.max(activeIndex - 1, 0);
         scrollToCard(newIndex);
       }
@@ -197,11 +196,11 @@ function RolodexColumn({
   }, [activeIndex, columnCards.length, scrollToCard]);
   
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full min-h-0 flex flex-col">
       {/* Scroll container - fixed viewport height with snap */}
       <div 
         ref={scrollRef}
-        className="flex-1 overflow-y-auto overflow-x-hidden scroll-smooth"
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scroll-smooth"
         style={{
           scrollSnapType: 'y mandatory',
           scrollPaddingBlock: '12vh',
@@ -281,16 +280,16 @@ function DockColumn({
     .filter((c): c is CommandCard => c !== undefined);
   
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full min-h-0 flex flex-col">
       {/* Sticky header */}
-      <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/30 px-3 py-2">
+      <div className="shrink-0 sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/30 px-3 py-2">
         <h2 className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
           {title}
         </h2>
       </div>
       
       {/* Scrollable content */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="p-3 space-y-3">
           {columnCards.map(card => {
             const CardComponent = card.component;
@@ -450,43 +449,47 @@ export function CommandCenter({ cards }: CommandCenterProps) {
   return (
     <>
       {/* Desktop: 3-column grid */}
-      <div className="hidden lg:grid h-[100dvh] w-full grid-cols-12 gap-0 bg-background">
-        {/* Left: Rolodex (4 cols) */}
-        <div className="col-span-4 border-r border-border/30 bg-muted/5">
-          <RolodexColumn cards={leftCards} allCards={cards} />
-        </div>
-        
-        {/* Middle: Operations Dock (4 cols) */}
-        <div className="col-span-4 border-r border-border/30">
-          <DockColumn cards={middleCards} allCards={cards} title="Operations" />
-        </div>
-        
-        {/* Right: Activity Dock (4 cols) - includes "More" section for extras */}
-        <div className="col-span-4">
-          <DockColumn 
-            cards={finalRightCards} 
-            allCards={cards} 
-            title="Activity" 
-            extraCards={extraCards}
-          />
+      <div className="hidden lg:grid h-[100dvh] w-full grid-cols-12 gap-0 bg-background overflow-hidden">
+        <div className="col-span-12 h-full min-h-0 grid grid-cols-12">
+          {/* Left: Rolodex (4 cols) */}
+          <div className="col-span-4 h-full min-h-0 border-r border-border/30 bg-muted/5">
+            <RolodexColumn cards={leftCards} allCards={cards} />
+          </div>
+          
+          {/* Middle: Operations Dock (4 cols) */}
+          <div className="col-span-4 h-full min-h-0 border-r border-border/30">
+            <DockColumn cards={middleCards} allCards={cards} title="Operations" />
+          </div>
+          
+          {/* Right: Activity Dock (4 cols) - includes "More" section for extras */}
+          <div className="col-span-4 h-full min-h-0">
+            <DockColumn 
+              cards={finalRightCards} 
+              allCards={cards} 
+              title="Activity" 
+              extraCards={extraCards}
+            />
+          </div>
         </div>
       </div>
       
       {/* Tablet: 2-column grid */}
-      <div className="hidden md:grid lg:hidden h-[100dvh] w-full grid-cols-2 gap-0 bg-background">
-        {/* Left: Rolodex */}
-        <div className="border-r border-border/30 bg-muted/5">
-          <RolodexColumn cards={leftCards} allCards={cards} />
-        </div>
-        
-        {/* Right: Combined docks with extras */}
-        <div className="overflow-y-auto">
-          <DockColumn 
-            cards={[...middleCards, ...finalRightCards]} 
-            allCards={cards} 
-            title="Dashboard" 
-            extraCards={extraCards}
-          />
+      <div className="hidden md:grid lg:hidden h-[100dvh] w-full grid-cols-2 gap-0 bg-background overflow-hidden">
+        <div className="col-span-2 h-full min-h-0 grid grid-cols-2">
+          {/* Left: Rolodex */}
+          <div className="h-full min-h-0 border-r border-border/30 bg-muted/5">
+            <RolodexColumn cards={leftCards} allCards={cards} />
+          </div>
+          
+          {/* Right: Combined docks with extras */}
+          <div className="h-full min-h-0 overflow-y-auto">
+            <DockColumn 
+              cards={[...middleCards, ...finalRightCards]} 
+              allCards={cards} 
+              title="Dashboard" 
+              extraCards={extraCards}
+            />
+          </div>
         </div>
       </div>
       

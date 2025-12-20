@@ -11,6 +11,9 @@ export interface AdaptiveTuningState {
   effectiveThresholds?: Record<string, number>;
   applied: boolean;
   cooldownRemainingSec: number | null;
+  // Phase 4A Guardrails
+  frozenUntil: string | null;
+  frozenReason: string | null;
 }
 
 export interface DroughtState {
@@ -88,6 +91,8 @@ export function useDroughtState() {
         effective_thresholds?: Record<string, number>;
         applied?: boolean;
         cooldown_remaining_sec?: number | null;
+        frozen_until?: string | null;
+        frozen_reason?: string | null;
       } | undefined;
       
       const gateFailures = (latestMeta.gate_failures ?? {}) as Record<string, { count: number; avgMargin: number }>;
@@ -125,6 +130,8 @@ export function useDroughtState() {
           effectiveThresholds: adaptiveTuningRaw.effective_thresholds,
           applied: adaptiveTuningRaw.applied ?? false,
           cooldownRemainingSec: adaptiveTuningRaw.cooldown_remaining_sec ?? null,
+          frozenUntil: adaptiveTuningRaw.frozen_until ?? null,
+          frozenReason: adaptiveTuningRaw.frozen_reason ?? null,
         } : undefined,
       };
     },

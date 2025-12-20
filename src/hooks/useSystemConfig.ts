@@ -12,6 +12,12 @@ export interface AdaptiveTuningConfig {
   decay_step_pct?: number;
   last_adjusted_at?: string | null;
   offsets?: Record<string, number>;
+  // Phase 4A Guardrails
+  frozen_until?: string | null;
+  frozen_reason?: string | null;
+  freeze_after_kill_hours?: number;
+  freeze_peak_dd_pct?: number;
+  max_total_relax_pct?: number;
 }
 
 export interface SystemConfig {

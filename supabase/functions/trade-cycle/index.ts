@@ -1146,14 +1146,21 @@ Deno.serve(async (req) => {
     
     console.log(`[trade-cycle] Agent ${agent.id.substring(0, 8)} evaluating ${symbolsToEvaluate.length} symbols: ${symbolsToEvaluate.join(', ')}`);
     
-    // Get test mode flag
+    // Get test mode flag and adaptive tuning config
     const { data: configData } = await supabase
       .from('system_config')
       .select('config')
       .limit(1)
       .single();
     
-    const testMode = configData?.config?.strategy_test_mode === true;
+    const systemConfig = (configData?.config ?? {}) as Record<string, unknown>;
+    const testMode = systemConfig.strategy_test_mode === true;
+    const tuning = systemConfig.adaptive_tuning as AdaptiveTuningConfig | undefined;
+    const offsets = tuning?.offsets ?? {};
+    
+    // Calculate effective thresholds with adaptive tuning
+    const baselineThresholds = testMode ? TEST_MODE_THRESHOLDS : (droughtModeActive ? DROUGHT_THRESHOLDS : BASELINE_THRESHOLDS);
+    const effectiveThresholds = tuning?.enabled ? applyAdaptiveOffsets(baselineThresholds, offsets) : baselineThresholds;
     
     const thresholdsUsed = testMode 
       ? 'test_mode' 
@@ -1161,7 +1168,7 @@ Deno.serve(async (req) => {
         ? 'drought_mode' 
         : 'baseline';
     
-    console.log(`[trade-cycle] Mode: ${thresholdsUsed} | Thresholds: trend=${droughtModeActive ? DROUGHT_THRESHOLDS.trend_threshold : BASELINE_THRESHOLDS.trend_threshold}`);
+    console.log(`[trade-cycle] Mode: ${thresholdsUsed} | Adaptive: ${tuning?.enabled ? 'ON' : 'OFF'} | Offsets: ${JSON.stringify(offsets)}`);
     
     // Get agent's trade count
     const { data: agentTradeData } = await supabase
@@ -1290,6 +1297,15 @@ Deno.serve(async (req) => {
             peak_equity_drawdown_pct: droughtResolved.peakEquityDrawdownPct,
             equity: droughtResolved.equity,
             peak_equity: droughtResolved.peakEquity,
+          },
+          adaptive_tuning: {
+            enabled: !!tuning?.enabled,
+            mode: tuning?.mode ?? 'drought_only',
+            offsets,
+            last_adjusted_at: tuning?.last_adjusted_at ?? null,
+            cooldown_minutes: tuning?.cooldown_minutes ?? null,
+            baseline_thresholds: baselineThresholds,
+            effective_thresholds: effectiveThresholds,
           },
           gate_failures: allGateFailures,
           nearest_pass: nearestPassGlobal ? {
@@ -1455,6 +1471,15 @@ Deno.serve(async (req) => {
           peak_equity_drawdown_pct: droughtResolved.peakEquityDrawdownPct,
           equity: droughtResolved.equity,
           peak_equity: droughtResolved.peakEquity,
+        },
+        adaptive_tuning: {
+          enabled: !!tuning?.enabled,
+          mode: tuning?.mode ?? 'drought_only',
+          offsets,
+          last_adjusted_at: tuning?.last_adjusted_at ?? null,
+          cooldown_minutes: tuning?.cooldown_minutes ?? null,
+          baseline_thresholds: baselineThresholds,
+          effective_thresholds: effectiveThresholds,
         },
         gate_failures: gateFailures,
       },

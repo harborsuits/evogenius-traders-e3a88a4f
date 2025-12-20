@@ -227,6 +227,37 @@ export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
               ))}
             </div>
           )}
+          
+          {/* Adaptive Tuning Status */}
+          {droughtState.adaptiveTuning && (
+            <div className="mt-2 pt-2 border-t border-border/30 space-y-1">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-muted-foreground">Tuning:</span>
+                <span className={droughtState.adaptiveTuning.enabled ? 'text-emerald-500' : 'text-amber-500'}>
+                  {droughtState.adaptiveTuning.enabled ? 'ON' : 'OFF'} ({droughtState.adaptiveTuning.mode})
+                </span>
+              </div>
+              
+              {(() => {
+                const topOffsets = Object.entries(droughtState.adaptiveTuning.offsets ?? {})
+                  .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+                  .slice(0, 3);
+                return topOffsets.length > 0 ? (
+                  <div className="text-[9px] font-mono text-muted-foreground">
+                    Offsets: {topOffsets.map(([k, v]) => `${k}:${(v as number).toFixed(3)}`).join(' ')}
+                  </div>
+                ) : (
+                  <div className="text-[9px] font-mono text-muted-foreground">Offsets: —</div>
+                );
+              })()}
+              
+              {droughtState.adaptiveTuning.lastAdjustedAt && (
+                <div className="text-[9px] text-muted-foreground">
+                  Last: {new Date(droughtState.adaptiveTuning.lastAdjustedAt).toLocaleTimeString()}
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

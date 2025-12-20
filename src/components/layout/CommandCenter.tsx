@@ -186,22 +186,19 @@ function OrbitLane({
                 }}
                 data-card-index={index}
                 className="min-h-[35vh] flex items-center px-3 py-2"
-                style={{ scrollSnapAlign: 'center' }}
+                style={{ 
+                  scrollSnapAlign: 'center',
+                  transform: `scale(${scale})`,
+                  opacity,
+                  transition: 'transform 300ms, opacity 300ms',
+                }}
               >
-                <div 
-                  className="w-full transition-all duration-300"
-                  style={{ 
-                    transform: `scale(${scale})`,
-                    opacity,
-                  }}
-                >
-                  <DraggableCard 
-                    card={card} 
-                    lane="orbit"
-                    isActive={index === activeIndex}
-                    onReturnToOrbit={() => onReturnToOrbit(card.id)}
-                  />
-                </div>
+                <DraggableCard 
+                  card={card} 
+                  lane="orbit"
+                  isActive={index === activeIndex}
+                  onReturnToOrbit={() => onReturnToOrbit(card.id)}
+                />
               </div>
             );
           })}

@@ -8,6 +8,7 @@ import { NewsPanel } from '@/components/dashboard/NewsPanel';
 import { RolloverChecklist } from '@/components/dashboard/RolloverChecklist';
 import { GenerationComparison } from '@/components/dashboard/GenerationComparison';
 import { LineageWidget } from '@/components/dashboard/LineageWidget';
+import { PassingTradesFeed } from '@/components/dashboard/PassingTradesFeed';
 import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
 import { usePaperAccount, usePaperPositions, usePaperRealtimeSubscriptions } from '@/hooks/usePaperTrading';
 import { useDroughtState } from '@/hooks/useDroughtState';
@@ -1770,4 +1771,9 @@ export function AuditTile({ compact }: { compact?: boolean }) {
       )}
     </div>
   );
+}
+
+// Passing Trades Tile - Shows recent buy/sell decisions with confidence breakdown
+export function PassingTradesTile({ compact }: { compact?: boolean }) {
+  return <PassingTradesFeed compact={compact} />;
 }

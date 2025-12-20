@@ -38,7 +38,35 @@ interface CommandCenterProps {
   cards: CommandCard[];
 }
 
-// Orbit lane with vertical snap scrolling
+// Get 3D transform for carousel effect based on distance from active card
+function getCarouselTransform(index: number, activeIndex: number): React.CSSProperties {
+  const distance = index - activeIndex;
+  const absDistance = Math.abs(distance);
+  
+  // Scale: active = 1, neighbors get progressively smaller
+  const scale = Math.max(0.75, 1 - absDistance * 0.12);
+  
+  // Z-translation: active card comes forward, others recede
+  const translateZ = -absDistance * 40;
+  
+  // Y-translation: slight vertical offset for stacking effect
+  const translateY = distance * 8;
+  
+  // Opacity: fade out distant cards
+  const opacity = Math.max(0.4, 1 - absDistance * 0.25);
+  
+  // Rotation: subtle tilt for 3D depth
+  const rotateX = distance * 3;
+  
+  return {
+    transform: `perspective(800px) translateZ(${translateZ}px) translateY(${translateY}px) scale(${scale}) rotateX(${rotateX}deg)`,
+    opacity,
+    zIndex: 10 - absDistance,
+    transition: 'transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease-out',
+  };
+}
+
+// Orbit lane with vertical snap scrolling and 3D carousel effect
 function OrbitLane({ 
   cardIds, 
   allCards,
@@ -64,7 +92,7 @@ function OrbitLane({
     const observerOptions: IntersectionObserverInit = {
       root: scrollEl,
       threshold: [0, 0.3, 0.5, 0.7, 1],
-      rootMargin: '-35% 0px -35% 0px',
+      rootMargin: '-30% 0px -30% 0px',
     };
     
     const intersectionRatios = new Map<number, number>();
@@ -141,17 +169,20 @@ function OrbitLane({
         </h2>
       </div>
       
-      {/* Scroll container with snap */}
+      {/* Scroll container with snap and 3D perspective */}
       <div 
         ref={scrollRef}
         className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scroll-smooth"
         style={{
           scrollSnapType: 'y mandatory',
-          scrollPaddingBlock: '12vh',
+          scrollPaddingBlock: '35%',
+          perspective: '1000px',
+          perspectiveOrigin: 'center center',
         }}
       >
         <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
-          <div className="h-[15vh]" aria-hidden="true" />
+          {/* Reduced top spacer */}
+          <div className="h-[25vh]" aria-hidden="true" />
           
           {columnCards.map((card, index) => (
             <div 
@@ -161,10 +192,16 @@ function OrbitLane({
                 else cardRefs.current.delete(index);
               }}
               data-card-index={index}
-              className="min-h-[70vh] flex items-center px-3 py-4"
-              style={{ scrollSnapAlign: 'center' }}
+              className="min-h-[35vh] flex items-center px-3 py-2"
+              style={{ 
+                scrollSnapAlign: 'center',
+                transformStyle: 'preserve-3d',
+              }}
             >
-              <div className="w-full">
+              <div 
+                className="w-full"
+                style={getCarouselTransform(index, activeIndex)}
+              >
                 <DraggableCard 
                   card={card} 
                   lane="orbit"
@@ -175,7 +212,8 @@ function OrbitLane({
             </div>
           ))}
           
-          <div className="h-[15vh]" aria-hidden="true" />
+          {/* Reduced bottom spacer */}
+          <div className="h-[25vh]" aria-hidden="true" />
         </SortableContext>
       </div>
       

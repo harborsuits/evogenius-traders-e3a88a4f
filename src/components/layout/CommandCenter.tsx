@@ -9,16 +9,14 @@ import {
   useSensors,
   DragStartEvent,
   DragEndEvent,
-  DragOverEvent,
+  useDroppable,
 } from '@dnd-kit/core';
 import { 
   SortableContext, 
   verticalListSortingStrategy,
-  arrayMove,
 } from '@dnd-kit/sortable';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { ChevronRight, Grip, RotateCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -38,33 +36,6 @@ interface CommandCenterProps {
   cards: CommandCard[];
 }
 
-// Get 3D transform for carousel effect based on distance from active card
-function getCarouselTransform(index: number, activeIndex: number): React.CSSProperties {
-  const distance = index - activeIndex;
-  const absDistance = Math.abs(distance);
-  
-  // Scale: active = 1, neighbors get progressively smaller
-  const scale = Math.max(0.75, 1 - absDistance * 0.12);
-  
-  // Z-translation: active card comes forward, others recede
-  const translateZ = -absDistance * 40;
-  
-  // Y-translation: slight vertical offset for stacking effect
-  const translateY = distance * 8;
-  
-  // Opacity: fade out distant cards
-  const opacity = Math.max(0.4, 1 - absDistance * 0.25);
-  
-  // Rotation: subtle tilt for 3D depth
-  const rotateX = distance * 3;
-  
-  return {
-    transform: `perspective(800px) translateZ(${translateZ}px) translateY(${translateY}px) scale(${scale}) rotateX(${rotateX}deg)`,
-    opacity,
-    zIndex: 10 - absDistance,
-    transition: 'transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease-out',
-  };
-}
 
 // Orbit lane with vertical snap scrolling and 3D carousel effect
 function OrbitLane({ 
@@ -79,6 +50,12 @@ function OrbitLane({
   const scrollRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [activeIndex, setActiveIndex] = useState(0);
+  
+  // Make orbit a droppable zone
+  const { isOver, setNodeRef } = useDroppable({
+    id: 'orbit',
+    data: { lane: 'orbit' },
+  });
   
   const columnCards = cardIds
     .map(id => allCards.find(c => c.id === id))
@@ -153,8 +130,14 @@ function OrbitLane({
             Orbit
           </h2>
         </div>
-        <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-          All cards placed
+        <div 
+          ref={setNodeRef}
+          className={cn(
+            "flex-1 flex items-center justify-center text-muted-foreground text-sm",
+            isOver && "bg-primary/5"
+          )}
+        >
+          {isOver ? "Drop here to return" : "All cards placed"}
         </div>
       </div>
     );
@@ -169,50 +152,61 @@ function OrbitLane({
         </h2>
       </div>
       
-      {/* Scroll container with snap and 3D perspective */}
+      {/* Scroll container - NO 3D transforms that block pointer events */}
       <div 
-        ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scroll-smooth"
+        ref={(el) => {
+          scrollRef.current = el;
+          setNodeRef(el);
+        }}
+        className={cn(
+          "flex-1 min-h-0 overflow-y-auto overflow-x-hidden scroll-smooth",
+          isOver && "bg-primary/5"
+        )}
         style={{
           scrollSnapType: 'y mandatory',
           scrollPaddingBlock: '35%',
-          perspective: '1000px',
-          perspectiveOrigin: 'center center',
         }}
       >
         <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
-          {/* Reduced top spacer */}
+          {/* Top spacer */}
           <div className="h-[25vh]" aria-hidden="true" />
           
-          {columnCards.map((card, index) => (
-            <div 
-              key={card.id}
-              ref={(el) => {
-                if (el) cardRefs.current.set(index, el);
-                else cardRefs.current.delete(index);
-              }}
-              data-card-index={index}
-              className="min-h-[35vh] flex items-center px-3 py-2"
-              style={{ 
-                scrollSnapAlign: 'center',
-                transformStyle: 'preserve-3d',
-              }}
-            >
+          {columnCards.map((card, index) => {
+            const distance = index - activeIndex;
+            const absDistance = Math.abs(distance);
+            const scale = Math.max(0.8, 1 - absDistance * 0.08);
+            const opacity = Math.max(0.5, 1 - absDistance * 0.2);
+            
+            return (
               <div 
-                className="w-full"
-                style={getCarouselTransform(index, activeIndex)}
+                key={card.id}
+                ref={(el) => {
+                  if (el) cardRefs.current.set(index, el);
+                  else cardRefs.current.delete(index);
+                }}
+                data-card-index={index}
+                className="min-h-[35vh] flex items-center px-3 py-2"
+                style={{ scrollSnapAlign: 'center' }}
               >
-                <DraggableCard 
-                  card={card} 
-                  lane="orbit"
-                  isActive={index === activeIndex}
-                  onReturnToOrbit={() => onReturnToOrbit(card.id)}
-                />
+                <div 
+                  className="w-full transition-all duration-300"
+                  style={{ 
+                    transform: `scale(${scale})`,
+                    opacity,
+                  }}
+                >
+                  <DraggableCard 
+                    card={card} 
+                    lane="orbit"
+                    isActive={index === activeIndex}
+                    onReturnToOrbit={() => onReturnToOrbit(card.id)}
+                  />
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           
-          {/* Reduced bottom spacer */}
+          {/* Bottom spacer */}
           <div className="h-[25vh]" aria-hidden="true" />
         </SortableContext>
       </div>

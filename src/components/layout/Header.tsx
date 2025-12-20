@@ -5,8 +5,9 @@ import { GenerationSelector } from '@/components/dashboard/GenerationSelector';
 import { EliteRotationModal } from '@/components/dashboard/EliteRotationModal';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { SystemStatus } from '@/types/evotrader';
-import { Dna, ExternalLink, Square, Activity, AlertTriangle, CheckCircle, Clock, Loader2, FlaskConical } from 'lucide-react';
+import { Dna, ExternalLink, Square, Activity, AlertTriangle, CheckCircle, Clock, Loader2, FlaskConical, GitCompare } from 'lucide-react';
 import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
 import { useTradeMode } from '@/hooks/usePaperTrading';
 import { useStrategyTestMode } from '@/hooks/useSystemConfig';
@@ -28,6 +29,7 @@ export function Header({ status, generationNumber }: HeaderProps) {
   const [emergencyStopping, setEmergencyStopping] = useState(false);
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState<number | null>(null);
   const [rotationModalOpen, setRotationModalOpen] = useState(false);
+  const [genSheetOpen, setGenSheetOpen] = useState(false);
 
   const mode = tradeMode ?? 'paper';
   const isLive = mode === 'live';
@@ -147,9 +149,35 @@ export function Header({ status, generationNumber }: HeaderProps) {
 
         {/* Right: Gen Selector + Toggle + Kill + Coinbase */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {/* Desktop Generation Selector */}
           <div className="hidden md:flex">
             <GenerationSelector onShowRotation={() => setRotationModalOpen(true)} />
           </div>
+          
+          {/* Mobile Generation Selector */}
+          <Sheet open={genSheetOpen} onOpenChange={setGenSheetOpen}>
+            <SheetTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="md:hidden h-7 px-2 text-[10px] font-mono text-muted-foreground"
+              >
+                <GitCompare className="h-3 w-3 mr-1" />
+                Compare
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="h-auto">
+              <SheetHeader>
+                <SheetTitle className="text-sm font-mono">Compare Generations</SheetTitle>
+              </SheetHeader>
+              <div className="py-4">
+                <GenerationSelector onShowRotation={() => {
+                  setGenSheetOpen(false);
+                  setRotationModalOpen(true);
+                }} />
+              </div>
+            </SheetContent>
+          </Sheet>
           
           <TradeModeToggle compact />
 

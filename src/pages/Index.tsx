@@ -29,6 +29,7 @@ import {
   CatalystWatchTile,
   AutopsyTile,
   SystemVitalsTile,
+  EliteRotationTile,
 } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PositionsCardContent, ActivityCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
@@ -62,6 +63,7 @@ const staticCards: CommandCard[] = [
   { id: 'alerts', title: 'Alerts', type: 'drillable', drilldownPath: '/alerts', component: AlertsCardContent },
   { id: 'gen-compare', title: 'Generation Comparison', type: 'cockpit', component: GenComparisonTile },
   { id: 'lineage', title: 'Lineage', type: 'cockpit', component: LineageTile },
+  { id: 'elite-rotation', title: 'Elite Rotation', type: 'cockpit', component: EliteRotationTile },
   { id: 'rollover', title: 'Rollover Checklist', type: 'cockpit', component: RolloverTile },
 ];
 

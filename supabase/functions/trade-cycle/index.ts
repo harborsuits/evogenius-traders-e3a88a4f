@@ -49,6 +49,14 @@ interface TradeTags {
     atr_ratio: number;
     age_seconds: number;
   };
+  // Phase 5: Transaction cost awareness (DATA ONLY)
+  cost_context?: {
+    estimated_fee_pct: number;      // Expected fee %
+    estimated_slippage_bps: number; // Expected slippage basis points
+    spread_bps?: number;            // Bid-ask spread if available
+  };
+  // Phase 5: Market regime context (READ-ONLY)
+  regime_context?: MarketRegimeContext;
 }
 
 // Gate failure telemetry for learning
@@ -59,7 +67,60 @@ interface GateFailure {
   margin: number; // How far from passing (negative = failed by this much)
 }
 
-// Determine market regime from market data
+// ===========================================================================
+// PHASE 5: MARKET REGIME CLASSIFIER (READ-ONLY, NO BEHAVIOR CHANGE)
+// ===========================================================================
+type MarketRegimeLabel = 'trend' | 'chop' | 'volatile' | 'dead';
+
+interface MarketRegimeContext {
+  regime: MarketRegimeLabel;
+  trend_strength: number;      // -1 to 1 (direction + magnitude)
+  volatility_level: number;    // 0 to 2+ (relative to baseline)
+  htf_trend_bias: 'bullish' | 'bearish' | 'neutral';
+  htf_volatility_state: 'expanding' | 'contracting' | 'stable';
+}
+
+// Determine enhanced market regime with context flags
+function classifyMarketRegime(market: MarketData): MarketRegimeContext {
+  const slope = market.ema_50_slope;
+  const atr = market.atr_ratio;
+  const change = Math.abs(market.change_24h);
+  
+  // Trend strength: normalized slope (-1 to 1)
+  const trendStrength = Math.max(-1, Math.min(1, slope / 0.05));
+  
+  // Volatility level: ATR ratio (baseline = 1.0)
+  const volatilityLevel = atr;
+  
+  // Classify regime
+  let regime: MarketRegimeLabel;
+  if (atr > 1.5 || change > 8) {
+    regime = 'volatile';
+  } else if (atr < 0.6 && Math.abs(slope) < 0.003) {
+    regime = 'dead';
+  } else if (Math.abs(slope) > 0.015) {
+    regime = 'trend';
+  } else {
+    regime = 'chop';
+  }
+  
+  // HTF context flags (simple heuristics for now - no gating logic)
+  const htfTrendBias: 'bullish' | 'bearish' | 'neutral' = 
+    slope > 0.01 ? 'bullish' : slope < -0.01 ? 'bearish' : 'neutral';
+  
+  const htfVolatilityState: 'expanding' | 'contracting' | 'stable' = 
+    atr > 1.3 ? 'expanding' : atr < 0.8 ? 'contracting' : 'stable';
+  
+  return {
+    regime,
+    trend_strength: trendStrength,
+    volatility_level: volatilityLevel,
+    htf_trend_bias: htfTrendBias,
+    htf_volatility_state: htfVolatilityState,
+  };
+}
+
+// Legacy regime function (for backward compat)
 function getRegime(market: MarketData): string {
   const slope = market.ema_50_slope;
   const atr = market.atr_ratio;
@@ -1582,6 +1643,14 @@ Deno.serve(async (req) => {
     
     const patternId = generatePatternId(agent.strategy_template, symbol, regime, reasons);
     
+    // Phase 5: Classify regime context (READ-ONLY, no behavior change)
+    const regimeContext = classifyMarketRegime(market);
+    
+    // Phase 5: Estimate transaction costs (DATA ONLY, no behavior change)
+    // These are paper trading estimates - real costs will come from fills
+    const estimatedFeePct = 0.005; // 0.5% paper trading fee
+    const estimatedSlippageBps = Math.round(market.atr_ratio * 5); // Slippage scales with volatility
+    
     const tags: TradeTags = {
       strategy_template: agent.strategy_template,
       regime_at_entry: regime,
@@ -1598,6 +1667,13 @@ Deno.serve(async (req) => {
         atr_ratio: market.atr_ratio,
         age_seconds: dataAge,
       },
+      // Phase 5: Cost context (DATA ONLY)
+      cost_context: {
+        estimated_fee_pct: estimatedFeePct,
+        estimated_slippage_bps: estimatedSlippageBps,
+      },
+      // Phase 5: Regime context (READ-ONLY)
+      regime_context: regimeContext,
     };
     
     // Add explorer_mode tag for tracking
@@ -1608,20 +1684,25 @@ Deno.serve(async (req) => {
     const evaluations = candidates
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, 5)
-      .map(c => ({
-        symbol: c.symbol,
-        decision: c.decision,
-        reasons: c.reasons,
-        confidence: c.confidence,
-        gate_failures: c.gateFailures,
-        market: {
-          price: c.market.price,
-          change_24h: c.market.change_24h,
-          ema_slope: c.market.ema_50_slope,
-          atr: c.market.atr_ratio,
-          regime: getRegime(c.market),
-        },
-      }));
+      .map(c => {
+        const candRegimeContext = classifyMarketRegime(c.market);
+        return {
+          symbol: c.symbol,
+          decision: c.decision,
+          reasons: c.reasons,
+          confidence: c.confidence,
+          gate_failures: c.gateFailures,
+          market: {
+            price: c.market.price,
+            change_24h: c.market.change_24h,
+            ema_slope: c.market.ema_50_slope,
+            atr: c.market.atr_ratio,
+            regime: getRegime(c.market),
+          },
+          // Phase 5: Regime context for each candidate
+          regime_context: candRegimeContext,
+        };
+      });
 
     await supabase.from('control_events').insert({
       action: 'trade_decision',

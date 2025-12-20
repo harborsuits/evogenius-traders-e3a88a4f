@@ -1774,6 +1774,14 @@ Deno.serve(async (req) => {
           };
         });
       
+      // Compute consistent reason string from hold reasons
+      const primaryHoldReason = topHoldReasons.length > 0 
+        ? topHoldReasons[0].split(':')[0] 
+        : 'no_evaluations';
+      const holdReason = evaluations.length === 0 
+        ? 'hold:no_evaluations' 
+        : `hold:${primaryHoldReason}`;
+      
       await supabase.from('control_events').insert({
         action: 'trade_decision',
         metadata: {
@@ -1783,6 +1791,8 @@ Deno.serve(async (req) => {
           strategy_template: agent.strategy_template,
           symbols_evaluated: symbolsToEvaluate.length,
           decision: 'hold',
+          reason: holdReason,  // CONSISTENT REASON FIELD
+          reasons: topHoldReasons,  // Array for detail
           all_hold: true,
           top_hold_reasons: topHoldReasons,
           mode: 'paper',
@@ -1999,6 +2009,7 @@ Deno.serve(async (req) => {
         generation_id: systemState.current_generation_id,
         symbol,
         decision,
+        reason: `trade:${decision}`,  // CONSISTENT REASON FIELD
         qty: plannedQty,
         symbols_evaluated: symbolsToEvaluate.length,
         evaluations,

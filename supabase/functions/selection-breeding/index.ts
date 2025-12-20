@@ -223,7 +223,17 @@ Deno.serve(async (req) => {
     const removedIds = removed.map(a => a.id);
     const survivorIds = [...eliteIds, ...parentIds];
 
-    // 5. Mark elites
+    // 5. First, clear is_elite for ALL cohort members (reset before promotion)
+    const { error: resetError } = await supabase
+      .from('agents')
+      .update({ is_elite: false })
+      .in('id', cohortAgentIds);
+    
+    if (resetError) {
+      console.error('[selection-breeding] Failed to reset elite flags:', resetError);
+    }
+
+    // 6. Mark elites
     if (eliteIds.length > 0) {
       const { error: eliteError } = await supabase
         .from('agents')
@@ -235,7 +245,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 6. Mark parents (active, not elite)
+    // 7. Mark parents (active, not elite)
     if (parentIds.length > 0) {
       const { error: parentError } = await supabase
         .from('agents')
@@ -246,6 +256,19 @@ Deno.serve(async (req) => {
         console.error('[selection-breeding] Failed to update parents:', parentError);
       }
     }
+    
+    // 8. Log elite_flags_updated audit event for verification
+    await supabase.from('control_events').insert({
+      action: 'elite_flags_updated',
+      metadata: {
+        generation_id: new_generation_id,
+        elite_count: eliteIds.length,
+        elite_ids: eliteIds,
+        parent_count: parentIds.length,
+        parent_ids: parentIds,
+        source: 'selection_breeding',
+      },
+    });
 
     // 7. BREEDING: Create offspring to replace removed agents
     // Offspring count = removed count (prevents population drift)

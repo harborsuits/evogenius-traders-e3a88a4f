@@ -521,20 +521,48 @@ async function maybeTuneThresholds(
   
   // *** PHASE 4B: Quality Filter ***
   const minConfForTuning = tuning.min_conf_for_tuning ?? 0.50;
-  const minQualityPct = tuning.min_quality_pct ?? 0.40;
+  const minQualityPct = tuning.min_quality_pct ?? 0.30; // Lowered default to 30%
   const maxSingleGatePct = tuning.max_single_gate_pct ?? 0.80;
+  
+  // Helper: extract confidence from metadata (handles multiple paths)
+  const getConfidence = (m: Record<string, unknown>): number | undefined => {
+    // 1. Root level confidence (for buy/sell decisions)
+    if (typeof m.confidence === 'number') return m.confidence;
+    
+    // 2. Check evaluations array for hold decisions (use max confidence from evaluated candidates)
+    const evaluations = m.evaluations as Array<{ confidence?: number }> | undefined;
+    if (evaluations && evaluations.length > 0) {
+      const maxEvalConf = Math.max(...evaluations.map(e => e.confidence ?? 0));
+      if (maxEvalConf > 0) return maxEvalConf;
+    }
+    
+    // 3. Check nearest_pass - if it exists, it means a decision was close (implies some confidence)
+    const nearestPass = m.nearest_pass as { gate?: string } | undefined;
+    if (nearestPass?.gate) return minConfForTuning; // Treat near-pass as meeting min threshold
+    
+    return undefined;
+  };
   
   // Filter to quality decisions (high-confidence holds/near-misses)
   const qualityRows = rows.filter(r => {
     const m = (r.metadata ?? {}) as Record<string, unknown>;
-    const conf = m.confidence as number | undefined;
+    const conf = getConfidence(m);
     return conf !== undefined && conf >= minConfForTuning;
   });
   
-  const qualityRatio = qualityRows.length / rows.length;
+  const qualityRatio = rows.length > 0 ? qualityRows.length / rows.length : 0;
+  
+  // Fallback: if quality filter fails, allow tuning with reduced step (half power)
+  let useReducedStep = false;
   if (qualityRatio < minQualityPct) {
-    console.log(`[adaptive-tuning] Quality filter failed: ${(qualityRatio * 100).toFixed(0)}% < ${(minQualityPct * 100).toFixed(0)}% quality decisions`);
-    return;
+    // Only allow reduced-step tuning if drought is active (more permissive during drought)
+    if (droughtResolved.detected) {
+      useReducedStep = true;
+      console.log(`[adaptive-tuning] Quality filter soft-fail: ${(qualityRatio * 100).toFixed(0)}% < ${(minQualityPct * 100).toFixed(0)}%, using half step (drought active)`);
+    } else {
+      console.log(`[adaptive-tuning] Quality filter failed: ${(qualityRatio * 100).toFixed(0)}% < ${(minQualityPct * 100).toFixed(0)}% quality decisions`);
+      return;
+    }
   }
   
   // Aggregate gate telemetry from QUALITY decisions only
@@ -578,8 +606,11 @@ async function maybeTuneThresholds(
   const offsets = { ...(tuning.offsets ?? {}) };
   const currentOffset = offsets[candidate] ?? 0;
   
+  // Apply step reduction if quality filter soft-failed
+  const effectiveStep = useReducedStep ? tuning.step_pct * 0.5 : tuning.step_pct;
+  
   // Relax = make more negative, bounded by max_relax_pct
-  const nextOffset = Math.max(currentOffset - tuning.step_pct, -tuning.max_relax_pct);
+  const nextOffset = Math.max(currentOffset - effectiveStep, -tuning.max_relax_pct);
   
   // Only update if there's a change
   if (Math.abs(nextOffset - currentOffset) < 0.001) {
@@ -610,6 +641,8 @@ async function maybeTuneThresholds(
       gate: candidate,
       previous_offset: currentOffset,
       new_offset: nextOffset,
+      step_used: effectiveStep,
+      reduced_step: useReducedStep,
       nearest_counts: nearestCounts,
       fail_counts: failCounts,
       window_size: rows.length,

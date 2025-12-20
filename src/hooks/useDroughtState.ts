@@ -22,7 +22,11 @@ export interface DroughtState {
     threshold: number;
     margin: number;
   };
-  equityDrawdownPct?: number;
+  // Equity metrics
+  equity?: number;
+  peakEquity?: number;
+  equityDrawdownPct?: number;      // vs starting cash
+  peakEquityDrawdownPct?: number;  // vs peak equity (kill metric)
 }
 
 export function useDroughtState() {
@@ -53,7 +57,11 @@ export function useDroughtState() {
         orders_6h?: number;
         holds_48h?: number;
         orders_48h?: number;
+        // Equity metrics
+        equity?: number;
+        peak_equity?: number;
         equity_drawdown_pct?: number;
+        peak_equity_drawdown_pct?: number;
       } | undefined;
       
       const gateFailures = (latestMeta.gate_failures ?? {}) as Record<string, { count: number; avgMargin: number }>;
@@ -75,7 +83,11 @@ export function useDroughtState() {
         override: droughtState?.override ?? 'auto',
         gateFailures,
         nearestPass,
+        // Equity metrics
+        equity: droughtState?.equity,
+        peakEquity: droughtState?.peak_equity,
         equityDrawdownPct: droughtState?.equity_drawdown_pct,
+        peakEquityDrawdownPct: droughtState?.peak_equity_drawdown_pct,
       };
     },
     refetchInterval: 30000,

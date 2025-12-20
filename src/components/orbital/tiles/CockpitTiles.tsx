@@ -148,15 +148,43 @@ export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
             </div>
           )}
           
-          {/* Equity drawdown (true P&L based) */}
-          {droughtState.equityDrawdownPct !== undefined && (
+          {/* Equity metrics grid */}
+          {(droughtState.equity !== undefined || droughtState.peakEquity !== undefined) && (
+            <div className="grid grid-cols-2 gap-2 bg-muted/20 rounded-lg p-2">
+              <div className="space-y-0.5">
+                <div className="text-[9px] text-muted-foreground uppercase">Equity</div>
+                <div className="font-mono text-sm text-foreground">
+                  ${droughtState.equity?.toFixed(2) ?? '—'}
+                </div>
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-[9px] text-muted-foreground uppercase">Peak</div>
+                <div className="font-mono text-sm text-emerald-500">
+                  ${droughtState.peakEquity?.toFixed(2) ?? '—'}
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Peak drawdown (kill metric) */}
+          {droughtState.peakEquityDrawdownPct !== undefined && (
             <div className={cn(
-              "text-[10px] font-mono",
-              droughtState.equityDrawdownPct > 1.5 ? 'text-amber-500' : 
-              droughtState.equityDrawdownPct > 0 ? 'text-muted-foreground' : 'text-emerald-500'
+              "text-[10px] font-mono flex items-center gap-1",
+              droughtState.peakEquityDrawdownPct > 1.5 ? 'text-destructive' : 
+              droughtState.peakEquityDrawdownPct > 1 ? 'text-amber-500' : 
+              droughtState.peakEquityDrawdownPct > 0 ? 'text-muted-foreground' : 'text-emerald-500'
             )}>
-              Equity Drawdown: {droughtState.equityDrawdownPct.toFixed(2)}%
-              {droughtState.equityDrawdownPct > 1.5 && ' ⚠️ approaching kill'}
+              <span className="text-muted-foreground">Peak DD:</span>
+              <span className="font-bold">{droughtState.peakEquityDrawdownPct.toFixed(2)}%</span>
+              {droughtState.peakEquityDrawdownPct > 1.5 && <Skull className="h-3 w-3" />}
+              {droughtState.peakEquityDrawdownPct > 1.5 && <span className="text-[9px]">KILL ZONE</span>}
+            </div>
+          )}
+          
+          {/* Start-based drawdown (reference) */}
+          {droughtState.equityDrawdownPct !== undefined && (
+            <div className="text-[9px] text-muted-foreground font-mono">
+              Start DD: {droughtState.equityDrawdownPct.toFixed(2)}%
             </div>
           )}
           

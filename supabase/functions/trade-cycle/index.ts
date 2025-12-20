@@ -301,6 +301,146 @@ function decayOffsets(
   return out;
 }
 
+// ===========================================================================
+// PHASE 4C: RE-TIGHTEN LOGIC
+// Moves offsets back toward 0 faster when conditions improve:
+// - Trades are flowing (not just holds)
+// - Drought cleared and stayed cleared
+// - Performance is stable (no recent kills)
+// ===========================================================================
+interface RetightenConfig {
+  enabled: boolean;
+  min_cycles_clear: number;      // Min cycles with drought cleared before aggressive retighten
+  retighten_step_pct: number;    // Step size for retighten (typically 2-3x decay)
+  min_trades_flowing: number;    // Min trades in window to consider "flowing"
+  flow_window_hours: number;     // Window to check trade flow
+  cooldown_after_kill_hours: number; // Don't retighten if recent kill
+}
+
+const DEFAULT_RETIGHTEN_CONFIG: RetightenConfig = {
+  enabled: true,
+  min_cycles_clear: 5,           // 5 cycles (~25 min at 5min interval)
+  retighten_step_pct: 0.03,      // 3% per cycle (3x normal decay)
+  min_trades_flowing: 2,         // At least 2 trades in window
+  flow_window_hours: 6,          // 6h lookback for trade flow
+  cooldown_after_kill_hours: 6,  // Wait 6h after kill before retightening
+};
+
+// Re-tighten: move offsets toward 0 faster than decay
+function retightenOffsets(
+  offsets: Record<string, number>,
+  retightenStep: number,
+  maxRelax: number
+): { next: Record<string, number>; changes: Record<string, { from: number; to: number }> } {
+  const out: Record<string, number> = { ...offsets };
+  const changes: Record<string, { from: number; to: number }> = {};
+  
+  for (const k of Object.keys(out)) {
+    const v = out[k];
+    const prev = v;
+    
+    // Move toward 0 with larger step
+    if (v < 0) out[k] = Math.min(0, v + retightenStep);
+    if (v > 0) out[k] = Math.max(0, v - retightenStep);
+    
+    // Clamp
+    out[k] = Math.max(-maxRelax, Math.min(maxRelax, out[k]));
+    
+    // Track changes for logging
+    if (Math.abs(out[k] - prev) > 0.0001) {
+      changes[k] = { from: prev, to: out[k] };
+    }
+    
+    // Remove negligible offsets
+    if (Math.abs(out[k]) < 0.001) delete out[k];
+  }
+  
+  return { next: out, changes };
+}
+
+// Check if retighten conditions are met
+async function shouldRetighten(
+  supabase: any,
+  droughtResolved: ResolvedDroughtState,
+  config: RetightenConfig
+): Promise<{ should: boolean; reason?: string; tradeCount?: number; cyclesClear?: number }> {
+  // Must have drought cleared
+  if (droughtResolved.detected || droughtResolved.active) {
+    return { should: false, reason: 'drought_still_active' };
+  }
+  
+  const now = new Date();
+  
+  // Check for recent kill (don't retighten during recovery)
+  const killCooldownStart = new Date(now.getTime() - config.cooldown_after_kill_hours * 60 * 60 * 1000);
+  const { count: recentKillCount } = await supabase
+    .from('control_events')
+    .select('*', { count: 'exact', head: true })
+    .eq('action', 'drought_kill')
+    .gte('triggered_at', killCooldownStart.toISOString());
+  
+  if ((recentKillCount ?? 0) > 0) {
+    return { should: false, reason: 'recent_kill_cooldown' };
+  }
+  
+  // Check trade flow (are trades actually happening?)
+  const flowWindowStart = new Date(now.getTime() - config.flow_window_hours * 60 * 60 * 1000);
+  const { count: tradeCount } = await supabase
+    .from('paper_orders')
+    .select('*', { count: 'exact', head: true })
+    .gte('created_at', flowWindowStart.toISOString())
+    .eq('status', 'filled');
+  
+  const tradesFlowing = (tradeCount ?? 0) >= config.min_trades_flowing;
+  
+  // Count cycles since last drought detection
+  const { data: recentDecisions } = await supabase
+    .from('control_events')
+    .select('metadata')
+    .eq('action', 'trade_decision')
+    .order('triggered_at', { ascending: false })
+    .limit(config.min_cycles_clear + 5);
+  
+  let cyclesClear = 0;
+  for (const d of recentDecisions ?? []) {
+    const m = (d.metadata ?? {}) as Record<string, unknown>;
+    const droughtState = m.drought_state as { detected?: boolean } | undefined;
+    if (droughtState?.detected === false) {
+      cyclesClear++;
+    } else {
+      break; // Stop counting when we hit a drought detection
+    }
+  }
+  
+  const droughtClearEnough = cyclesClear >= config.min_cycles_clear;
+  
+  if (tradesFlowing && droughtClearEnough) {
+    return { 
+      should: true, 
+      reason: 'conditions_improved',
+      tradeCount: tradeCount ?? 0,
+      cyclesClear,
+    };
+  }
+  
+  // Partial success: trades flowing but drought just cleared
+  if (tradesFlowing && !droughtClearEnough) {
+    return { 
+      should: false, 
+      reason: `waiting_cycles_clear_${cyclesClear}/${config.min_cycles_clear}`,
+      tradeCount: tradeCount ?? 0,
+      cyclesClear,
+    };
+  }
+  
+  return { 
+    should: false, 
+    reason: 'trades_not_flowing',
+    tradeCount: tradeCount ?? 0,
+    cyclesClear,
+  };
+}
+
 // Pick the best gate to relax: prioritize nearest_pass counts, then failure counts
 function pickCandidateGate(
   nearestCounts: Record<string, number>,
@@ -463,23 +603,73 @@ async function maybeTuneThresholds(
   
   const now = new Date();
   
-  // drought_only mode: decay if not in drought
+  // drought_only mode: decay OR retighten if not in drought
   if (tuning.mode === 'drought_only' && !droughtResolved.detected) {
     const currentOffsets = tuning.offsets ?? {};
     if (Object.keys(currentOffsets).length === 0) return;
     
-    const nextOffsets = decayOffsets(currentOffsets, tuning.decay_step_pct, tuning.max_relax_pct);
+    // *** PHASE 4C: Check if we should RETIGHTEN (faster return to baseline) ***
+    const retightenConfig: RetightenConfig = {
+      enabled: true,
+      min_cycles_clear: 5,
+      retighten_step_pct: tuning.decay_step_pct * 3, // 3x decay speed
+      min_trades_flowing: 2,
+      flow_window_hours: 6,
+      cooldown_after_kill_hours: 6,
+    };
     
-    if (JSON.stringify(nextOffsets) !== JSON.stringify(currentOffsets)) {
-      await supabase.from('system_config').update({
-        config: { 
-          ...cfg, 
-          adaptive_tuning: { ...tuning, offsets: nextOffsets } 
-        },
-        updated_at: now.toISOString(),
-      }).eq('id', configId);
+    const retightenCheck = await shouldRetighten(supabase, droughtResolved, retightenConfig);
+    
+    if (retightenCheck.should) {
+      // Aggressive retighten: conditions are good, move offsets toward 0 faster
+      const { next: nextOffsets, changes } = retightenOffsets(
+        currentOffsets, 
+        retightenConfig.retighten_step_pct, 
+        tuning.max_relax_pct
+      );
       
-      console.log('[adaptive-tuning] Decayed offsets:', nextOffsets);
+      if (Object.keys(changes).length > 0) {
+        await supabase.from('system_config').update({
+          config: { 
+            ...cfg, 
+            adaptive_tuning: { ...tuning, offsets: nextOffsets } 
+          },
+          updated_at: now.toISOString(),
+        }).eq('id', configId);
+        
+        // Log retighten event for auditability
+        await supabase.from('control_events').insert({
+          action: 'adaptive_tuning_retighten',
+          metadata: {
+            reason: retightenCheck.reason,
+            changes,
+            offsets_before: currentOffsets,
+            offsets_after: nextOffsets,
+            cycles_clear: retightenCheck.cyclesClear,
+            trades_in_window: retightenCheck.tradeCount,
+            retighten_step: retightenConfig.retighten_step_pct,
+            baseline_thresholds: BASELINE_THRESHOLDS,
+            effective_thresholds: applyAdaptiveOffsets(BASELINE_THRESHOLDS, nextOffsets),
+          },
+        });
+        
+        console.log(`[adaptive-tuning] RETIGHTEN: ${JSON.stringify(changes)} (cycles_clear: ${retightenCheck.cyclesClear})`);
+      }
+    } else {
+      // Normal decay: drought cleared but conditions not yet ideal for retighten
+      const nextOffsets = decayOffsets(currentOffsets, tuning.decay_step_pct, tuning.max_relax_pct);
+      
+      if (JSON.stringify(nextOffsets) !== JSON.stringify(currentOffsets)) {
+        await supabase.from('system_config').update({
+          config: { 
+            ...cfg, 
+            adaptive_tuning: { ...tuning, offsets: nextOffsets } 
+          },
+          updated_at: now.toISOString(),
+        }).eq('id', configId);
+        
+        console.log(`[adaptive-tuning] Decay offsets (retighten blocked: ${retightenCheck.reason}):`, nextOffsets);
+      }
     }
     return;
   }

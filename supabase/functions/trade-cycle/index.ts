@@ -1740,14 +1740,16 @@ Deno.serve(async (req) => {
         .slice(0, 5)
         .map(c => {
           const regimeCtx = classifyMarketRegime(c.market);
+          // Use null for split fields if components not available (avoids misleading values)
+          const hasComponents = c.confidence_components?.signal_confidence !== undefined;
           return {
             symbol: c.symbol,
             decision: c.decision,
             reasons: c.reasons,
             confidence: c.confidence,
-            // Split confidence for observability (same as buy/sell)
-            signal_confidence: c.confidence_components?.signal_confidence ?? c.confidence,
-            maturity_multiplier: c.confidence_components?.maturity_multiplier ?? 1,
+            // Split confidence for observability - null if not available (don't fake it)
+            signal_confidence: hasComponents ? c.confidence_components.signal_confidence : null,
+            maturity_multiplier: hasComponents ? c.confidence_components.maturity_multiplier : null,
             gate_failures: c.gateFailures,
             market: {
               price: c.market.price,
@@ -1758,10 +1760,13 @@ Deno.serve(async (req) => {
             },
             // Phase 5: Regime context for each candidate
             regime_context: regimeCtx,
-            // Phase 5b: Transaction cost context (estimates)
+            // Phase 5b: Transaction cost context (estimates with model labels)
             cost_context: {
-              estimated_fee_pct: 0.006,  // 0.6% Coinbase taker fee estimate
+              estimated_fee_rate: 0.006,  // 0.6% as fraction (0.006 = 0.6%)
+              fee_assumption: 'base_tier_taker',
               estimated_slippage_bps: Math.round(c.market.atr_ratio * 5),
+              slippage_model: 'atr_ratio_x5',
+              is_estimate: true,
             },
           };
         });

@@ -1568,6 +1568,12 @@ export function TransactionCostTile({ compact }: { compact?: boolean }) {
       const positiveEdgeTrades = trades.filter(t => t.net_edge > 0).length;
       const edgeRatio = trades.length > 0 ? (positiveEdgeTrades / trades.length) * 100 : 0;
       
+      // Count total buy/sell decisions vs those with cost_context for coverage metric
+      const totalBuySell = events.filter(e => {
+        const d = ((e.metadata as Record<string, unknown>)?.decision as string)?.toLowerCase();
+        return d === 'buy' || d === 'sell';
+      }).length;
+      
       return {
         trades: trades.slice(0, 10),
         avgFeePct,
@@ -1575,6 +1581,8 @@ export function TransactionCostTile({ compact }: { compact?: boolean }) {
         avgNetEdge,
         edgeRatio,
         totalTrades: trades.length,
+        totalBuySell, // Total buy/sell decisions in window
+        coveragePct: totalBuySell > 0 ? (trades.length / totalBuySell) * 100 : 0,
       };
     },
     refetchInterval: 30000,
@@ -1633,6 +1641,14 @@ export function TransactionCostTile({ compact }: { compact?: boolean }) {
               <div className="text-[9px] text-muted-foreground">+Edge Rate</div>
             </div>
           </div>
+          
+          {/* Coverage indicator - shows ramp-up status */}
+          {costData.coveragePct < 100 && (
+            <div className="text-[9px] text-muted-foreground bg-muted/20 rounded px-2 py-1">
+              Cost coverage: {costData.totalTrades}/{costData.totalBuySell} decisions ({costData.coveragePct.toFixed(0)}%)
+              {costData.coveragePct < 20 && ' — awaiting more post-deploy data'}
+            </div>
+          )}
           
           {/* Recent trades with edge */}
           <div className="space-y-1 max-h-[80px] overflow-y-auto">

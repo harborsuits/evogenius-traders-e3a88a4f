@@ -18,6 +18,10 @@ export interface AdaptiveTuningConfig {
   freeze_after_kill_hours?: number;
   freeze_peak_dd_pct?: number;
   max_total_relax_pct?: number;
+  // Phase 4B Quality Filter
+  min_conf_for_tuning?: number;
+  min_quality_pct?: number;
+  max_single_gate_pct?: number;
 }
 
 export interface SystemConfig {

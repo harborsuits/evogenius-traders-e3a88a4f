@@ -171,6 +171,10 @@ interface AdaptiveTuningConfig {
   freeze_after_kill_hours?: number;  // e.g. 6
   freeze_peak_dd_pct?: number;       // e.g. 3.0
   max_total_relax_pct?: number;      // e.g. 0.25 - global cap on sum(|offsets|)
+  // Phase 4B Quality Filter
+  min_conf_for_tuning?: number;      // e.g. 0.50 - min confidence to count as quality signal
+  min_quality_pct?: number;          // e.g. 0.40 - min % of window with quality decisions
+  max_single_gate_pct?: number;      // e.g. 0.80 - prevent over-tuning one gate
 }
 
 // Apply adaptive offsets to thresholds
@@ -454,15 +458,33 @@ async function maybeTuneThresholds(
     return;
   }
   
-  // Aggregate gate telemetry
+  // *** PHASE 4B: Quality Filter ***
+  const minConfForTuning = tuning.min_conf_for_tuning ?? 0.50;
+  const minQualityPct = tuning.min_quality_pct ?? 0.40;
+  const maxSingleGatePct = tuning.max_single_gate_pct ?? 0.80;
+  
+  // Filter to quality decisions (high-confidence holds/near-misses)
+  const qualityRows = rows.filter(r => {
+    const m = (r.metadata ?? {}) as Record<string, unknown>;
+    const conf = m.confidence as number | undefined;
+    return conf !== undefined && conf >= minConfForTuning;
+  });
+  
+  const qualityRatio = qualityRows.length / rows.length;
+  if (qualityRatio < minQualityPct) {
+    console.log(`[adaptive-tuning] Quality filter failed: ${(qualityRatio * 100).toFixed(0)}% < ${(minQualityPct * 100).toFixed(0)}% quality decisions`);
+    return;
+  }
+  
+  // Aggregate gate telemetry from QUALITY decisions only
   const failCounts: Record<string, number> = {};
   const nearestCounts: Record<string, number> = {};
   
-  for (const r of rows) {
+  for (const r of qualityRows) {
     const m = (r.metadata ?? {}) as Record<string, unknown>;
     
-    // Count nearest_pass occurrences
-    const nearestPass = m.nearest_pass as { gate?: string } | undefined;
+    // Count nearest_pass occurrences (high-confidence near-misses)
+    const nearestPass = m.nearest_pass as { gate?: string; margin?: number } | undefined;
     if (nearestPass?.gate) {
       nearestCounts[nearestPass.gate] = (nearestCounts[nearestPass.gate] ?? 0) + 1;
     }
@@ -478,8 +500,18 @@ async function maybeTuneThresholds(
   // Pick candidate gate to relax
   const candidate = pickCandidateGate(nearestCounts, failCounts);
   if (!candidate) {
-    console.log('[adaptive-tuning] No candidate gate found');
+    console.log('[adaptive-tuning] No candidate gate found in quality decisions');
     return;
+  }
+  
+  // Check single-gate dominance (prevent over-tuning one gate)
+  const totalNearestPasses = Object.values(nearestCounts).reduce((a, b) => a + b, 0);
+  if (totalNearestPasses > 0) {
+    const candidateDominance = (nearestCounts[candidate] ?? 0) / totalNearestPasses;
+    if (candidateDominance > maxSingleGatePct) {
+      console.log(`[adaptive-tuning] Single-gate dominance: ${candidate} at ${(candidateDominance * 100).toFixed(0)}% > ${(maxSingleGatePct * 100).toFixed(0)}% (suspicious)`);
+      // Still allow but log warning - could make this a hard block if desired
+    }
   }
   
   const offsets = { ...(tuning.offsets ?? {}) };
@@ -510,7 +542,7 @@ async function maybeTuneThresholds(
     updated_at: now.toISOString(),
   }).eq('id', configId);
   
-  // Log the tuning event with enhanced audit payload
+  // Log the tuning event with enhanced audit payload including quality filter metrics
   await supabase.from('control_events').insert({
     action: 'adaptive_tuning_update',
     metadata: {
@@ -520,6 +552,9 @@ async function maybeTuneThresholds(
       nearest_counts: nearestCounts,
       fail_counts: failCounts,
       window_size: rows.length,
+      quality_window_size: qualityRows.length,
+      quality_ratio: qualityRatio,
+      min_conf_for_tuning: minConfForTuning,
       mode_active: droughtResolved.detected ? 'drought' : 'normal',
       baseline_thresholds: BASELINE_THRESHOLDS,
       effective_thresholds: applyAdaptiveOffsets(BASELINE_THRESHOLDS, offsets),

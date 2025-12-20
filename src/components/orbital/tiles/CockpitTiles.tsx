@@ -1289,3 +1289,444 @@ export function SymbolCoverageTile({ compact }: { compact?: boolean }) {
     </div>
   );
 }
+
+// ============================================================================
+// Phase 6A: Market Regime Tile - Shows current regime context from latest decisions
+// ============================================================================
+export function MarketRegimeTile({ compact }: { compact?: boolean }) {
+  const { data: regimeData, isLoading } = useQuery({
+    queryKey: ['market-regime-context'],
+    queryFn: async () => {
+      // Get most recent trade_decision with regime context
+      const { data: events } = await supabase
+        .from('control_events')
+        .select('triggered_at, metadata')
+        .eq('action', 'trade_decision')
+        .order('triggered_at', { ascending: false })
+        .limit(20);
+      
+      if (!events?.length) return null;
+      
+      // Extract regime context from candidates_context (HOLD) or regime_context (BUY/SELL)
+      const regimesBySymbol: Record<string, {
+        regime: string;
+        strength: number;
+        volatility_state: string;
+        htf_bias?: string;
+        cost_fee_pct?: number;
+        cost_slippage_bps?: number;
+      }> = {};
+      
+      for (const e of events) {
+        const meta = e.metadata as any;
+        
+        // Try candidates_context (HOLD decisions)
+        const candidates = meta?.candidates_context || [];
+        for (const c of candidates) {
+          if (c.regime_context && !regimesBySymbol[c.symbol]) {
+            regimesBySymbol[c.symbol] = {
+              regime: c.regime_context.regime,
+              strength: c.regime_context.strength,
+              volatility_state: c.regime_context.volatility_state,
+              htf_bias: c.htf_context?.trend_bias,
+              cost_fee_pct: c.cost_context?.estimated_fee_pct,
+              cost_slippage_bps: c.cost_context?.estimated_slippage_bps,
+            };
+          }
+        }
+        
+        // Try evaluations (BUY/SELL decisions)
+        const evals = meta?.evaluations || [];
+        for (const ev of evals) {
+          if (ev.regime_context && !regimesBySymbol[ev.symbol]) {
+            regimesBySymbol[ev.symbol] = {
+              regime: ev.regime_context.regime,
+              strength: ev.regime_context.strength,
+              volatility_state: ev.regime_context.volatility_state,
+              htf_bias: ev.regime_context.htf_trend_bias,
+            };
+          }
+        }
+        
+        // Try root-level regime_context (BUY/SELL chosen candidate)
+        if (meta?.regime_context && meta?.symbol && !regimesBySymbol[meta.symbol]) {
+          regimesBySymbol[meta.symbol] = {
+            regime: meta.regime_context.regime,
+            strength: meta.regime_context.strength,
+            volatility_state: meta.regime_context.volatility_state,
+            htf_bias: meta.regime_context.htf_trend_bias,
+            cost_fee_pct: meta.cost_context?.estimated_fee_pct,
+            cost_slippage_bps: meta.cost_context?.estimated_slippage_bps,
+          };
+        }
+      }
+      
+      // Aggregate regime distribution
+      const regimeCounts: Record<string, number> = {};
+      const symbols = Object.entries(regimesBySymbol);
+      
+      for (const [, data] of symbols) {
+        regimeCounts[data.regime] = (regimeCounts[data.regime] || 0) + 1;
+      }
+      
+      // Find dominant regime
+      const dominantRegime = Object.entries(regimeCounts)
+        .sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'unknown';
+      
+      return {
+        symbols: regimesBySymbol,
+        regimeCounts,
+        dominantRegime,
+        symbolCount: symbols.length,
+      };
+    },
+    refetchInterval: 30000,
+  });
+  
+  const getRegimeColor = (regime: string) => {
+    switch (regime?.toLowerCase()) {
+      case 'trend': return 'text-success bg-success/10 border-success/20';
+      case 'chop': return 'text-amber-500 bg-amber-500/10 border-amber-500/20';
+      case 'volatile': return 'text-destructive bg-destructive/10 border-destructive/20';
+      case 'dead': return 'text-muted-foreground bg-muted/30 border-muted/20';
+      default: return 'text-muted-foreground bg-muted/30 border-muted/20';
+    }
+  };
+  
+  const getRegimeIcon = (regime: string) => {
+    switch (regime?.toLowerCase()) {
+      case 'trend': return <TrendingUp className="h-4 w-4" />;
+      case 'chop': return <Activity className="h-4 w-4" />;
+      case 'volatile': return <Flame className="h-4 w-4" />;
+      case 'dead': return <HelpCircle className="h-4 w-4" />;
+      default: return <Globe className="h-4 w-4" />;
+    }
+  };
+  
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
+        <Globe className="h-4 w-4 text-primary" />
+        Market Regime
+        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">P5</Badge>
+      </div>
+      
+      {isLoading ? (
+        <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
+      ) : !regimeData || regimeData.symbolCount === 0 ? (
+        <div className="text-xs text-muted-foreground">No regime data yet — awaiting trade decisions</div>
+      ) : (
+        <>
+          {/* Dominant regime badge */}
+          <div className={cn(
+            "inline-flex items-center gap-2 px-3 py-2 rounded-lg border font-mono text-sm font-bold",
+            getRegimeColor(regimeData.dominantRegime)
+          )}>
+            {getRegimeIcon(regimeData.dominantRegime)}
+            {regimeData.dominantRegime.toUpperCase()}
+          </div>
+          
+          {/* Regime distribution */}
+          <div className="grid grid-cols-4 gap-1">
+            {['trend', 'chop', 'volatile', 'dead'].map(regime => {
+              const count = regimeData.regimeCounts[regime] || 0;
+              const pct = regimeData.symbolCount > 0 ? (count / regimeData.symbolCount) * 100 : 0;
+              return (
+                <div key={regime} className={cn(
+                  "rounded-lg p-1.5 text-center border",
+                  count > 0 ? getRegimeColor(regime) : "bg-muted/20 border-transparent"
+                )}>
+                  <div className="text-sm font-bold">{count}</div>
+                  <div className="text-[8px] uppercase">{regime}</div>
+                  {pct > 0 && <div className="text-[8px] opacity-70">{pct.toFixed(0)}%</div>}
+                </div>
+              );
+            })}
+          </div>
+          
+          {/* Top symbols with regime */}
+          <div className="space-y-1 max-h-[100px] overflow-y-auto">
+            {Object.entries(regimeData.symbols).slice(0, 5).map(([symbol, data]) => (
+              <div key={symbol} className="flex items-center gap-2 text-[10px]">
+                <span className="font-mono w-14 truncate">{symbol.replace('-USD', '')}</span>
+                <Badge variant="outline" className={cn("text-[8px] px-1 py-0", getRegimeColor(data.regime))}>
+                  {data.regime}
+                </Badge>
+                <span className="text-muted-foreground">str:{(data.strength * 100).toFixed(0)}%</span>
+                {data.htf_bias && (
+                  <span className={cn(
+                    "text-[8px]",
+                    data.htf_bias === 'bullish' ? 'text-success' : 
+                    data.htf_bias === 'bearish' ? 'text-destructive' : 'text-muted-foreground'
+                  )}>
+                    HTF:{data.htf_bias}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Phase 6A: Transaction Cost Tile - Shows fee/slippage estimates and net edge
+// ============================================================================
+export function TransactionCostTile({ compact }: { compact?: boolean }) {
+  const { data: costData, isLoading } = useQuery({
+    queryKey: ['transaction-cost-context'],
+    queryFn: async () => {
+      // Get recent BUY/SELL decisions with cost context
+      const { data: events } = await supabase
+        .from('control_events')
+        .select('triggered_at, metadata')
+        .eq('action', 'trade_decision')
+        .order('triggered_at', { ascending: false })
+        .limit(50);
+      
+      if (!events?.length) return null;
+      
+      const trades: Array<{
+        symbol: string;
+        decision: string;
+        confidence: number;
+        fee_pct: number;
+        slippage_bps: number;
+        net_edge: number;
+        triggered_at: string;
+      }> = [];
+      
+      for (const e of events) {
+        const meta = e.metadata as any;
+        const decision = meta?.decision?.toLowerCase();
+        
+        if (decision === 'buy' || decision === 'sell') {
+          const costCtx = meta?.cost_context;
+          const confidence = meta?.confidence ?? 0;
+          
+          if (costCtx) {
+            const feePct = costCtx.estimated_fee_pct ?? 0.006;
+            const slippageBps = costCtx.estimated_slippage_bps ?? 0;
+            const slippagePct = slippageBps / 100;
+            const totalCostPct = feePct + slippagePct;
+            
+            // Net edge = confidence * 100 (as %) - total cost %
+            // This is a rough proxy: "expected return" - "transaction friction"
+            const netEdge = (confidence * 100) - totalCostPct;
+            
+            trades.push({
+              symbol: meta.symbol,
+              decision,
+              confidence,
+              fee_pct: feePct * 100,
+              slippage_bps: slippageBps,
+              net_edge: netEdge,
+              triggered_at: e.triggered_at,
+            });
+          }
+        }
+      }
+      
+      // Calculate averages
+      const avgFeePct = trades.length > 0 
+        ? trades.reduce((sum, t) => sum + t.fee_pct, 0) / trades.length 
+        : 0.6; // Default estimate
+      const avgSlippageBps = trades.length > 0 
+        ? trades.reduce((sum, t) => sum + t.slippage_bps, 0) / trades.length 
+        : 5;
+      const avgNetEdge = trades.length > 0 
+        ? trades.reduce((sum, t) => sum + t.net_edge, 0) / trades.length 
+        : 0;
+      
+      const positiveEdgeTrades = trades.filter(t => t.net_edge > 0).length;
+      const edgeRatio = trades.length > 0 ? (positiveEdgeTrades / trades.length) * 100 : 0;
+      
+      return {
+        trades: trades.slice(0, 10),
+        avgFeePct,
+        avgSlippageBps,
+        avgNetEdge,
+        edgeRatio,
+        totalTrades: trades.length,
+      };
+    },
+    refetchInterval: 30000,
+  });
+  
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
+        <Scale className="h-4 w-4 text-primary" />
+        Transaction Costs
+        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">P5</Badge>
+      </div>
+      
+      {isLoading ? (
+        <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
+      ) : !costData || costData.totalTrades === 0 ? (
+        <div className="text-xs text-muted-foreground">No cost data yet — awaiting trade decisions</div>
+      ) : (
+        <>
+          {/* Net edge summary */}
+          <div className={cn(
+            "flex items-center gap-2 p-2 rounded-lg border",
+            costData.avgNetEdge > 0 
+              ? "bg-success/10 border-success/20 text-success" 
+              : "bg-destructive/10 border-destructive/20 text-destructive"
+          )}>
+            {costData.avgNetEdge > 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+            <div>
+              <div className="text-sm font-bold font-mono">
+                {costData.avgNetEdge >= 0 ? '+' : ''}{costData.avgNetEdge.toFixed(2)}%
+              </div>
+              <div className="text-[9px] opacity-70">Avg Net Edge After Costs</div>
+            </div>
+          </div>
+          
+          {/* Cost breakdown */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-muted/30 rounded-lg p-2 text-center">
+              <div className="text-sm font-bold font-mono">{costData.avgFeePct.toFixed(2)}%</div>
+              <div className="text-[9px] text-muted-foreground">Avg Fee</div>
+            </div>
+            <div className="bg-muted/30 rounded-lg p-2 text-center">
+              <div className="text-sm font-bold font-mono">{costData.avgSlippageBps.toFixed(0)}bps</div>
+              <div className="text-[9px] text-muted-foreground">Avg Slip</div>
+            </div>
+            <div className={cn(
+              "rounded-lg p-2 text-center",
+              costData.edgeRatio >= 50 ? "bg-success/10" : "bg-amber-500/10"
+            )}>
+              <div className={cn(
+                "text-sm font-bold font-mono",
+                costData.edgeRatio >= 50 ? "text-success" : "text-amber-500"
+              )}>
+                {costData.edgeRatio.toFixed(0)}%
+              </div>
+              <div className="text-[9px] text-muted-foreground">+Edge Rate</div>
+            </div>
+          </div>
+          
+          {/* Recent trades with edge */}
+          <div className="space-y-1 max-h-[80px] overflow-y-auto">
+            {costData.trades.slice(0, 5).map((t, i) => (
+              <div key={i} className="flex items-center gap-2 text-[10px]">
+                <Badge variant={t.decision === 'buy' ? 'default' : 'destructive'} className="text-[8px] px-1 py-0">
+                  {t.decision.toUpperCase()}
+                </Badge>
+                <span className="font-mono w-12 truncate">{t.symbol.replace('-USD', '')}</span>
+                <span className={cn(
+                  "font-mono ml-auto",
+                  t.net_edge > 0 ? "text-success" : "text-destructive"
+                )}>
+                  {t.net_edge >= 0 ? '+' : ''}{t.net_edge.toFixed(2)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Phase 6A: Audit Tile - Quick access to tuning events for verification
+// ============================================================================
+export function AuditTile({ compact }: { compact?: boolean }) {
+  const [activeTab, setActiveTab] = React.useState<'updates' | 'frozen' | 'retighten'>('updates');
+  
+  const { data: auditData, isLoading } = useQuery({
+    queryKey: ['audit-events', activeTab],
+    queryFn: async () => {
+      const actionMap = {
+        updates: 'adaptive_tuning_update',
+        frozen: 'adaptive_tuning_frozen',
+        retighten: 'adaptive_tuning_retighten',
+      };
+      
+      const { data: events } = await supabase
+        .from('control_events')
+        .select('triggered_at, metadata')
+        .eq('action', actionMap[activeTab])
+        .order('triggered_at', { ascending: false })
+        .limit(20);
+      
+      return events ?? [];
+    },
+    refetchInterval: 30000,
+  });
+  
+  const formatEventSummary = (meta: any, type: string) => {
+    if (type === 'updates') {
+      const trigger = meta?.trigger ?? 'unknown';
+      const offsetsChanged = Object.keys(meta?.offsets_new ?? {}).length;
+      return `${trigger} → ${offsetsChanged} offsets`;
+    }
+    if (type === 'frozen') {
+      return meta?.reason ?? 'frozen';
+    }
+    if (type === 'retighten') {
+      return `retighten: ${meta?.reason ?? 'conditions improved'}`;
+    }
+    return 'event';
+  };
+  
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
+        <Eye className="h-4 w-4 text-primary" />
+        Tuning Audit
+        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">P4</Badge>
+      </div>
+      
+      {/* Tab selector */}
+      <div className="flex gap-1">
+        {(['updates', 'frozen', 'retighten'] as const).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={cn(
+              "text-[9px] px-2 py-1 rounded font-mono transition-colors",
+              activeTab === tab 
+                ? "bg-primary text-primary-foreground" 
+                : "bg-muted/30 text-muted-foreground hover:bg-muted/50"
+            )}
+          >
+            {tab === 'updates' ? 'Updates' : tab === 'frozen' ? 'Frozen' : 'Retighten'}
+          </button>
+        ))}
+      </div>
+      
+      {isLoading ? (
+        <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
+      ) : !auditData || auditData.length === 0 ? (
+        <div className="text-xs text-muted-foreground">No {activeTab} events yet</div>
+      ) : (
+        <div className="space-y-1.5 max-h-[120px] overflow-y-auto">
+          {auditData.map((event, i) => {
+            const meta = event.metadata as any;
+            const triggeredAt = new Date(event.triggered_at);
+            const timeAgo = formatDistanceToNow(triggeredAt, { addSuffix: true });
+            
+            return (
+              <div key={i} className="flex items-start gap-2 text-[10px] border-b border-border/20 pb-1">
+                <span className="text-muted-foreground font-mono w-20 shrink-0">{timeAgo}</span>
+                <span className={cn(
+                  "flex-1",
+                  activeTab === 'frozen' ? 'text-destructive' :
+                  activeTab === 'retighten' ? 'text-success' :
+                  'text-primary'
+                )}>
+                  {formatEventSummary(meta, activeTab)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}

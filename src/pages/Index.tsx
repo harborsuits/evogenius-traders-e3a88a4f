@@ -25,7 +25,10 @@ import {
   SymbolCoverageTile,
   CatalystWatchTile,
   AutopsyTile,
-  DroughtMonitorTile
+  DroughtMonitorTile,
+  MarketRegimeTile,
+  TransactionCostTile,
+  AuditTile,
 } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PositionsCardContent, ActivityCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
@@ -37,6 +40,11 @@ const staticCards: OrbitalCard[] = [
   { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
   { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
   { id: 'capital', title: 'Capital Overview', type: 'cockpit', component: CapitalOverviewTile },
+  // Phase 6A: Regime + Cost visibility
+  { id: 'market-regime', title: 'Market Regime', type: 'cockpit', component: MarketRegimeTile },
+  { id: 'transaction-costs', title: 'Transaction Costs', type: 'cockpit', component: TransactionCostTile },
+  { id: 'tuning-audit', title: 'Tuning Audit', type: 'cockpit', component: AuditTile },
+  // Other cockpit tiles
   { id: 'symbol-coverage', title: 'Symbol Coverage', type: 'cockpit', component: SymbolCoverageTile },
   { id: 'agent-inactivity', title: 'Agent Activity', type: 'cockpit', component: AgentInactivityTile },
   { id: 'catalyst-watch', title: 'Catalyst Watch', type: 'cockpit', component: CatalystWatchTile },

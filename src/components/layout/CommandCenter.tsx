@@ -234,6 +234,10 @@ function OrbitLane({
 }
 
 // Workspace column - THIS is the droppable container
+// CRITICAL: Correct scroll chain:
+// 1. Outer wrapper: h-full min-h-0 flex flex-col overflow-hidden
+// 2. Header: flex-none (non-scrolling)
+// 3. Body: flex-1 min-h-0 overflow-y-auto (ONLY scrolling element)
 function WorkspaceColumn({ 
   lane,
   title,
@@ -260,7 +264,7 @@ function WorkspaceColumn({
   return (
     <div 
       ref={setNodeRef}
-      className="h-full flex flex-col overflow-hidden"
+      className="h-full min-h-0 flex flex-col overflow-hidden"
       style={{ transform: 'none' }}
     >
       <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
@@ -574,7 +578,7 @@ export function CommandCenter({ cards }: CommandCenterProps) {
   );
 }
 
-// Tablet workspace column - droppable container
+// Tablet workspace column - droppable container with correct scroll chain
 function TabletWorkspaceColumn({
   cardIds,
   allCards,
@@ -598,7 +602,7 @@ function TabletWorkspaceColumn({
   return (
     <div 
       ref={setNodeRef}
-      className="h-full flex flex-col overflow-hidden"
+      className="h-full min-h-0 flex flex-col overflow-hidden"
       style={{ transform: 'none' }}
     >
       <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>

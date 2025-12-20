@@ -10,8 +10,12 @@ import { cn } from '@/lib/utils';
 
 // Proper typing for trade decision metadata
 interface CostContext {
-  estimated_fee_pct?: number;
+  estimated_fee_rate?: number;  // Fee as fraction (0.006 = 0.6%)
+  estimated_fee_pct?: number;   // Legacy fallback
   estimated_slippage_bps?: number;
+  fee_assumption?: string;
+  slippage_model?: string;
+  is_estimate?: boolean;
 }
 
 interface RegimeContext {
@@ -170,7 +174,8 @@ export function PassingTradesFeed({ compact }: { compact?: boolean }) {
               const costContext = meta.cost_context;
               const regimeContext = meta.regime_context;
               
-              const feePct = costContext?.estimated_fee_pct;
+              // Support both new (estimated_fee_rate) and legacy (estimated_fee_pct) keys
+              const feeRate = costContext?.estimated_fee_rate ?? costContext?.estimated_fee_pct;
               const slippageBps = costContext?.estimated_slippage_bps;
               const regime = regimeContext?.regime ?? 'unknown';
               
@@ -233,12 +238,12 @@ export function PassingTradesFeed({ compact }: { compact?: boolean }) {
                   </div>
                   
                   {/* Cost context */}
-                  {(feePct !== undefined || slippageBps !== undefined) && (
+                  {(feeRate !== undefined || slippageBps !== undefined) && (
                     <div className="flex items-center gap-4 text-xs">
-                      {feePct !== undefined && (
+                      {feeRate !== undefined && (
                         <div className="flex items-center gap-1">
                           <span className="text-muted-foreground">Fee:</span>
-                          <span className="font-mono">{(feePct * 100).toFixed(2)}%</span>
+                          <span className="font-mono">{(feeRate * 100).toFixed(2)}%</span>
                         </div>
                       )}
                       {slippageBps !== undefined && (

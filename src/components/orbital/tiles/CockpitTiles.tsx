@@ -1526,8 +1526,8 @@ export function TransactionCostTile({ compact }: { compact?: boolean }) {
           
           // Only process if we have a valid symbol
           if (symbol && costCtx) {
-            // fee_pct is stored as fraction (e.g., 0.006 = 0.6%)
-            const feeFraction = (costCtx.estimated_fee_pct as number) ?? 0.006;
+            // Support both new (estimated_fee_rate) and legacy (estimated_fee_pct) keys
+            const feeFraction = (costCtx.estimated_fee_rate as number) ?? (costCtx.estimated_fee_pct as number) ?? 0.006;
             const slippageBps = (costCtx.estimated_slippage_bps as number) ?? 0;
             
             // Convert to percentages for display math:

@@ -1306,6 +1306,15 @@ Deno.serve(async (req) => {
             cooldown_minutes: tuning?.cooldown_minutes ?? null,
             baseline_thresholds: baselineThresholds,
             effective_thresholds: effectiveThresholds,
+            // Active state: tuning is enabled, has offsets, and mode allows application
+            applied: !!tuning?.enabled && Object.keys(offsets).length > 0 && 
+              (tuning?.mode === 'always' || droughtResolved.detected),
+            // Cooldown remaining (if in cooldown)
+            cooldown_remaining_sec: tuning?.last_adjusted_at && tuning?.cooldown_minutes
+              ? Math.max(0, Math.round(
+                  (new Date(tuning.last_adjusted_at).getTime() + tuning.cooldown_minutes * 60 * 1000 - Date.now()) / 1000
+                ))
+              : null,
           },
           gate_failures: allGateFailures,
           nearest_pass: nearestPassGlobal ? {
@@ -1480,6 +1489,15 @@ Deno.serve(async (req) => {
           cooldown_minutes: tuning?.cooldown_minutes ?? null,
           baseline_thresholds: baselineThresholds,
           effective_thresholds: effectiveThresholds,
+          // Active state: tuning is enabled, has offsets, and mode allows application
+          applied: !!tuning?.enabled && Object.keys(offsets).length > 0 && 
+            (tuning?.mode === 'always' || droughtResolved.detected),
+          // Cooldown remaining (if in cooldown)
+          cooldown_remaining_sec: tuning?.last_adjusted_at && tuning?.cooldown_minutes
+            ? Math.max(0, Math.round(
+                (new Date(tuning.last_adjusted_at).getTime() + tuning.cooldown_minutes * 60 * 1000 - Date.now()) / 1000
+              ))
+            : null,
         },
         gate_failures: gateFailures,
       },

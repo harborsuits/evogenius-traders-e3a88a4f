@@ -9,6 +9,8 @@ export interface AdaptiveTuningState {
   cooldownMinutes: number | null;
   baselineThresholds?: Record<string, number>;
   effectiveThresholds?: Record<string, number>;
+  applied: boolean;
+  cooldownRemainingSec: number | null;
 }
 
 export interface DroughtState {
@@ -84,6 +86,8 @@ export function useDroughtState() {
         cooldown_minutes?: number | null;
         baseline_thresholds?: Record<string, number>;
         effective_thresholds?: Record<string, number>;
+        applied?: boolean;
+        cooldown_remaining_sec?: number | null;
       } | undefined;
       
       const gateFailures = (latestMeta.gate_failures ?? {}) as Record<string, { count: number; avgMargin: number }>;
@@ -119,6 +123,8 @@ export function useDroughtState() {
           cooldownMinutes: adaptiveTuningRaw.cooldown_minutes ?? null,
           baselineThresholds: adaptiveTuningRaw.baseline_thresholds,
           effectiveThresholds: adaptiveTuningRaw.effective_thresholds,
+          applied: adaptiveTuningRaw.applied ?? false,
+          cooldownRemainingSec: adaptiveTuningRaw.cooldown_remaining_sec ?? null,
         } : undefined,
       };
     },

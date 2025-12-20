@@ -1734,26 +1734,37 @@ Deno.serve(async (req) => {
         .map(([reason, count]) => `${reason}:${count}`);
       
       // Phase 5: Add full context for each candidate (HOLD case) - matches BUY/SELL structure
-      const candidatesContext = candidates.map(c => {
-        const regimeCtx = classifyMarketRegime(c.market);
-        return {
-          symbol: c.symbol,
-          decision: c.decision,
-          confidence: c.confidence,
-          // Phase 5a: Market regime context
-          regime_context: regimeCtx,
-          // Phase 5b: Transaction cost context (estimates)
-          cost_context: {
-            estimated_fee_pct: 0.006,  // 0.6% Coinbase taker fee estimate
-            estimated_slippage_bps: Math.round(c.market.atr_ratio * 5), // ATR-based slippage estimate
-          },
-          // Phase 5c: Multi-timeframe context (from regime classifier)
-          htf_context: {
-            trend_bias: regimeCtx.htf_trend_bias,
-            volatility_state: regimeCtx.htf_volatility_state,
-          },
-        };
-      });
+      // Populate evaluations array with same schema as buy/sell for consistent UI
+      const evaluations = candidates
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, 5)
+        .map(c => {
+          const regimeCtx = classifyMarketRegime(c.market);
+          return {
+            symbol: c.symbol,
+            decision: c.decision,
+            reasons: c.reasons,
+            confidence: c.confidence,
+            // Split confidence for observability (same as buy/sell)
+            signal_confidence: c.confidence_components?.signal_confidence ?? c.confidence,
+            maturity_multiplier: c.confidence_components?.maturity_multiplier ?? 1,
+            gate_failures: c.gateFailures,
+            market: {
+              price: c.market.price,
+              change_24h: c.market.change_24h,
+              ema_slope: c.market.ema_50_slope,
+              atr: c.market.atr_ratio,
+              regime: getRegime(c.market),
+            },
+            // Phase 5: Regime context for each candidate
+            regime_context: regimeCtx,
+            // Phase 5b: Transaction cost context (estimates)
+            cost_context: {
+              estimated_fee_pct: 0.006,  // 0.6% Coinbase taker fee estimate
+              estimated_slippage_bps: Math.round(c.market.atr_ratio * 5),
+            },
+          };
+        });
       
       await supabase.from('control_events').insert({
         action: 'trade_decision',
@@ -1768,8 +1779,8 @@ Deno.serve(async (req) => {
           top_hold_reasons: topHoldReasons,
           mode: 'paper',
           thresholds_used: thresholdsUsed,
-          // Phase 5: Full context for all evaluated candidates
-          candidates_context: candidatesContext,
+          // Evaluations array with confidence split (same schema as buy/sell)
+          evaluations,
           drought_state: {
             detected: droughtResolved.detected,
             active: droughtModeActive,

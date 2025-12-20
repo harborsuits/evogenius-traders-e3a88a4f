@@ -14,8 +14,10 @@ interface DraggableCardProps {
   isActive?: boolean;
   onReturnToOrbit?: () => void;
   compact?: boolean;
-  visualScale?: number;
 }
+
+// Fixed card height - all cards MUST be this height
+const CARD_HEIGHT = 240;
 
 export const DraggableCard = forwardRef<HTMLDivElement, DraggableCardProps>(
   function DraggableCard({ 
@@ -24,7 +26,6 @@ export const DraggableCard = forwardRef<HTMLDivElement, DraggableCardProps>(
     isActive = false,
     onReturnToOrbit,
     compact = false,
-    visualScale = 1,
   }, forwardedRef) {
     const navigate = useNavigate();
     const CardComponent = card.component;
@@ -51,14 +52,9 @@ export const DraggableCard = forwardRef<HTMLDivElement, DraggableCardProps>(
       }
     };
     
-    // Merge dnd-kit transform with visual scale
-    const baseTransform = CSS.Transform.toString(transform);
-    const scaleTransform = visualScale !== 1 ? `scale(${visualScale})` : '';
-    const combinedTransform = [baseTransform, scaleTransform].filter(Boolean).join(' ') || undefined;
-    
     const style = {
-      transform: combinedTransform,
-      transition: transition || 'transform 300ms',
+      transform: CSS.Transform.toString(transform),
+      transition: transition || 'transform 200ms',
     };
     
     const handleDrilldown = (e: React.MouseEvent) => {
@@ -72,9 +68,6 @@ export const DraggableCard = forwardRef<HTMLDivElement, DraggableCardProps>(
       e.stopPropagation();
       onReturnToOrbit?.();
     };
-    
-    // Fixed height for uniform card sizing
-    const CARD_HEIGHT = 240;
 
     return (
       <div
@@ -83,20 +76,24 @@ export const DraggableCard = forwardRef<HTMLDivElement, DraggableCardProps>(
         {...attributes}
         {...listeners}
         className={cn(
-          "transition-all duration-200 touch-none cursor-grab active:cursor-grabbing",
-          isDragging && "opacity-50 z-50",
-          isActive && "scale-[1.02]",
-          !isActive && lane === 'orbit' && "opacity-85 hover:opacity-95"
+          "w-full touch-none cursor-grab active:cursor-grabbing",
+          isDragging && "opacity-50 z-50"
         )}
       >
+        {/* Card with FIXED height */}
         <Card 
           variant={isActive ? "glow" : "default"}
           className={cn(
-            "transition-all duration-200 overflow-hidden pointer-events-auto flex flex-col",
+            "w-full flex flex-col overflow-hidden",
             isDragging && "shadow-2xl ring-2 ring-primary/50",
-            isActive && "ring-1 ring-primary/50 shadow-xl shadow-primary/15"
+            isActive && "ring-1 ring-primary/50 shadow-xl shadow-primary/15",
+            !isActive && lane === 'orbit' && "opacity-85 hover:opacity-95"
           )}
-          style={{ height: `${CARD_HEIGHT}px`, minHeight: `${CARD_HEIGHT}px`, maxHeight: `${CARD_HEIGHT}px` }}
+          style={{
+            height: CARD_HEIGHT,
+            minHeight: CARD_HEIGHT,
+            maxHeight: CARD_HEIGHT,
+          }}
         >
           {/* Header - fixed, non-scrolling */}
           <CardHeader className="flex-none flex flex-row items-center justify-between border-b border-border/20 py-2 px-3">

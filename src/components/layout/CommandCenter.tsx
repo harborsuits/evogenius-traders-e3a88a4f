@@ -177,8 +177,7 @@ function OrbitLane({
           {columnCards.map((card, index) => {
             const distance = index - activeIndex;
             const absDistance = Math.abs(distance);
-            // Visual-only scale/opacity applied to inner content, NOT the droppable wrapper
-            const visualScale = Math.max(0.8, 1 - absDistance * 0.08);
+            // Opacity changes only - NO SCALE (scale makes cards look different heights)
             const visualOpacity = Math.max(0.5, 1 - absDistance * 0.2);
             
             return (
@@ -189,7 +188,7 @@ function OrbitLane({
                   else cardRefs.current.delete(index);
                 }}
                 data-card-index={index}
-                className="flex items-center justify-center px-3 py-2"
+                className="flex items-center justify-center px-4 w-full max-w-md mx-auto"
                 style={{ 
                   height: 240,
                   scrollSnapAlign: 'center',
@@ -202,7 +201,6 @@ function OrbitLane({
                   lane="orbit"
                   isActive={index === activeIndex}
                   onReturnToOrbit={() => onReturnToOrbit(card.id)}
-                  visualScale={visualScale}
                 />
               </div>
             );

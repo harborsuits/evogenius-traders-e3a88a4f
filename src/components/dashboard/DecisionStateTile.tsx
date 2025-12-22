@@ -29,8 +29,16 @@ interface CostContext {
 
 interface RegimeContext {
   regime?: string;
+  gating_regime?: string;
   trend_strength?: number;
-  volatility_level?: string;
+  volatility_level?: number;
+}
+
+interface RegimeGating {
+  dominant_market_regime?: string;
+  agent_preferred_regime?: string;
+  regime_blocked_count?: number;
+  regime_stats?: Record<string, number>;
 }
 
 interface Evaluation {
@@ -41,6 +49,7 @@ interface Evaluation {
   signal_confidence?: number;
   maturity_multiplier?: number;
   gate_failures?: string[];
+  regime_blocked?: boolean;
   cost_context?: CostContext;
   regime_context?: RegimeContext;
 }
@@ -55,6 +64,8 @@ interface TradeDecisionMeta {
   evaluations?: Evaluation[];
   cost_context?: CostContext;
   regime_context?: RegimeContext;
+  regime_gating?: RegimeGating;
+  reason?: string;  // Canonical reason string
 }
 
 export function DecisionStateTile({ compact }: { compact?: boolean }) {
@@ -146,13 +157,22 @@ export function DecisionStateTile({ compact }: { compact?: boolean }) {
       // Extract latest evaluations for expanded view
       const latestEvaluations = latestDecision?.evaluations?.slice(0, 5) || [];
       
+      // Extract regime info from latest decision
+      const regimeGating = latestDecision?.regime_gating;
+      const dominantRegime = regimeGating?.dominant_market_regime ?? 'unknown';
+      const agentPreference = regimeGating?.agent_preferred_regime ?? 'any';
+      const regimeBlocked = (regimeGating?.regime_blocked_count ?? 0) > 0;
+      
       return { 
         buy, sell, hold, blocked, 
         latestDecision, 
         topReasons, 
         recentTrades,
         latestEvaluations,
-        total: events.length 
+        total: events.length,
+        dominantRegime,
+        agentPreference,
+        regimeBlocked,
       };
     },
     refetchInterval: 15000,
@@ -266,6 +286,23 @@ export function DecisionStateTile({ compact }: { compact?: boolean }) {
                 <span className="text-muted-foreground">{decisionData?.hold || 0}H</span>
               </div>
             </div>
+            
+            {/* Regime indicator - single line as requested */}
+            {decisionData?.dominantRegime && decisionData.dominantRegime !== 'unknown' && (
+              <div className={cn(
+                "text-[10px] font-mono px-3 py-1.5 rounded border",
+                decisionData.regimeBlocked 
+                  ? "text-amber-500 bg-amber-500/10 border-amber-500/30" 
+                  : "text-muted-foreground bg-muted/20 border-border/30"
+              )}>
+                Market Regime: <span className="font-bold uppercase">{decisionData.dominantRegime}</span>
+                {decisionData.regimeBlocked && decisionData.agentPreference !== 'any' && (
+                  <span className="ml-1 text-amber-500">
+                    ({decisionData.agentPreference} agents paused)
+                  </span>
+                )}
+              </div>
+            )}
             
             {/* Expand trigger */}
             <CollapsibleTrigger asChild>

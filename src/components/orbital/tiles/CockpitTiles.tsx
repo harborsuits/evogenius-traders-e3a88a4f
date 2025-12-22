@@ -1786,3 +1786,6 @@ export function PassingTradesTile({ compact }: { compact?: boolean }) {
 
 // System Vitals Tile - Agent heartbeat, decision throughput, learning status
 export { SystemVitals as SystemVitalsTile } from '@/components/dashboard/SystemVitals';
+
+// Regime History Tile - 24h regime distribution and blocked rate
+export { RegimeHistoryCard as RegimeHistoryTile } from '@/components/dashboard/RegimeHistoryCard';

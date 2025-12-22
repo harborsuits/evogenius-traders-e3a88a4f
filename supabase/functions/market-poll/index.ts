@@ -160,50 +160,49 @@ serve(async (req) => {
       );
     }
 
-    // DYNAMIC UNIVERSE: Fetch all eligible products from Coinbase
+    // Fetch priority symbols from system_config
+    const { data: configData } = await supabase
+      .from('system_config')
+      .select('config')
+      .limit(1)
+      .single();
+    
+    const prioritySymbols: Set<string> = new Set(
+      (configData?.config?.trading?.symbols as string[]) ?? ['BTC-USD', 'ETH-USD']
+    );
+    console.log(`[market-poll] Priority symbols: ${Array.from(prioritySymbols).join(', ')}`);
+
+    // Fetch all eligible products from Coinbase
     const allEligibleProducts = await fetchEligibleProducts();
+    const eligibleSet = new Set(allEligibleProducts);
     
-    // Get price data for all eligible products to filter by volume
-    const productsWithVolume: { symbol: string; volume: number }[] = [];
-    
-    // Fetch in batches to avoid rate limits (max 10 req/sec on public endpoints)
-    const batchSize = 5;
-    for (let i = 0; i < allEligibleProducts.length; i += batchSize) {
-      const batch = allEligibleProducts.slice(i, i + batchSize);
-      const batchResults = await Promise.all(
-        batch.map(async (symbol) => {
-          const data = await fetchCoinbasePrice(symbol);
-          return data ? { symbol, volume: data.volume_24h } : null;
-        })
-      );
-      
-      for (const result of batchResults) {
-        if (result && result.volume >= MIN_VOLUME_USD) {
-          productsWithVolume.push(result);
-        }
+    // Check for missing priority symbols (not available on Coinbase)
+    const missingPriority: string[] = [];
+    for (const sym of prioritySymbols) {
+      if (!eligibleSet.has(sym)) {
+        missingPriority.push(sym);
       }
     }
     
-    // Sort by volume descending
-    productsWithVolume.sort((a, b) => b.volume - a.volume);
-    
-    // Build final symbol set: core pairs first, then fill up to MAX_SYMBOLS
-    // Use Set to prevent duplicates and ensure bounded count
-    const symbolSet = new Set<string>(['BTC-USD', 'ETH-USD']);
-    for (const p of productsWithVolume) {
-      if (symbolSet.size >= MAX_SYMBOLS) break;
-      symbolSet.add(p.symbol);
+    // Log missing symbols as control event
+    if (missingPriority.length > 0) {
+      console.warn(`[market-poll] Missing priority symbols: ${missingPriority.join(', ')}`);
+      await supabase.from('control_events').insert({
+        action: 'market_symbol_missing',
+        metadata: { missing: missingPriority, checked_at: new Date().toISOString() }
+      });
     }
-    const symbols = Array.from(symbolSet);
-    
-    console.log(`[market-poll] Polling ${symbols.length} symbols: ${symbols.slice(0, 5).join(', ')}...`);
 
+    // Poll priority symbols first (bypass volume filter)
+    const validPrioritySymbols = Array.from(prioritySymbols).filter(sym => eligibleSet.has(sym));
     const results: { symbol: string; price: number; change_24h: number; volume_24h: number }[] = [];
-
-    // Fetch + upsert in parallel batches (concurrency limited)
-    const upsertBatchSize = 5;
-    for (let i = 0; i < symbols.length; i += upsertBatchSize) {
-      const batch = symbols.slice(i, i + upsertBatchSize);
+    
+    console.log(`[market-poll] Polling ${validPrioritySymbols.length} priority symbols...`);
+    
+    // Priority pass - always poll these regardless of volume
+    const batchSize = 5;
+    for (let i = 0; i < validPrioritySymbols.length; i += batchSize) {
+      const batch = validPrioritySymbols.slice(i, i + batchSize);
       
       const batchResults = await Promise.all(
         batch.map(async (symbol) => {
@@ -242,17 +241,94 @@ serve(async (req) => {
         if (r) results.push(r);
       }
     }
+    
+    console.log(`[market-poll] Priority pass: updated ${results.length} symbols`);
+
+    // Discovery pass - volume-filtered symbols not already in priority
+    const remainingSlots = MAX_SYMBOLS - results.length;
+    
+    if (remainingSlots > 0) {
+      const discoveryProducts = allEligibleProducts.filter(sym => !prioritySymbols.has(sym));
+      const productsWithVolume: { symbol: string; volume: number }[] = [];
+      
+      // Fetch volumes for discovery candidates
+      for (let i = 0; i < discoveryProducts.length && productsWithVolume.length < remainingSlots * 2; i += batchSize) {
+        const batch = discoveryProducts.slice(i, i + batchSize);
+        const batchResults = await Promise.all(
+          batch.map(async (symbol) => {
+            const data = await fetchCoinbasePrice(symbol);
+            return data ? { symbol, volume: data.volume_24h } : null;
+          })
+        );
+        
+        for (const result of batchResults) {
+          if (result && result.volume >= MIN_VOLUME_USD) {
+            productsWithVolume.push(result);
+          }
+        }
+      }
+      
+      // Sort by volume and take top N
+      productsWithVolume.sort((a, b) => b.volume - a.volume);
+      const discoverySymbols = productsWithVolume.slice(0, remainingSlots).map(p => p.symbol);
+      
+      console.log(`[market-poll] Discovery pass: polling ${discoverySymbols.length} additional symbols`);
+      
+      // Poll discovery symbols
+      for (let i = 0; i < discoverySymbols.length; i += batchSize) {
+        const batch = discoverySymbols.slice(i, i + batchSize);
+        
+        const batchResults = await Promise.all(
+          batch.map(async (symbol) => {
+            const priceData = await fetchCoinbasePrice(symbol);
+            if (!priceData) return null;
+            
+            const change_24h = await fetch24hChange(symbol, priceData.price);
+            
+            const { error } = await supabase
+              .from('market_data')
+              .upsert({
+                symbol,
+                price: priceData.price,
+                volume_24h: priceData.volume_24h,
+                change_24h: change_24h,
+                updated_at: new Date().toISOString(),
+              }, {
+                onConflict: 'symbol',
+              });
+
+            if (error) {
+              console.error(`[market-poll] DB upsert error for ${symbol}:`, error);
+              return null;
+            }
+            
+            return {
+              symbol,
+              price: priceData.price,
+              change_24h,
+              volume_24h: priceData.volume_24h,
+            };
+          })
+        );
+        
+        for (const r of batchResults) {
+          if (r) results.push(r);
+        }
+      }
+    }
 
     const duration = Date.now() - startTime;
     await logPollRun(supabase, 'success', results.length, duration);
     
-    console.log(`[market-poll] Updated ${results.length} symbols in ${duration}ms`);
+    console.log(`[market-poll] Total: updated ${results.length} symbols in ${duration}ms`);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
         skipped: false,
         updated: results.length,
+        priority_count: validPrioritySymbols.length,
+        missing_symbols: missingPriority,
         data: results,
         duration_ms: duration,
         timestamp: new Date().toISOString()

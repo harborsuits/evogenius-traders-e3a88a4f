@@ -22,6 +22,7 @@ export type Database = {
           genes: Json
           id: string
           is_elite: boolean
+          preferred_regime: string | null
           role: Database["public"]["Enums"]["agent_role"]
           status: Database["public"]["Enums"]["agent_status"]
           strategy_template: Database["public"]["Enums"]["strategy_template"]
@@ -33,6 +34,7 @@ export type Database = {
           genes: Json
           id?: string
           is_elite?: boolean
+          preferred_regime?: string | null
           role?: Database["public"]["Enums"]["agent_role"]
           status?: Database["public"]["Enums"]["agent_status"]
           strategy_template: Database["public"]["Enums"]["strategy_template"]
@@ -44,6 +46,7 @@ export type Database = {
           genes?: Json
           id?: string
           is_elite?: boolean
+          preferred_regime?: string | null
           role?: Database["public"]["Enums"]["agent_role"]
           status?: Database["public"]["Enums"]["agent_status"]
           strategy_template?: Database["public"]["Enums"]["strategy_template"]

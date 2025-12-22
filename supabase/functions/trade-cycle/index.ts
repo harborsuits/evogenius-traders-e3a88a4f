@@ -22,6 +22,9 @@ interface MarketData {
 
 type AgentRole = 'core' | 'explorer';
 
+// Preferred regime for regime gating
+type PreferredRegime = 'trend' | 'range' | 'dead' | 'any';
+
 interface Agent {
   id: string;
   generation_id: string;
@@ -30,6 +33,7 @@ interface Agent {
   capital_allocation: number;
   status: string;
   role: AgentRole;
+  preferred_regime?: PreferredRegime;
 }
 
 interface TradeTags {
@@ -71,12 +75,16 @@ interface GateFailure {
 }
 
 // ===========================================================================
-// PHASE 5: MARKET REGIME CLASSIFIER (READ-ONLY, NO BEHAVIOR CHANGE)
+// PHASE 5: MARKET REGIME CLASSIFIER (NOW WITH GATING)
 // ===========================================================================
 type MarketRegimeLabel = 'trend' | 'chop' | 'volatile' | 'dead';
 
+// Map regime labels to preferred_regime values for gating
+type GatingRegime = 'trend' | 'range' | 'dead';
+
 interface MarketRegimeContext {
   regime: MarketRegimeLabel;
+  gating_regime: GatingRegime;  // Simplified regime for agent gating
   trend_strength: number;      // -1 to 1 (direction + magnitude)
   volatility_level: number;    // 0 to 2+ (relative to baseline)
   htf_trend_bias: 'bullish' | 'bearish' | 'neutral';
@@ -95,7 +103,7 @@ function classifyMarketRegime(market: MarketData): MarketRegimeContext {
   // Volatility level: ATR ratio (baseline = 1.0)
   const volatilityLevel = atr;
   
-  // Classify regime
+  // Classify detailed regime
   let regime: MarketRegimeLabel;
   if (atr > 1.5 || change > 8) {
     regime = 'volatile';
@@ -107,7 +115,20 @@ function classifyMarketRegime(market: MarketData): MarketRegimeContext {
     regime = 'chop';
   }
   
-  // HTF context flags (simple heuristics for now - no gating logic)
+  // Map to gating regime (simpler: trend, range, dead)
+  // - trend/volatile -> trend (momentum strategies)
+  // - chop -> range (mean reversion strategies)
+  // - dead -> dead (capital protection)
+  let gatingRegime: GatingRegime;
+  if (regime === 'trend' || regime === 'volatile') {
+    gatingRegime = 'trend';
+  } else if (regime === 'dead') {
+    gatingRegime = 'dead';
+  } else {
+    gatingRegime = 'range';
+  }
+  
+  // HTF context flags (simple heuristics for now)
   const htfTrendBias: 'bullish' | 'bearish' | 'neutral' = 
     slope > 0.01 ? 'bullish' : slope < -0.01 ? 'bearish' : 'neutral';
   
@@ -116,11 +137,21 @@ function classifyMarketRegime(market: MarketData): MarketRegimeContext {
   
   return {
     regime,
+    gating_regime: gatingRegime,
     trend_strength: trendStrength,
     volatility_level: volatilityLevel,
     htf_trend_bias: htfTrendBias,
     htf_volatility_state: htfVolatilityState,
   };
+}
+
+// Check if agent's preferred regime matches the current market regime
+function isRegimeMatch(agentPreference: PreferredRegime | undefined, marketRegime: GatingRegime): boolean {
+  // 'any' matches all regimes
+  if (!agentPreference || agentPreference === 'any') return true;
+  
+  // Direct match
+  return agentPreference === marketRegime;
 }
 
 // Legacy regime function (for backward compat)
@@ -1659,9 +1690,15 @@ Deno.serve(async (req) => {
       positionQty: number;
       gateFailures: GateFailure[];
       nearestPass?: GateFailure;
+      regimeContext: MarketRegimeContext;  // Added for regime gating
+      regimeBlocked: boolean;              // True if agent blocked by regime mismatch
     }
     
     const candidates: DecisionCandidate[] = [];
+    
+    // Track regime stats for logging
+    let regimeBlockedCount = 0;
+    const regimeStats: Record<string, number> = {};
     
     // Evaluate each symbol
     for (const sym of symbolsToEvaluate) {
@@ -1676,8 +1713,40 @@ Deno.serve(async (req) => {
       }
       
       const regime = getRegime(mkt);
+      const regimeContext = classifyMarketRegime(mkt);
       const posQty = positionBySymbol.get(sym) ?? 0;
       const hasPos = posQty > 0;
+      
+      // Track regime distribution
+      regimeStats[regimeContext.gating_regime] = (regimeStats[regimeContext.gating_regime] ?? 0) + 1;
+      
+      // *** REGIME GATE: Check if agent's preferred regime matches market ***
+      const agentPreferredRegime = (agent as Agent).preferred_regime as PreferredRegime | undefined;
+      const regimeMatches = isRegimeMatch(agentPreferredRegime, regimeContext.gating_regime);
+      
+      // If regime doesn't match and agent has a preference, mark as blocked
+      // Exception: always allow sell decisions (to exit positions)
+      const regimeBlocked = !regimeMatches && !hasPos;
+      
+      if (regimeBlocked) {
+        regimeBlockedCount++;
+        console.log(`[trade-cycle] ${sym}: REGIME BLOCKED (agent=${agentPreferredRegime}, market=${regimeContext.gating_regime})`);
+        
+        // Still add as candidate for telemetry, but with forced hold
+        candidates.push({
+          symbol: sym,
+          market: mkt,
+          decision: 'hold',
+          reasons: [`wrong_regime:${regimeContext.gating_regime}`],
+          confidence: 0,
+          confidence_components: { signal_confidence: 0, maturity_multiplier: 1, final_confidence: 0 },
+          positionQty: posQty,
+          gateFailures: [],
+          regimeContext,
+          regimeBlocked: true,
+        });
+        continue;
+      }
       
       const result = makeDecision(agent, mkt, hasPos, posQty, testMode, droughtModeActive, agentTradeCount);
       
@@ -1692,9 +1761,11 @@ Deno.serve(async (req) => {
         positionQty: posQty,
         gateFailures: result.gateFailures,
         nearestPass: result.nearestPass,
+        regimeContext,
+        regimeBlocked: false,
       });
       
-      console.log(`[trade-cycle] ${sym}: ${result.decision} (signal=${result.confidence_components.signal_confidence.toFixed(2)}, maturity=${result.confidence_components.maturity_multiplier.toFixed(2)}, final=${result.confidence.toFixed(2)}, reasons=${result.reasons.join(',')})`);
+      console.log(`[trade-cycle] ${sym}: ${result.decision} (signal=${result.confidence_components.signal_confidence.toFixed(2)}, maturity=${result.confidence_components.maturity_multiplier.toFixed(2)}, final=${result.confidence.toFixed(2)}, regime=${regimeContext.gating_regime}, reasons=${result.reasons.join(',')})`);
     }
     
     // Pick best actionable candidate
@@ -1723,7 +1794,7 @@ Deno.serve(async (req) => {
     
     // If no actionable candidates, log HOLD with telemetry
     if (!bestCandidate) {
-      console.log(`[trade-cycle] All ${symbolsToEvaluate.length} symbols HOLD`);
+      console.log(`[trade-cycle] All ${symbolsToEvaluate.length} symbols HOLD (regime_blocked=${regimeBlockedCount})`);
       
       const holdReasons: Record<string, number> = {};
       for (const c of candidates) {
@@ -1742,7 +1813,6 @@ Deno.serve(async (req) => {
         .sort((a, b) => b.confidence - a.confidence)
         .slice(0, 5)
         .map(c => {
-          const regimeCtx = classifyMarketRegime(c.market);
           // Use null for split fields if components not available (avoids misleading values)
           const hasComponents = c.confidence_components?.signal_confidence !== undefined;
           return {
@@ -1754,6 +1824,7 @@ Deno.serve(async (req) => {
             signal_confidence: hasComponents ? c.confidence_components.signal_confidence : null,
             maturity_multiplier: hasComponents ? c.confidence_components.maturity_multiplier : null,
             gate_failures: c.gateFailures,
+            regime_blocked: c.regimeBlocked,
             market: {
               price: c.market.price,
               change_24h: c.market.change_24h,
@@ -1762,7 +1833,7 @@ Deno.serve(async (req) => {
               regime: getRegime(c.market),
             },
             // Phase 5: Regime context for each candidate
-            regime_context: regimeCtx,
+            regime_context: c.regimeContext,
             // Phase 5b: Transaction cost context (estimates with model labels)
             cost_context: {
               estimated_fee_rate: 0.006,  // 0.6% as fraction (0.006 = 0.6%)
@@ -1774,29 +1845,49 @@ Deno.serve(async (req) => {
           };
         });
       
-      // Compute consistent reason string from hold reasons
-      const primaryHoldReason = topHoldReasons.length > 0 
-        ? topHoldReasons[0].split(':')[0] 
-        : 'no_evaluations';
-      const holdReason = evaluations.length === 0 
-        ? 'hold:no_evaluations' 
-        : `hold:${primaryHoldReason}`;
+      // Compute consistent reason string from hold reasons - prioritize regime blocks
+      let holdReason: string;
+      if (evaluations.length === 0) {
+        holdReason = 'hold:no_evaluations';
+      } else if (regimeBlockedCount === candidates.length && regimeBlockedCount > 0) {
+        // All candidates blocked by regime
+        const dominantRegime = Object.entries(regimeStats).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'unknown';
+        holdReason = `hold:wrong_regime:${dominantRegime}`;
+      } else if (regimeBlockedCount > 0) {
+        // Some candidates blocked by regime, others by signal
+        const primaryHoldReason = topHoldReasons.length > 0 ? topHoldReasons[0].split(':')[0] : 'no_signal';
+        holdReason = `hold:${primaryHoldReason}`;
+      } else {
+        const primaryHoldReason = topHoldReasons.length > 0 ? topHoldReasons[0].split(':')[0] : 'no_signal';
+        holdReason = `hold:${primaryHoldReason}`;
+      }
+      
+      // Get dominant market regime for display
+      const dominantMarketRegime = Object.entries(regimeStats).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'unknown';
       
       await supabase.from('control_events').insert({
         action: 'trade_decision',
         metadata: {
           cycle_id: cycleId,
           agent_id: agent.id,
+          agent_preferred_regime: (agent as Agent).preferred_regime ?? 'any',
           generation_id: systemState.current_generation_id,
           strategy_template: agent.strategy_template,
           symbols_evaluated: symbolsToEvaluate.length,
           decision: 'hold',
-          reason: holdReason,  // CONSISTENT REASON FIELD
+          reason: holdReason,  // CONSISTENT REASON FIELD - always non-empty
           reasons: topHoldReasons,  // Array for detail
           all_hold: true,
           top_hold_reasons: topHoldReasons,
           mode: 'paper',
           thresholds_used: thresholdsUsed,
+          // Regime gating info
+          regime_gating: {
+            dominant_market_regime: dominantMarketRegime,
+            agent_preferred_regime: (agent as Agent).preferred_regime ?? 'any',
+            regime_blocked_count: regimeBlockedCount,
+            regime_stats: regimeStats,
+          },
           // Evaluations array with confidence split (same schema as buy/sell)
           evaluations,
           drought_state: {

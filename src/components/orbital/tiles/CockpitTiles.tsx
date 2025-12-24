@@ -13,6 +13,7 @@ import { PassingTradesFeed } from '@/components/dashboard/PassingTradesFeed';
 import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
 import { usePaperAccount, usePaperPositions, usePaperRealtimeSubscriptions } from '@/hooks/usePaperTrading';
 import { useDroughtState } from '@/hooks/useDroughtState';
+import { useShadowTradingStats } from '@/hooks/useShadowTradingStats';
 import { SystemStatus } from '@/types/evotrader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { MetricCard } from '@/components/dashboard/MetricCard';
@@ -46,7 +47,8 @@ import {
   CheckCircle,
   XCircle,
   HelpCircle,
-  Droplets
+  Droplets,
+  Ghost
 } from 'lucide-react';
 import { useGenOrdersCount, useCohortCount } from '@/hooks/useGenOrders';
 import { useQuery } from '@tanstack/react-query';
@@ -1789,3 +1791,114 @@ export { SystemVitals as SystemVitalsTile } from '@/components/dashboard/SystemV
 
 // Regime History Tile - 24h regime distribution and blocked rate
 export { RegimeHistoryCard as RegimeHistoryTile } from '@/components/dashboard/RegimeHistoryCard';
+
+// Shadow Trading Tile - Shows shadow trade learning statistics
+export function ShadowTradingTile({ compact }: { compact?: boolean }) {
+  const { data: stats, isLoading } = useShadowTradingStats();
+  
+  if (isLoading || !stats) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
+          <Ghost className="h-4 w-4 text-primary" />
+          Shadow Learning
+          <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LOADING</Badge>
+        </div>
+        <div className="animate-pulse space-y-2">
+          <div className="h-8 bg-muted/30 rounded" />
+          <div className="h-8 bg-muted/30 rounded" />
+        </div>
+      </div>
+    );
+  }
+  
+  const lastRunAge = stats.lastCalcRun
+    ? formatDistanceToNow(new Date(stats.lastCalcRun.timestamp), { addSuffix: true })
+    : 'never';
+  
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
+        <Ghost className="h-4 w-4 text-primary" />
+        Shadow Learning
+        <Badge variant="glow" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
+      </div>
+      
+      {/* Main metrics grid */}
+      <div className={compact ? 'grid grid-cols-3 gap-2' : 'grid grid-cols-2 gap-3'}>
+        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <Activity className="h-3 w-3" />
+            Today
+          </div>
+          <div className="font-mono text-sm font-bold">{stats.todayCount}</div>
+        </div>
+        
+        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <HelpCircle className="h-3 w-3" />
+            Pending
+          </div>
+          <div className="font-mono text-sm">
+            {stats.pendingCount}
+            {stats.oldestPendingAge !== null && (
+              <span className="text-[10px] text-muted-foreground ml-1">
+                ({stats.oldestPendingAge}m old)
+              </span>
+            )}
+          </div>
+        </div>
+        
+        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <CheckCircle className="h-3 w-3" />
+            Calc 24h
+          </div>
+          <div className="font-mono text-sm">{stats.calculatedLast24h}</div>
+        </div>
+        
+        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            {(stats.avgPnlPctLast24h ?? 0) >= 0 
+              ? <TrendingUp className="h-3 w-3" /> 
+              : <TrendingDown className="h-3 w-3" />}
+            Avg PnL
+          </div>
+          <div className={cn(
+            "font-mono text-sm font-bold",
+            (stats.avgPnlPctLast24h ?? 0) >= 0 ? 'text-success' : 'text-destructive'
+          )}>
+            {stats.avgPnlPctLast24h !== null 
+              ? `${stats.avgPnlPctLast24h >= 0 ? '+' : ''}${stats.avgPnlPctLast24h.toFixed(2)}%`
+              : '—'}
+          </div>
+        </div>
+      </div>
+      
+      {/* Last calc run info */}
+      {stats.lastCalcRun && (
+        <div className="text-[10px] font-mono text-muted-foreground space-y-1 border-t border-border/30 pt-2">
+          <div className="flex justify-between">
+            <span>Last calc run:</span>
+            <span>{lastRunAge}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Processed:</span>
+            <span>
+              {stats.lastCalcRun.calculated} calc / {stats.lastCalcRun.skipped} skip / {stats.lastCalcRun.errors} err
+            </span>
+          </div>
+          {Object.keys(stats.lastCalcRun.byReason).length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {Object.entries(stats.lastCalcRun.byReason).map(([reason, count]) => (
+                <Badge key={reason} variant="secondary" className="text-[8px] px-1 py-0">
+                  {reason}: {count}
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

@@ -31,6 +31,7 @@ import {
   SystemVitalsTile,
   EliteRotationTile,
   RegimeHistoryTile,
+  ShadowTradingTile,
 } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PositionsCardContent, ActivityCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
@@ -52,6 +53,7 @@ const staticCards: CommandCard[] = [
   { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
   { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
   { id: 'vitals', title: 'System Vitals', type: 'cockpit', component: SystemVitalsTile },
+  { id: 'shadow-trading', title: 'Shadow Trading', type: 'cockpit', component: ShadowTradingTile },
   { id: 'catalyst-watch', title: 'Catalyst Watch', type: 'cockpit', component: CatalystWatchTile },
   { id: 'autopsy', title: 'Performance Autopsy', type: 'cockpit', component: AutopsyTile },
   { id: 'regime-history', title: 'Regime History (24h)', type: 'cockpit', component: RegimeHistoryTile },

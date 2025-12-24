@@ -2369,6 +2369,22 @@ Deno.serve(async (req) => {
     // Run adaptive tuning check at end of cycle
     await maybeTuneThresholds(supabase, droughtResolved);
 
+    // Process pending shadow trades (piggyback on trade-cycle execution)
+    try {
+      const shadowCalcResponse = await fetch(`${supabaseUrl}/functions/v1/shadow-outcome-calc`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({}),
+      });
+      const shadowCalcResult = await shadowCalcResponse.json();
+      console.log(`[trade-cycle] Shadow outcome calc:`, shadowCalcResult);
+    } catch (shadowErr) {
+      console.error('[trade-cycle] Shadow outcome calc failed:', shadowErr);
+    }
+
     return new Response(
       JSON.stringify({
         ok: true,

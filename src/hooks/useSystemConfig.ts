@@ -2,6 +2,17 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
+export interface ShadowTradingConfig {
+  enabled?: boolean;
+  shadow_threshold?: number;
+  max_per_cycle?: number;
+  default_stop_pct?: number;
+  default_target_pct?: number;
+  default_trailing_pct?: number;
+  max_hold_hours?: number;
+  min_hold_minutes?: number;
+}
+
 export interface AdaptiveTuningConfig {
   enabled?: boolean;
   mode?: 'drought_only' | 'always';
@@ -58,6 +69,7 @@ export interface SystemConfig {
   drought_override?: 'auto' | 'force_off' | 'force_on';
   drought_cooldown_until?: string;
   adaptive_tuning?: AdaptiveTuningConfig;
+  shadow_trading?: ShadowTradingConfig;
 }
 
 export function useSystemConfig() {

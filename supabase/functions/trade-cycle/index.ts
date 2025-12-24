@@ -215,16 +215,26 @@ const EXPLORER_CONSTRAINTS = {
   min_confidence: 0.55,        // Higher quality floor
 };
 
-// SHADOW TRADING CONFIGURATION (counterfactual learning without risk)
-const SHADOW_TRADING = {
+// SHADOW TRADING CONFIGURATION (defaults - overridden by system_config.shadow_trading)
+const SHADOW_TRADING_DEFAULTS = {
   enabled: true,
-  min_confidence: 0.45,        // Lower threshold than live to capture learning signals
-  max_per_cycle: 3,            // Max shadow trades to log per cycle
+  shadow_threshold: 0.45,        // Lower threshold than live to capture learning signals
+  max_per_cycle: 3,              // Max shadow trades to log per cycle
   // Estimated targets/stops for outcome tracking
-  default_target_pct: 2.0,     // 2% take profit
-  default_stop_pct: 1.5,       // 1.5% stop loss
-  default_trailing_pct: 1.0,   // 1% trailing stop
+  default_target_pct: 2.0,       // 2% take profit
+  default_stop_pct: 1.5,         // 1.5% stop loss
+  default_trailing_pct: 1.0,     // 1% trailing stop
 };
+
+// Runtime shadow trading config (populated from system_config)
+interface ShadowTradingConfig {
+  enabled: boolean;
+  shadow_threshold: number;
+  max_per_cycle: number;
+  default_target_pct: number;
+  default_stop_pct: number;
+  default_trailing_pct: number;
+}
 
 // TEST MODE THRESHOLDS - VERY loose for pipeline validation only
 // These must be MORE permissive than baseline to force trades
@@ -1727,6 +1737,17 @@ Deno.serve(async (req) => {
     const tuning = systemConfig.adaptive_tuning as AdaptiveTuningConfig | undefined;
     const offsets = tuning?.offsets ?? {};
     
+    // Load shadow trading config (with defaults)
+    const shadowConfig = systemConfig.shadow_trading as Partial<ShadowTradingConfig> | undefined;
+    const SHADOW_TRADING: ShadowTradingConfig = {
+      enabled: shadowConfig?.enabled ?? SHADOW_TRADING_DEFAULTS.enabled,
+      shadow_threshold: shadowConfig?.shadow_threshold ?? SHADOW_TRADING_DEFAULTS.shadow_threshold,
+      max_per_cycle: shadowConfig?.max_per_cycle ?? SHADOW_TRADING_DEFAULTS.max_per_cycle,
+      default_target_pct: shadowConfig?.default_target_pct ?? SHADOW_TRADING_DEFAULTS.default_target_pct,
+      default_stop_pct: shadowConfig?.default_stop_pct ?? SHADOW_TRADING_DEFAULTS.default_stop_pct,
+      default_trailing_pct: shadowConfig?.default_trailing_pct ?? SHADOW_TRADING_DEFAULTS.default_trailing_pct,
+    };
+    
     // Calculate effective thresholds with adaptive tuning
     const baselineThresholds = testMode ? TEST_MODE_THRESHOLDS : (droughtModeActive ? DROUGHT_THRESHOLDS : BASELINE_THRESHOLDS);
     const effectiveThresholds = tuning?.enabled ? applyAdaptiveOffsets(baselineThresholds, offsets) : baselineThresholds;
@@ -1877,7 +1898,7 @@ Deno.serve(async (req) => {
         
         // Check confidence threshold (use signal confidence, not calibrated)
         const signalConf = c.confidence_components?.signal_confidence ?? c.confidence;
-        if (signalConf < SHADOW_TRADING.min_confidence) continue;
+        if (signalConf < SHADOW_TRADING.shadow_threshold) continue;
         
         // Determine intended side based on strategy and market conditions
         // For HOLD decisions, infer what the trade WOULD have been

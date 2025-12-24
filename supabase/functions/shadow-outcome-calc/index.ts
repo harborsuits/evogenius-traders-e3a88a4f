@@ -7,6 +7,7 @@ const corsHeaders = {
 
 // Shadow trade outcome calculation
 // Runs periodically to calculate simulated PnL for pending shadow trades
+// NOTE: Uses mark-to-market only (no path-aware stop/target detection without candle data)
 
 interface ShadowTrade {
   id: string;
@@ -31,28 +32,39 @@ interface MarketData {
   updated_at: string;
 }
 
-// Configuration
-const CONFIG = {
-  // Time limits for outcome calculation
+interface ShadowTradingConfig {
+  enabled?: boolean;
+  shadow_threshold?: number;
+  max_per_cycle?: number;
+  default_stop_pct?: number;
+  default_target_pct?: number;
+  default_trailing_pct?: number;
+  max_hold_hours?: number;
+  min_hold_minutes?: number;
+}
+
+// Default configuration (overridden by system_config)
+const CONFIG_DEFAULTS = {
   min_hold_minutes: 30,        // Minimum time before calculating outcome
   max_hold_hours: 24,          // Maximum time to track (expire if no exit signal)
-  
-  // Batch processing
   batch_size: 50,              // Process up to 50 shadow trades per run
 };
 
-// Calculate shadow trade outcome based on current price vs entry/stop/target
+// Calculate shadow trade outcome using mark-to-market
+// IMPORTANT: This is NOT path-aware - we cannot detect if stop/target was hit earlier
+// Outcomes are labeled honestly as 'expired_mtm' (mark-to-market at expiry)
 function calculateOutcome(
   trade: ShadowTrade,
   currentPrice: number,
-  elapsedMinutes: number
+  elapsedMinutes: number,
+  maxHoldHours: number
 ): {
   shouldClose: boolean;
   exitPrice: number;
   pnl: number;
   pnlPct: number;
-  hitStop: boolean;
-  hitTarget: boolean;
+  hitStop: boolean;      // Note: only approximate (current price, not path)
+  hitTarget: boolean;    // Note: only approximate (current price, not path)
   reason: string;
 } {
   const entryPrice = trade.entry_price;
@@ -67,68 +79,34 @@ function calculateOutcome(
     : (-priceDelta / entryPrice) * 100;
   const pnl = trade.intended_qty * (isBuy ? priceDelta : -priceDelta);
   
-  // Check stop loss
-  if (stopPrice) {
-    const stopHit = isBuy 
-      ? currentPrice <= stopPrice 
-      : currentPrice >= stopPrice;
+  // Check if max hold time expired (primary expiry trigger)
+  const maxHoldMinutes = maxHoldHours * 60;
+  if (elapsedMinutes >= maxHoldMinutes) {
+    // Determine approximate outcome based on current price vs stop/target
+    // NOTE: These are APPROXIMATE - we don't know the price path, just the final price
+    let approximateHitStop = false;
+    let approximateHitTarget = false;
     
-    if (stopHit) {
-      const stopPnl = trade.intended_qty * (isBuy 
-        ? (stopPrice - entryPrice) 
-        : (entryPrice - stopPrice));
-      const stopPnlPct = isBuy 
-        ? ((stopPrice - entryPrice) / entryPrice) * 100 
-        : ((entryPrice - stopPrice) / entryPrice) * 100;
-      
-      return {
-        shouldClose: true,
-        exitPrice: stopPrice,
-        pnl: stopPnl,
-        pnlPct: stopPnlPct,
-        hitStop: true,
-        hitTarget: false,
-        reason: 'stop_loss_hit',
-      };
+    if (stopPrice) {
+      approximateHitStop = isBuy 
+        ? currentPrice <= stopPrice 
+        : currentPrice >= stopPrice;
     }
-  }
-  
-  // Check take profit target
-  if (targetPrice) {
-    const targetHit = isBuy 
-      ? currentPrice >= targetPrice 
-      : currentPrice <= targetPrice;
     
-    if (targetHit) {
-      const targetPnl = trade.intended_qty * (isBuy 
-        ? (targetPrice - entryPrice) 
-        : (entryPrice - targetPrice));
-      const targetPnlPct = isBuy 
-        ? ((targetPrice - entryPrice) / entryPrice) * 100 
-        : ((entryPrice - targetPrice) / entryPrice) * 100;
-      
-      return {
-        shouldClose: true,
-        exitPrice: targetPrice,
-        pnl: targetPnl,
-        pnlPct: targetPnlPct,
-        hitStop: false,
-        hitTarget: true,
-        reason: 'target_hit',
-      };
+    if (targetPrice) {
+      approximateHitTarget = isBuy 
+        ? currentPrice >= targetPrice 
+        : currentPrice <= targetPrice;
     }
-  }
-  
-  // Check max hold time expiry
-  if (elapsedMinutes >= CONFIG.max_hold_hours * 60) {
+    
     return {
       shouldClose: true,
       exitPrice: currentPrice,
       pnl,
       pnlPct,
-      hitStop: false,
-      hitTarget: false,
-      reason: 'time_expired',
+      hitStop: approximateHitStop,
+      hitTarget: approximateHitTarget,
+      reason: 'expired_mtm', // Mark-to-market at expiry (honest label)
     };
   }
   
@@ -158,8 +136,24 @@ Deno.serve(async (req) => {
   console.log('[shadow-outcome-calc] Starting calculation run');
 
   try {
+    // Load config from system_config
+    const { data: configData } = await supabase
+      .from('system_config')
+      .select('config')
+      .limit(1)
+      .single();
+    
+    const systemConfig = (configData?.config ?? {}) as Record<string, unknown>;
+    const shadowConfig = systemConfig.shadow_trading as ShadowTradingConfig | undefined;
+    
+    const minHoldMinutes = shadowConfig?.min_hold_minutes ?? CONFIG_DEFAULTS.min_hold_minutes;
+    const maxHoldHours = shadowConfig?.max_hold_hours ?? CONFIG_DEFAULTS.max_hold_hours;
+    const batchSize = CONFIG_DEFAULTS.batch_size;
+    
+    console.log(`[shadow-outcome-calc] Config: min_hold=${minHoldMinutes}m, max_hold=${maxHoldHours}h`);
+    
     // 1. Get pending shadow trades that are old enough
-    const minHoldTime = new Date(Date.now() - CONFIG.min_hold_minutes * 60 * 1000).toISOString();
+    const minHoldTime = new Date(Date.now() - minHoldMinutes * 60 * 1000).toISOString();
     
     const { data: pendingTrades, error: tradesError } = await supabase
       .from('shadow_trades')
@@ -167,7 +161,7 @@ Deno.serve(async (req) => {
       .eq('outcome_status', 'pending')
       .lt('entry_time', minHoldTime)
       .order('entry_time', { ascending: true })
-      .limit(CONFIG.batch_size);
+      .limit(batchSize);
     
     if (tradesError) {
       console.error('[shadow-outcome-calc] Failed to fetch pending trades:', tradesError);
@@ -215,6 +209,7 @@ Deno.serve(async (req) => {
       expired: 0,
       skipped: 0,
       errors: 0,
+      byReason: {} as Record<string, number>,
     };
     
     for (const trade of pendingTrades as ShadowTrade[]) {
@@ -240,7 +235,7 @@ Deno.serve(async (req) => {
       const elapsedMinutes = elapsedMs / 60000;
       
       // Calculate outcome
-      const outcome = calculateOutcome(trade, market.price, elapsedMinutes);
+      const outcome = calculateOutcome(trade, market.price, elapsedMinutes, maxHoldHours);
       
       // Update if should close
       if (outcome.shouldClose) {
@@ -264,11 +259,8 @@ Deno.serve(async (req) => {
         } else {
           console.log(`[shadow-outcome-calc] ${trade.symbol} ${trade.side}: ${outcome.reason} | PnL: ${outcome.pnlPct.toFixed(2)}%`);
           
-          if (outcome.reason === 'time_expired') {
-            results.expired++;
-          } else {
-            results.calculated++;
-          }
+          results.calculated++;
+          results.byReason[outcome.reason] = (results.byReason[outcome.reason] ?? 0) + 1;
         }
       }
     }
@@ -279,14 +271,18 @@ Deno.serve(async (req) => {
       metadata: {
         processed: pendingTrades.length,
         calculated: results.calculated,
-        expired: results.expired,
         skipped: results.skipped,
         errors: results.errors,
+        by_reason: results.byReason,
+        config: {
+          min_hold_minutes: minHoldMinutes,
+          max_hold_hours: maxHoldHours,
+        },
         duration_ms: Date.now() - startTime,
       },
     });
     
-    console.log(`[shadow-outcome-calc] Complete: calculated=${results.calculated}, expired=${results.expired}, skipped=${results.skipped}, errors=${results.errors}`);
+    console.log(`[shadow-outcome-calc] Complete: calculated=${results.calculated}, skipped=${results.skipped}, errors=${results.errors}, reasons=${JSON.stringify(results.byReason)}`);
     
     return new Response(
       JSON.stringify({

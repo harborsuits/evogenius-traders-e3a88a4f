@@ -54,3 +54,6 @@ verify_jwt = false
 
 [functions.missed-moves]
 verify_jwt = false
+
+[functions.shadow-outcome-calc]
+verify_jwt = false

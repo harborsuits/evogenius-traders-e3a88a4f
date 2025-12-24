@@ -257,6 +257,150 @@ function calculateRealizedPnL(
   };
 }
 
+// ===========================================================================
+// SHADOW TRADE PERFORMANCE CALCULATION
+// ===========================================================================
+// Calculate performance from shadow (counterfactual) trades for learning
+// Used when real trades are sparse but shadow signals are available
+// ===========================================================================
+interface ShadowTradeRecord {
+  id: string;
+  agent_id: string;
+  symbol: string;
+  side: string;
+  confidence: number;
+  simulated_pnl: number | null;
+  simulated_pnl_pct: number | null;
+  hit_stop: boolean;
+  hit_target: boolean;
+  outcome_status: string;
+  regime: string;
+  regime_match: boolean;
+}
+
+interface ShadowPerformance {
+  shadow_trades: number;
+  calculated_trades: number;
+  avg_pnl_pct: number;
+  hit_target_rate: number;
+  hit_stop_rate: number;
+  avg_confidence: number;
+  regime_match_rate: number;
+  shadow_fitness_score: number;
+}
+
+function calculateShadowPerformance(trades: ShadowTradeRecord[]): ShadowPerformance {
+  if (trades.length === 0) {
+    return {
+      shadow_trades: 0,
+      calculated_trades: 0,
+      avg_pnl_pct: 0,
+      hit_target_rate: 0,
+      hit_stop_rate: 0,
+      avg_confidence: 0,
+      regime_match_rate: 0,
+      shadow_fitness_score: 0,
+    };
+  }
+
+  const calculatedTrades = trades.filter(t => t.outcome_status === 'calculated');
+  const totalCalculated = calculatedTrades.length;
+  
+  if (totalCalculated === 0) {
+    return {
+      shadow_trades: trades.length,
+      calculated_trades: 0,
+      avg_pnl_pct: 0,
+      hit_target_rate: 0,
+      hit_stop_rate: 0,
+      avg_confidence: trades.reduce((s, t) => s + t.confidence, 0) / trades.length,
+      regime_match_rate: trades.filter(t => t.regime_match).length / trades.length,
+      shadow_fitness_score: 0,
+    };
+  }
+
+  const avgPnlPct = calculatedTrades.reduce((s, t) => s + (t.simulated_pnl_pct ?? 0), 0) / totalCalculated;
+  const hitTargetRate = calculatedTrades.filter(t => t.hit_target).length / totalCalculated;
+  const hitStopRate = calculatedTrades.filter(t => t.hit_stop).length / totalCalculated;
+  const avgConfidence = trades.reduce((s, t) => s + t.confidence, 0) / trades.length;
+  const regimeMatchRate = trades.filter(t => t.regime_match).length / trades.length;
+
+  // Shadow fitness formula:
+  // - Normalize avgPnlPct using tanh (similar to real PnL normalization)
+  // - Weight hit_target_rate positively, hit_stop_rate negatively
+  // - Consider confidence quality and regime matching
+  const normalizedPnl = Math.tanh(avgPnlPct / 2); // /2 since shadow uses % not $
+  const outcomeScore = (hitTargetRate * 0.6) - (hitStopRate * 0.4);
+  const qualityScore = avgConfidence * regimeMatchRate;
+  
+  // Shadow fitness = blend of normalized PnL, outcome quality, and signal quality
+  const shadowFitnessScore = 
+    (normalizedPnl * 0.4) +     // 40% from PnL direction
+    (outcomeScore * 0.35) +     // 35% from win/loss rate
+    (qualityScore * 0.25);      // 25% from signal quality
+
+  return {
+    shadow_trades: trades.length,
+    calculated_trades: totalCalculated,
+    avg_pnl_pct: avgPnlPct,
+    hit_target_rate: hitTargetRate,
+    hit_stop_rate: hitStopRate,
+    avg_confidence: avgConfidence,
+    regime_match_rate: regimeMatchRate,
+    shadow_fitness_score: shadowFitnessScore,
+  };
+}
+
+// Blend real and shadow fitness scores
+// When real trades are sparse, shadow trades provide more signal
+function blendFitnessScores(
+  realFitness: number,
+  realTrades: number,
+  shadowFitness: number,
+  shadowTrades: number
+): { blended_score: number; real_weight: number; shadow_weight: number; blend_reason: string } {
+  const MIN_REAL_TRADES = 10;  // Need 10+ real trades for full weight
+  const MIN_SHADOW_TRADES = 5; // Need 5+ shadow trades to contribute
+  
+  // If no shadow trades, use real only
+  if (shadowTrades < MIN_SHADOW_TRADES) {
+    return {
+      blended_score: realFitness,
+      real_weight: 1.0,
+      shadow_weight: 0.0,
+      blend_reason: 'insufficient_shadow',
+    };
+  }
+  
+  // If no real trades, use shadow only (but cap confidence)
+  if (realTrades === 0) {
+    return {
+      blended_score: shadowFitness * 0.8, // 20% penalty for shadow-only
+      real_weight: 0.0,
+      shadow_weight: 0.8,
+      blend_reason: 'shadow_only',
+    };
+  }
+  
+  // Blend based on trade counts
+  // More real trades = more weight on real performance
+  const realMaturity = Math.min(1, realTrades / MIN_REAL_TRADES);
+  
+  // Target blend: 30% real, 70% shadow when real trades are sparse
+  // As real trades increase, shift to 70% real, 30% shadow
+  const realWeight = 0.3 + (realMaturity * 0.4); // 0.3 -> 0.7
+  const shadowWeight = 1 - realWeight;           // 0.7 -> 0.3
+  
+  const blendedScore = (realFitness * realWeight) + (shadowFitness * shadowWeight);
+  
+  return {
+    blended_score: blendedScore,
+    real_weight: realWeight,
+    shadow_weight: shadowWeight,
+    blend_reason: realTrades >= MIN_REAL_TRADES ? 'mature_blend' : 'early_blend',
+  };
+}
+
 // Main fitness calculation for an agent
 function calculateFitness(trades: TradeRecord[], startingCapital: number): FitnessComponents {
   // Filter to learnable trades only

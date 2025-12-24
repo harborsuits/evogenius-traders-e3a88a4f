@@ -2370,7 +2370,38 @@ Deno.serve(async (req) => {
     await maybeTuneThresholds(supabase, droughtResolved);
 
     // Process pending shadow trades (piggyback on trade-cycle execution)
+    const piggybackStart = Date.now();
+    let piggybackResult: { ok: boolean; processed?: number; calculated?: number; skipped?: number; errors?: number; error_message?: string } = { ok: false };
+    
     try {
+      // Get pending shadow trade stats for logging
+      const { count: pendingCount } = await supabase
+        .from('shadow_trades')
+        .select('*', { count: 'exact', head: true })
+        .eq('outcome_status', 'pending');
+      
+      const { data: oldestPending } = await supabase
+        .from('shadow_trades')
+        .select('entry_time')
+        .eq('outcome_status', 'pending')
+        .order('entry_time', { ascending: true })
+        .limit(1)
+        .single();
+      
+      // Log piggyback start
+      await supabase.from('control_events').insert({
+        action: 'shadow_piggyback_start',
+        metadata: {
+          generation_id: agent.generation_id,
+          agent_id: agent.id,
+          pending_shadow_count: pendingCount ?? 0,
+          oldest_pending_entry_time: oldestPending?.entry_time ?? null,
+          trigger: 'trade_cycle_end',
+        },
+      });
+      
+      console.log(`[trade-cycle] Shadow piggyback start: ${pendingCount ?? 0} pending`);
+      
       const shadowCalcResponse = await fetch(`${supabaseUrl}/functions/v1/shadow-outcome-calc`, {
         method: 'POST',
         headers: {
@@ -2379,10 +2410,42 @@ Deno.serve(async (req) => {
         },
         body: JSON.stringify({}),
       });
-      const shadowCalcResult = await shadowCalcResponse.json();
-      console.log(`[trade-cycle] Shadow outcome calc:`, shadowCalcResult);
+      
+      const shadowCalcJson = await shadowCalcResponse.json();
+      console.log(`[trade-cycle] Shadow outcome calc result:`, shadowCalcJson);
+      
+      piggybackResult = {
+        ok: shadowCalcJson.ok ?? shadowCalcResponse.ok,
+        processed: shadowCalcJson.processed ?? 0,
+        calculated: shadowCalcJson.calculated ?? 0,
+        skipped: shadowCalcJson.skipped ?? 0,
+        errors: shadowCalcJson.errors ?? 0,
+      };
+      
     } catch (shadowErr) {
       console.error('[trade-cycle] Shadow outcome calc failed:', shadowErr);
+      piggybackResult = {
+        ok: false,
+        error_message: shadowErr instanceof Error ? shadowErr.message : 'Unknown error',
+      };
+    }
+    
+    // Log piggyback end (always, even on error)
+    try {
+      await supabase.from('control_events').insert({
+        action: 'shadow_piggyback_end',
+        metadata: {
+          ok: piggybackResult.ok,
+          processed: piggybackResult.processed ?? 0,
+          calculated: piggybackResult.calculated ?? 0,
+          skipped: piggybackResult.skipped ?? 0,
+          errors: piggybackResult.errors ?? 0,
+          error_message: piggybackResult.error_message ?? null,
+          duration_ms: Date.now() - piggybackStart,
+        },
+      });
+    } catch (logErr) {
+      console.error('[trade-cycle] Failed to log piggyback end:', logErr);
     }
 
     return new Response(

@@ -215,6 +215,17 @@ const EXPLORER_CONSTRAINTS = {
   min_confidence: 0.55,        // Higher quality floor
 };
 
+// SHADOW TRADING CONFIGURATION (counterfactual learning without risk)
+const SHADOW_TRADING = {
+  enabled: true,
+  min_confidence: 0.45,        // Lower threshold than live to capture learning signals
+  max_per_cycle: 3,            // Max shadow trades to log per cycle
+  // Estimated targets/stops for outcome tracking
+  default_target_pct: 2.0,     // 2% take profit
+  default_stop_pct: 1.5,       // 1.5% stop loss
+  default_trailing_pct: 1.0,   // 1% trailing stop
+};
+
 // TEST MODE THRESHOLDS - VERY loose for pipeline validation only
 // These must be MORE permissive than baseline to force trades
 const TEST_MODE_THRESHOLDS = {
@@ -1458,6 +1469,65 @@ function generatePatternId(
   return `${strategy}_${symbol.replace('-', '_').toLowerCase()}_${regime}_${reasonStr}`.substring(0, 50);
 }
 
+// ===========================================================================
+// SHADOW TRADING - Counterfactual learning without capital risk
+// ===========================================================================
+interface ShadowTradeCandidate {
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  entryPrice: number;
+  intendedQty: number;
+  confidence: number;
+  stopPrice: number;
+  targetPrice: number;
+  trailingStopPct: number;
+  regime: string;
+  regimeMatch: boolean;
+  decisionReason: string;
+  marketData: Record<string, unknown>;
+}
+
+// Log shadow trades for counterfactual learning
+async function logShadowTrades(
+  supabase: any,
+  agentId: string,
+  generationId: string,
+  candidates: ShadowTradeCandidate[]
+): Promise<number> {
+  if (candidates.length === 0) return 0;
+  
+  const shadowRecords = candidates.map(c => ({
+    agent_id: agentId,
+    generation_id: generationId,
+    symbol: c.symbol,
+    side: c.side,
+    entry_price: c.entryPrice,
+    intended_qty: c.intendedQty,
+    confidence: c.confidence,
+    stop_price: c.stopPrice,
+    target_price: c.targetPrice,
+    trailing_stop_pct: c.trailingStopPct,
+    regime: c.regime,
+    regime_match: c.regimeMatch,
+    decision_reason: c.decisionReason,
+    market_data: c.marketData,
+    outcome_status: 'pending',
+  }));
+  
+  const { data, error } = await supabase
+    .from('shadow_trades')
+    .insert(shadowRecords)
+    .select('id');
+  
+  if (error) {
+    console.error('[shadow-trade] Failed to log shadow trades:', error);
+    return 0;
+  }
+  
+  console.log(`[shadow-trade] Logged ${data?.length ?? 0} shadow trades for learning`);
+  return data?.length ?? 0;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -1789,6 +1859,86 @@ Deno.serve(async (req) => {
       
       if (c.nearestPass && (!nearestPassGlobal || Math.abs(c.nearestPass.margin) < Math.abs(nearestPassGlobal.margin))) {
         nearestPassGlobal = c.nearestPass;
+      }
+    }
+    
+    // ===========================================================================
+    // SHADOW TRADING: Log counterfactual trades for learning
+    // Even when we HOLD, log shadow trades for candidates with sufficient confidence
+    // This enables evolution to learn from "what would have happened" signals
+    // ===========================================================================
+    if (SHADOW_TRADING.enabled && systemState.current_generation_id) {
+      // Find candidates that meet shadow threshold but are held/blocked
+      const shadowCandidates: ShadowTradeCandidate[] = [];
+      
+      for (const c of candidates) {
+        // Skip if already actionable (will become real trade) or confidence too low
+        if (c.decision !== 'hold' && !c.regimeBlocked) continue;
+        
+        // Check confidence threshold (use signal confidence, not calibrated)
+        const signalConf = c.confidence_components?.signal_confidence ?? c.confidence;
+        if (signalConf < SHADOW_TRADING.min_confidence) continue;
+        
+        // Determine intended side based on strategy and market conditions
+        // For HOLD decisions, infer what the trade WOULD have been
+        let intendedSide: 'BUY' | 'SELL' = 'BUY';
+        if (c.reasons.some(r => r.includes('sell') || r.includes('exit') || r.includes('overbought'))) {
+          intendedSide = 'SELL';
+        }
+        
+        // Calculate stop/target based on entry price
+        const entryPrice = c.market.price;
+        const targetPct = SHADOW_TRADING.default_target_pct / 100;
+        const stopPct = SHADOW_TRADING.default_stop_pct / 100;
+        
+        const targetPrice = intendedSide === 'BUY' 
+          ? entryPrice * (1 + targetPct) 
+          : entryPrice * (1 - targetPct);
+        const stopPrice = intendedSide === 'BUY' 
+          ? entryPrice * (1 - stopPct) 
+          : entryPrice * (1 + stopPct);
+        
+        // Estimate qty (same logic as real trades but for shadow)
+        const baseQty = c.symbol === 'BTC-USD' ? 0.0001 : 0.001;
+        const intendedQty = baseQty * 0.5; // Shadow trades use 50% size for learning
+        
+        shadowCandidates.push({
+          symbol: c.symbol,
+          side: intendedSide,
+          entryPrice,
+          intendedQty,
+          confidence: signalConf,
+          stopPrice,
+          targetPrice,
+          trailingStopPct: SHADOW_TRADING.default_trailing_pct,
+          regime: c.regimeContext.gating_regime,
+          regimeMatch: !c.regimeBlocked,
+          decisionReason: c.regimeBlocked 
+            ? `regime_blocked:${c.regimeContext.gating_regime}` 
+            : c.reasons.join(','),
+          marketData: {
+            price: c.market.price,
+            change_24h: c.market.change_24h,
+            ema_50_slope: c.market.ema_50_slope,
+            atr_ratio: c.market.atr_ratio,
+            regime: getRegime(c.market),
+          },
+        });
+      }
+      
+      // Log shadow trades (capped per cycle)
+      const shadowToLog = shadowCandidates
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, SHADOW_TRADING.max_per_cycle);
+      
+      if (shadowToLog.length > 0) {
+        const shadowCount = await logShadowTrades(
+          supabase, 
+          agent.id, 
+          systemState.current_generation_id, 
+          shadowToLog
+        );
+        console.log(`[trade-cycle] Shadow trades logged: ${shadowCount} (candidates: ${shadowCandidates.length})`);
       }
     }
     

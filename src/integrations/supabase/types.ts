@@ -638,6 +638,105 @@ export type Database = {
         }
         Relationships: []
       }
+      shadow_trades: {
+        Row: {
+          agent_id: string
+          confidence: number
+          created_at: string
+          decision_reason: string | null
+          entry_price: number
+          entry_time: string
+          exit_price: number | null
+          exit_time: string | null
+          generation_id: string
+          hit_stop: boolean | null
+          hit_target: boolean | null
+          id: string
+          intended_qty: number
+          market_data: Json | null
+          outcome_calculated_at: string | null
+          outcome_status: string | null
+          regime: string | null
+          regime_match: boolean | null
+          side: string
+          simulated_pnl: number | null
+          simulated_pnl_pct: number | null
+          stop_price: number | null
+          symbol: string
+          target_price: number | null
+          trailing_stop_pct: number | null
+        }
+        Insert: {
+          agent_id: string
+          confidence: number
+          created_at?: string
+          decision_reason?: string | null
+          entry_price: number
+          entry_time?: string
+          exit_price?: number | null
+          exit_time?: string | null
+          generation_id: string
+          hit_stop?: boolean | null
+          hit_target?: boolean | null
+          id?: string
+          intended_qty: number
+          market_data?: Json | null
+          outcome_calculated_at?: string | null
+          outcome_status?: string | null
+          regime?: string | null
+          regime_match?: boolean | null
+          side: string
+          simulated_pnl?: number | null
+          simulated_pnl_pct?: number | null
+          stop_price?: number | null
+          symbol: string
+          target_price?: number | null
+          trailing_stop_pct?: number | null
+        }
+        Update: {
+          agent_id?: string
+          confidence?: number
+          created_at?: string
+          decision_reason?: string | null
+          entry_price?: number
+          entry_time?: string
+          exit_price?: number | null
+          exit_time?: string | null
+          generation_id?: string
+          hit_stop?: boolean | null
+          hit_target?: boolean | null
+          id?: string
+          intended_qty?: number
+          market_data?: Json | null
+          outcome_calculated_at?: string | null
+          outcome_status?: string | null
+          regime?: string | null
+          regime_match?: boolean | null
+          side?: string
+          simulated_pnl?: number | null
+          simulated_pnl_pct?: number | null
+          stop_price?: number | null
+          symbol?: string
+          target_price?: number | null
+          trailing_stop_pct?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shadow_trades_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shadow_trades_generation_id_fkey"
+            columns: ["generation_id"]
+            isOneToOne: false
+            referencedRelation: "generations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       system_config: {
         Row: {
           config: Json

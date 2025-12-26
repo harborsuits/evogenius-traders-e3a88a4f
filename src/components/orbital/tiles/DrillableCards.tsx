@@ -22,25 +22,36 @@ import {
 
 // Portfolio Card Content - Uses unified hook for Paper/Live data
 export function PortfolioCardContent({ compact }: { compact?: boolean }) {
-  const { summary, positions, dataSource, isPaper, isLive, isLiveArmed } = usePortfolioData();
+  const { summary, positions, dataSource, isPaper, errorMessage, refetchCoinbase } = usePortfolioData();
   
   const { totalEquity, totalPnl, totalPnlPct } = summary;
   const isLocked = dataSource === 'locked';
+  const isError = dataSource === 'error';
+
+  // Data source badge renderer
+  const DataSourceBadge = () => {
+    switch (dataSource) {
+      case 'paper':
+        return <Badge variant="outline" className="text-[10px] font-mono">PAPER</Badge>;
+      case 'coinbase':
+        return (
+          <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1">
+            <Zap className="h-2.5 w-2.5" />COINBASE
+          </Badge>
+        );
+      case 'locked':
+        return <Badge variant="destructive" className="text-[10px] font-mono">LOCKED</Badge>;
+      case 'error':
+        return <Badge variant="destructive" className="text-[10px] font-mono">ERROR</Badge>;
+    }
+  };
 
   return (
     <div className="space-y-3">
       {/* Data source indicator - explicit label */}
       <div className="flex items-center justify-between">
         <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Data Source</span>
-        {isPaper ? (
-          <Badge variant="outline" className="text-[10px] font-mono">PAPER</Badge>
-        ) : isLiveArmed ? (
-          <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1">
-            <Zap className="h-2.5 w-2.5" />COINBASE
-          </Badge>
-        ) : (
-          <Badge variant="destructive" className="text-[10px] font-mono">LOCKED</Badge>
-        )}
+        <DataSourceBadge />
       </div>
       
       {isLocked ? (
@@ -49,6 +60,20 @@ export function PortfolioCardContent({ compact }: { compact?: boolean }) {
           <Lock className="h-8 w-8 mx-auto mb-2 opacity-50" />
           <p className="text-xs">ARM required to view live data</p>
           <p className="text-[10px] mt-1 opacity-70">Enable ARM (60s) to unlock</p>
+        </div>
+      ) : isError ? (
+        // ERROR state - show error message and retry
+        <div className="text-center py-6 text-destructive">
+          <p className="text-xs font-medium">Coinbase fetch failed</p>
+          <p className="text-[10px] mt-1 opacity-70 text-muted-foreground">{errorMessage || 'Unknown error'}</p>
+          {refetchCoinbase && (
+            <button 
+              onClick={() => refetchCoinbase()}
+              className="mt-2 text-[10px] underline hover:no-underline"
+            >
+              Retry fetch
+            </button>
+          )}
         </div>
       ) : (
         <>
@@ -84,27 +109,29 @@ export function PortfolioCardContent({ compact }: { compact?: boolean }) {
 
 // Positions Card Content - Uses unified hook for Paper/Live data
 export function PositionsCardContent({ compact }: { compact?: boolean }) {
-  const { positions, dataSource, isPaper, isLive, isLiveArmed } = usePortfolioData();
+  const { positions, dataSource, isPaper, errorMessage, refetchCoinbase } = usePortfolioData();
   const isLocked = dataSource === 'locked';
+  const isError = dataSource === 'error';
+
+  const SourceBadge = () => {
+    switch (dataSource) {
+      case 'paper': return <Badge variant="outline" className="text-[10px] font-mono">PAPER</Badge>;
+      case 'coinbase': return <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1"><Zap className="h-2.5 w-2.5" />COINBASE</Badge>;
+      case 'locked': return <Badge variant="destructive" className="text-[10px] font-mono">LOCKED</Badge>;
+      case 'error': return <Badge variant="destructive" className="text-[10px] font-mono">ERROR</Badge>;
+    }
+  };
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-muted-foreground">
           <Package className="h-4 w-4" />
-          <span className="text-xs">{isLocked ? 'Positions' : `${positions.length} Open`}</span>
+          <span className="text-xs">{isLocked || isError ? 'Positions' : `${positions.length} Open`}</span>
         </div>
         <div className="flex items-center gap-1">
           <span className="text-[8px] text-muted-foreground uppercase">src:</span>
-          {isLive && isLiveArmed ? (
-            <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1">
-              <Zap className="h-2.5 w-2.5" />COINBASE
-            </Badge>
-          ) : isPaper ? (
-            <Badge variant="outline" className="text-[10px] font-mono">PAPER</Badge>
-          ) : (
-            <Badge variant="destructive" className="text-[10px] font-mono">LOCKED</Badge>
-          )}
+          <SourceBadge />
         </div>
       </div>
       
@@ -112,6 +139,13 @@ export function PositionsCardContent({ compact }: { compact?: boolean }) {
         <div className="text-center py-4 text-muted-foreground">
           <Lock className="h-6 w-6 mx-auto mb-2 opacity-50" />
           <p className="text-xs">ARM to view positions</p>
+        </div>
+      ) : isError ? (
+        <div className="text-center py-4 text-destructive">
+          <p className="text-xs">Fetch failed</p>
+          {refetchCoinbase && (
+            <button onClick={() => refetchCoinbase()} className="mt-1 text-[10px] underline">Retry</button>
+          )}
         </div>
       ) : positions.length === 0 ? (
         <div className="text-xs text-muted-foreground text-center py-4">
@@ -147,8 +181,18 @@ export function PositionsCardContent({ compact }: { compact?: boolean }) {
 
 // Orders Card Content - Uses unified hook
 export function OrdersCardContent({ compact }: { compact?: boolean }) {
-  const { orders, dataSource, isPaper, isLive, isLiveArmed } = usePortfolioData();
+  const { orders, dataSource, isPaper, errorMessage, refetchCoinbase } = usePortfolioData();
   const isLocked = dataSource === 'locked';
+  const isError = dataSource === 'error';
+
+  const SourceBadge = () => {
+    switch (dataSource) {
+      case 'paper': return <Badge variant="outline" className="text-[10px] font-mono">PAPER</Badge>;
+      case 'coinbase': return <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1"><Zap className="h-2.5 w-2.5" />COINBASE</Badge>;
+      case 'locked': return <Badge variant="destructive" className="text-[10px] font-mono">LOCKED</Badge>;
+      case 'error': return <Badge variant="destructive" className="text-[10px] font-mono">ERROR</Badge>;
+    }
+  };
 
   return (
     <div className="space-y-3">
@@ -156,19 +200,11 @@ export function OrdersCardContent({ compact }: { compact?: boolean }) {
         <div className="flex items-center gap-2 text-muted-foreground">
           <ShoppingCart className="h-4 w-4" />
           <span className="text-xs">Orders</span>
-          {!isLocked && <Badge variant="secondary" className="text-[10px]">{orders.length}</Badge>}
+          {!isLocked && !isError && <Badge variant="secondary" className="text-[10px]">{orders.length}</Badge>}
         </div>
         <div className="flex items-center gap-1">
           <span className="text-[8px] text-muted-foreground uppercase">src:</span>
-          {isLocked ? (
-            <Badge variant="destructive" className="text-[10px] font-mono">LOCKED</Badge>
-          ) : isLive && isLiveArmed ? (
-            <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1">
-              <Zap className="h-2.5 w-2.5" />COINBASE
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="text-[10px] font-mono">PAPER</Badge>
-          )}
+          <SourceBadge />
         </div>
       </div>
       
@@ -177,9 +213,16 @@ export function OrdersCardContent({ compact }: { compact?: boolean }) {
           <Lock className="h-6 w-6 mx-auto mb-2 opacity-50" />
           <p className="text-xs">ARM to view orders</p>
         </div>
+      ) : isError ? (
+        <div className="text-center py-4 text-destructive">
+          <p className="text-xs">Fetch failed</p>
+          {refetchCoinbase && (
+            <button onClick={() => refetchCoinbase()} className="mt-1 text-[10px] underline">Retry</button>
+          )}
+        </div>
       ) : orders.length === 0 ? (
         <div className="text-xs text-muted-foreground text-center py-4">
-          {isLive && isLiveArmed ? 'Live orders not tracked here' : 'No orders yet'}
+          {dataSource === 'coinbase' ? 'Live orders not tracked here' : 'No orders yet'}
         </div>
       ) : (
         <ScrollArea className="max-h-[100px]">
@@ -212,8 +255,18 @@ export function OrdersCardContent({ compact }: { compact?: boolean }) {
 
 // Activity Card Content - Uses unified hook, shows Paper activity or Live message
 export function ActivityCardContent({ compact }: { compact?: boolean }) {
-  const { orders, dataSource, isPaper, isLive, isLiveArmed } = usePortfolioData();
+  const { orders, dataSource, isPaper, errorMessage, refetchCoinbase } = usePortfolioData();
   const isLocked = dataSource === 'locked';
+  const isError = dataSource === 'error';
+
+  const SourceBadge = () => {
+    switch (dataSource) {
+      case 'paper': return <Badge variant="outline" className="text-[10px] font-mono">PAPER</Badge>;
+      case 'coinbase': return <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1"><Zap className="h-2.5 w-2.5" />COINBASE</Badge>;
+      case 'locked': return <Badge variant="destructive" className="text-[10px] font-mono">LOCKED</Badge>;
+      case 'error': return <Badge variant="destructive" className="text-[10px] font-mono">ERROR</Badge>;
+    }
+  };
 
   // LOCKED state - show placeholder
   if (isLocked) {
@@ -226,7 +279,7 @@ export function ActivityCardContent({ compact }: { compact?: boolean }) {
           </div>
           <div className="flex items-center gap-1">
             <span className="text-[8px] text-muted-foreground uppercase">src:</span>
-            <Badge variant="destructive" className="text-[10px] font-mono">LOCKED</Badge>
+            <SourceBadge />
           </div>
         </div>
         
@@ -242,8 +295,8 @@ export function ActivityCardContent({ compact }: { compact?: boolean }) {
     );
   }
 
-  // For live mode armed, we show a different message since orders aren't tracked in paper tables
-  if (isLive && isLiveArmed) {
+  // ERROR state
+  if (isError) {
     return (
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -253,9 +306,36 @@ export function ActivityCardContent({ compact }: { compact?: boolean }) {
           </div>
           <div className="flex items-center gap-1">
             <span className="text-[8px] text-muted-foreground uppercase">src:</span>
-            <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1">
-              <Zap className="h-2.5 w-2.5" />COINBASE
-            </Badge>
+            <SourceBadge />
+          </div>
+        </div>
+        
+        <div className="text-center py-4 text-destructive">
+          <p className="text-xs">Fetch failed</p>
+          {refetchCoinbase && (
+            <button onClick={() => refetchCoinbase()} className="mt-1 text-[10px] underline">Retry</button>
+          )}
+        </div>
+        
+        <div className="text-xs text-muted-foreground pt-2 border-t border-border/50">
+          Click to view trades →
+        </div>
+      </div>
+    );
+  }
+
+  // For live mode armed (dataSource === 'coinbase')
+  if (dataSource === 'coinbase') {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Activity className="h-4 w-4" />
+            <span className="text-xs">Activity</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[8px] text-muted-foreground uppercase">src:</span>
+            <SourceBadge />
           </div>
         </div>
         

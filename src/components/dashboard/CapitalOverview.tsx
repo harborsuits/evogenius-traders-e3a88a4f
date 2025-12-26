@@ -17,7 +17,8 @@ import {
   Activity,
   AlertTriangle,
   TestTube,
-  OctagonX
+  OctagonX,
+  Zap
 } from 'lucide-react';
 import { useLiveSafety } from '@/hooks/useLiveSafety';
 import { useArmLive } from '@/hooks/useArmLive';
@@ -54,7 +55,6 @@ export function CapitalOverview() {
   // Kill Switch mutation
   const killSwitch = useMutation({
     mutationFn: async () => {
-      // 1. Set mode to paper
       const { error: modeError } = await supabase
         .from('system_state')
         .update({ trade_mode: 'paper', live_armed_until: null })
@@ -62,7 +62,6 @@ export function CapitalOverview() {
       
       if (modeError) throw modeError;
 
-      // 2. Log control event
       const { error: eventError } = await supabase
         .from('control_events')
         .insert({
@@ -81,13 +80,53 @@ export function CapitalOverview() {
       queryClient.invalidateQueries({ queryKey: ['trade-mode'] });
       toast({
         title: 'Kill Switch Activated',
-        description: 'All live trading has been stopped. Mode set to Paper.',
+        description: 'All live trading stopped. Mode set to Paper.',
         variant: 'destructive',
       });
     },
     onError: (error: Error) => {
       toast({
         title: 'Kill Switch Failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Test Live Permission mutation
+  const testPermission = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('coinbase-test');
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['live-safety-exchange'] });
+      refresh();
+      setLastRefresh(Date.now());
+      
+      if (data?.can_create_orders) {
+        toast({
+          title: 'Trade Permission Confirmed',
+          description: `API key can create orders. Permissions: ${data.permissions?.join(', ')}`,
+        });
+      } else if (data?.ok) {
+        toast({
+          title: 'Read-Only API Key',
+          description: 'Connected but CANNOT create orders. Update your Coinbase API key with trade permission.',
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: 'Connection Failed',
+          description: data?.error || 'Unknown error',
+          variant: 'destructive',
+        });
+      }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Test Failed',
         description: error.message,
         variant: 'destructive',
       });
@@ -142,7 +181,7 @@ export function CapitalOverview() {
       label: 'Trade Permission',
       passed: status.canTrade,
       icon: Shield,
-      detail: status.canTrade ? 'Can create orders' : 'Missing permission',
+      detail: status.canTrade ? 'Can create orders' : 'Cannot create orders',
     },
     {
       label: 'Live Armed',
@@ -332,6 +371,22 @@ export function CapitalOverview() {
               </div>
             ))}
 
+            {/* Test Live Permission Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() => testPermission.mutate()}
+              disabled={testPermission.isPending}
+            >
+              {testPermission.isPending ? (
+                <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+              ) : (
+                <Zap className="h-3 w-3 mr-2" />
+              )}
+              Test Live Permission
+            </Button>
+
             {/* Blockers warning */}
             {status.blockers.length > 0 && (
               <div className="flex items-start gap-2 p-2 rounded-lg border border-amber-500/20 bg-amber-500/5">
@@ -341,6 +396,18 @@ export function CapitalOverview() {
                     <p key={i}>{b}</p>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Explicit missing permission warning */}
+            {status.coinbaseConnected && !status.canTrade && (
+              <div className="p-2 rounded-lg border border-destructive/30 bg-destructive/5">
+                <p className="text-xs text-destructive font-medium">
+                  ⚠️ API key cannot create orders
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Your Coinbase key is read-only. Create a new API key in Coinbase Developer Portal with "Trade" permission enabled.
+                </p>
               </div>
             )}
           </CollapsibleContent>

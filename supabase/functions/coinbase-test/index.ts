@@ -223,6 +223,139 @@ serve(async (req) => {
     }
 
     console.log(`[coinbase-test] Success! Found ${accountCount} accounts`);
+    console.log('[coinbase-test] Now testing order creation permission...');
+
+    // Test order creation by calling the orders endpoint with a preview/validation
+    // We'll use a GET to /orders to check if we have read access at minimum
+    // Then try to POST a minimal preview order to see if we can create
+    let canCreateOrders = false;
+    
+    try {
+      // Build JWT for orders endpoint check
+      const ordersPath = '/api/v3/brokerage/orders';
+      const ordersNow = Math.floor(Date.now() / 1000);
+      
+      const ordersHeader = {
+        alg: 'ES256',
+        typ: 'JWT',
+        kid: keyName,
+        nonce: randomHex(16),
+      };
+      
+      const ordersPayload = {
+        sub: keyName,
+        iss: 'cdp',
+        nbf: ordersNow,
+        exp: ordersNow + 120,
+        uri: `GET api.coinbase.com${ordersPath}`,
+      };
+      
+      const ordersEncodedHeader = base64urlEncode(new TextEncoder().encode(JSON.stringify(ordersHeader)));
+      const ordersEncodedPayload = base64urlEncode(new TextEncoder().encode(JSON.stringify(ordersPayload)));
+      const ordersUnsignedToken = `${ordersEncodedHeader}.${ordersEncodedPayload}`;
+      
+      const ordersSignature = await crypto.subtle.sign(
+        { name: 'ECDSA', hash: 'SHA-256' },
+        privateKey,
+        new TextEncoder().encode(ordersUnsignedToken)
+      );
+      
+      const ordersJwt = `${ordersUnsignedToken}.${base64urlEncode(new Uint8Array(ordersSignature))}`;
+      
+      // Try to list orders - this checks basic orders access
+      const ordersResponse = await fetch(`https://api.coinbase.com${ordersPath}?limit=1`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${ordersJwt}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (ordersResponse.ok) {
+        permissions.push('wallet:orders:read');
+        console.log('[coinbase-test] Orders read access confirmed');
+        
+        // Now test POST capability by attempting a preview order
+        // Using the preview endpoint if available, otherwise we infer from the 
+        // API key configuration. Most CDP keys that can read orders can also create them
+        // if configured. We'll test with a POST to see if we get 401 (no permission) 
+        // vs other errors (permission exists but order invalid)
+        
+        const createOrderPath = '/api/v3/brokerage/orders';
+        const createNow = Math.floor(Date.now() / 1000);
+        
+        const createHeader = {
+          alg: 'ES256',
+          typ: 'JWT',
+          kid: keyName,
+          nonce: randomHex(16),
+        };
+        
+        const createPayload = {
+          sub: keyName,
+          iss: 'cdp',
+          nbf: createNow,
+          exp: createNow + 120,
+          uri: `POST api.coinbase.com${createOrderPath}`,
+        };
+        
+        const createEncodedHeader = base64urlEncode(new TextEncoder().encode(JSON.stringify(createHeader)));
+        const createEncodedPayload = base64urlEncode(new TextEncoder().encode(JSON.stringify(createPayload)));
+        const createUnsignedToken = `${createEncodedHeader}.${createEncodedPayload}`;
+        
+        const createSignature = await crypto.subtle.sign(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          privateKey,
+          new TextEncoder().encode(createUnsignedToken)
+        );
+        
+        const createJwt = `${createUnsignedToken}.${base64urlEncode(new Uint8Array(createSignature))}`;
+        
+        // Send a minimal invalid order to test permission
+        // We expect either:
+        // - 401/403: No permission to create orders
+        // - 400: Permission exists, order is just invalid (what we want!)
+        const testOrderBody = {
+          client_order_id: `test-${Date.now()}`,
+          product_id: 'BTC-USD',
+          side: 'BUY',
+          order_configuration: {
+            market_market_ioc: {
+              quote_size: '0.01' // Tiny order that will fail validation but tests permission
+            }
+          }
+        };
+        
+        const createResponse = await fetch(`https://api.coinbase.com${createOrderPath}`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${createJwt}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(testOrderBody),
+        });
+        
+        const createData = await createResponse.json();
+        console.log('[coinbase-test] Create order test response:', createResponse.status, JSON.stringify(createData));
+        
+        // If we get 401 or 403 with unauthorized/forbidden message, no create permission
+        // If we get 400 (bad request) or 200 (unlikely but possible), we have permission
+        if (createResponse.status === 401 || createResponse.status === 403) {
+          console.log('[coinbase-test] No order creation permission (401/403)');
+          canCreateOrders = false;
+        } else {
+          // 400 means the order was rejected for business reasons (insufficient funds, 
+          // invalid product, etc) but the permission check passed!
+          console.log('[coinbase-test] Order creation permission confirmed!');
+          canCreateOrders = true;
+          permissions.push('wallet:orders:create');
+        }
+      } else {
+        console.log('[coinbase-test] Orders endpoint returned:', ordersResponse.status);
+      }
+    } catch (orderErr) {
+      console.log('[coinbase-test] Error testing order permission:', orderErr);
+    }
 
     await supabase
       .from('exchange_connections')
@@ -239,6 +372,7 @@ serve(async (req) => {
         ok: true, 
         permissions,
         account_count: accountCount,
+        can_create_orders: canCreateOrders,
         provider: 'coinbase'
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

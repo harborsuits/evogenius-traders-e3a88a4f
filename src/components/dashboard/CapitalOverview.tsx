@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -12,26 +12,87 @@ import {
   XCircle,
   Key,
   Timer,
-  RefreshCw,
   Power,
   Loader2,
   Activity,
   AlertTriangle,
-  TestTube
+  TestTube,
+  OctagonX
 } from 'lucide-react';
 import { useLiveSafety } from '@/hooks/useLiveSafety';
 import { useArmLive } from '@/hooks/useArmLive';
 import { useTradeModeContext } from '@/contexts/TradeModeContext';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
+import { TileHeader } from './StalenessIndicator';
+import { useToast } from '@/hooks/use-toast';
+
+// Staleness threshold in seconds
+const BALANCE_STALE_THRESHOLD = 60;
 
 export function CapitalOverview() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const { status, isLoading, refresh } = useLiveSafety();
   const { arm, disarm, isArming, isDisarming } = useArmLive();
-  const { mode } = useTradeModeContext();
+  const { mode, setMode } = useTradeModeContext();
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [countdown, setCountdown] = useState(0);
+  const [lastRefresh, setLastRefresh] = useState(Date.now());
+
+  // Track age for staleness
+  const [ageSeconds, setAgeSeconds] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setAgeSeconds(Math.floor((Date.now() - lastRefresh) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [lastRefresh]);
+
+  // Kill Switch mutation
+  const killSwitch = useMutation({
+    mutationFn: async () => {
+      // 1. Set mode to paper
+      const { error: modeError } = await supabase
+        .from('system_state')
+        .update({ trade_mode: 'paper', live_armed_until: null })
+        .eq('id', (await supabase.from('system_state').select('id').limit(1).single()).data?.id);
+      
+      if (modeError) throw modeError;
+
+      // 2. Log control event
+      const { error: eventError } = await supabase
+        .from('control_events')
+        .insert({
+          action: 'kill_switch_triggered',
+          previous_status: mode,
+          new_status: 'paper',
+          metadata: { triggered_at: new Date().toISOString() }
+        });
+      
+      if (eventError) throw eventError;
+
+      return { success: true };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['live-safety-system'] });
+      queryClient.invalidateQueries({ queryKey: ['trade-mode'] });
+      toast({
+        title: 'Kill Switch Activated',
+        description: 'All live trading has been stopped. Mode set to Paper.',
+        variant: 'destructive',
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Kill Switch Failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
 
   // Fetch last live trade attempt
   const { data: lastAttempt } = useQuery({
@@ -63,6 +124,12 @@ export function CapitalOverview() {
     return () => clearInterval(interval);
   }, [status.isArmed, status.secondsRemaining]);
 
+  // Handle refresh with age reset
+  const handleRefresh = () => {
+    refresh();
+    setLastRefresh(Date.now());
+  };
+
   // Safety checks for collapsible
   const safetyChecks = [
     {
@@ -93,41 +160,52 @@ export function CapitalOverview() {
 
   const passedCount = safetyChecks.filter(c => c.passed).length;
   const isPaper = mode === 'paper';
+  const isStale = ageSeconds > BALANCE_STALE_THRESHOLD;
 
   return (
     <Card className="bg-card border-border">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <DollarSign className="h-4 w-4 text-primary" />
-            Capital Overview
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            <Badge 
-              variant={isPaper ? 'secondary' : 'destructive'}
-              className="text-xs"
-            >
-              {isPaper ? (
-                <><TestTube className="h-3 w-3 mr-1" />Paper</>
-              ) : status.isArmed ? (
-                <><Power className="h-3 w-3 mr-1 animate-pulse" />LIVE — {countdown}s</>
-              ) : (
-                'Live'
-              )}
-            </Badge>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              onClick={refresh}
-              disabled={isLoading}
-            >
-              <RefreshCw className={cn('h-3 w-3', isLoading && 'animate-spin')} />
-            </Button>
-          </div>
+      <div className="p-4 pb-2">
+        <TileHeader
+          icon={<DollarSign className="h-4 w-4 text-primary" />}
+          title="Capital Overview"
+          ageSeconds={ageSeconds}
+          stale={isStale}
+          onRefresh={handleRefresh}
+        />
+      </div>
+      <CardContent className="pt-2 space-y-4">
+        {/* Mode + Kill Switch Row */}
+        <div className="flex items-center justify-between gap-2">
+          <Badge 
+            variant={isPaper ? 'secondary' : 'destructive'}
+            className="text-xs"
+          >
+            {isPaper ? (
+              <><TestTube className="h-3 w-3 mr-1" />Paper</>
+            ) : status.isArmed ? (
+              <><Power className="h-3 w-3 mr-1 animate-pulse" />LIVE — {countdown}s</>
+            ) : (
+              'Live'
+            )}
+          </Badge>
+          
+          {/* Kill Switch - always visible */}
+          <Button
+            variant="destructive"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => killSwitch.mutate()}
+            disabled={killSwitch.isPending || isPaper}
+          >
+            {killSwitch.isPending ? (
+              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+            ) : (
+              <OctagonX className="h-3 w-3 mr-1" />
+            )}
+            KILL
+          </Button>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
+
         {/* Cash Summary */}
         <div className="grid grid-cols-3 gap-3 text-center">
           <div className="p-2 rounded-lg bg-muted/30">

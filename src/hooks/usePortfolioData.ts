@@ -1,7 +1,7 @@
 // Unified portfolio data hook - returns Paper or Coinbase data based on trade mode
+// CRITICAL: Paper data NEVER appears in Live mode. This is the safety boundary.
 import { useQuery } from '@tanstack/react-query';
 import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
-import { usePaperAccount, usePaperPositions, usePaperOrders, usePaperRealtimeSubscriptions } from './usePaperTrading';
 import { useMarketData } from './useEvoTraderData';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -54,81 +54,160 @@ interface CoinbaseAccount {
   type: string;
 }
 
-// Fetch Coinbase balances when in live mode
-function useCoinbaseBalances(enabled: boolean) {
-  return useQuery({
+// DATA SOURCE CONTRACT - single source of truth
+export type DataSource = 'paper' | 'coinbase' | 'locked' | 'error';
+
+/**
+ * Unified portfolio hook - switches between Paper and Coinbase data based on trade mode
+ * 
+ * SAFETY RULES (non-negotiable):
+ * 1. Live mode + NOT armed = LOCKED (zero data, no paper fallback)
+ * 2. Live mode + armed = COINBASE only (or ERROR if fetch fails)
+ * 3. Paper mode = PAPER only
+ * 
+ * Paper hooks are DISABLED in live mode - they don't even run.
+ */
+export function usePortfolioData() {
+  const { isLive, isLiveArmed, isPaper, mode, isLoading: modeLoading } = useCurrentTradeMode();
+  const { data: marketData = [] } = useMarketData();
+
+  // ========== PAPER DATA (only runs when isPaper === true) ==========
+  const { data: paperAccount, isLoading: paperAccountLoading, error: paperAccountError } = useQuery({
+    queryKey: ['paper-account-portfolio'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('paper_accounts')
+        .select('*')
+        .limit(1)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: isPaper, // DISABLED in live mode
+    staleTime: 30000,
+  });
+
+  const { data: paperPositions = [], isLoading: paperPositionsLoading } = useQuery({
+    queryKey: ['paper-positions-portfolio', paperAccount?.id],
+    queryFn: async () => {
+      if (!paperAccount?.id) return [];
+      const { data, error } = await supabase
+        .from('paper_positions')
+        .select('*')
+        .eq('account_id', paperAccount.id);
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: isPaper && !!paperAccount?.id, // DISABLED in live mode
+    staleTime: 30000,
+  });
+
+  const { data: paperOrders = [], isLoading: paperOrdersLoading } = useQuery({
+    queryKey: ['paper-orders-portfolio', paperAccount?.id],
+    queryFn: async () => {
+      if (!paperAccount?.id) return [];
+      const { data, error } = await supabase
+        .from('paper_orders')
+        .select('*')
+        .eq('account_id', paperAccount.id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: isPaper && !!paperAccount?.id, // DISABLED in live mode
+    staleTime: 30000,
+  });
+
+  // ========== COINBASE DATA (only runs when isLive AND isLiveArmed) ==========
+  const { 
+    data: coinbaseData, 
+    isLoading: coinbaseLoading, 
+    error: coinbaseError,
+    refetch: refetchCoinbase 
+  } = useQuery({
     queryKey: ['coinbase-balances-live'],
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke('coinbase-balances');
       if (error) throw error;
       return data as { ok: boolean; accounts?: CoinbaseAccount[]; error?: string };
     },
-    enabled,
-    staleTime: 30000, // 30 seconds for live data
-    refetchInterval: 30000, // Auto-refresh every 30s when live
+    enabled: isLive && isLiveArmed, // ONLY when live AND armed
+    staleTime: 15000, // 15 seconds for live data
+    refetchInterval: isLive && isLiveArmed ? 15000 : false, // Auto-refresh only when armed
+    retry: 1, // Don't spam retries
   });
-}
 
-/**
- * Unified portfolio hook - switches between Paper and Coinbase data based on trade mode
- */
-export function usePortfolioData() {
-  const { isLive, isLiveArmed, isPaper, mode } = useCurrentTradeMode();
+  // ========== DETERMINE DATA SOURCE (the single truth) ==========
+  let dataSource: DataSource;
   
-  // Paper data hooks (always enabled but only used when in paper mode)
-  const { data: paperAccount, isLoading: paperAccountLoading } = usePaperAccount();
-  const { data: paperPositions = [], isLoading: paperPositionsLoading } = usePaperPositions(paperAccount?.id);
-  const { data: paperOrders = [], isLoading: paperOrdersLoading } = usePaperOrders(paperAccount?.id, 10);
-  const { data: marketData = [] } = useMarketData();
-  
-  // Coinbase data (only fetched when in live mode and armed)
-  const { data: coinbaseData, isLoading: coinbaseLoading } = useCoinbaseBalances(isLive && isLiveArmed);
-  
-  // Enable realtime for paper mode
-  usePaperRealtimeSubscriptions();
+  if (isPaper) {
+    dataSource = paperAccountError ? 'error' : 'paper';
+  } else if (isLive) {
+    if (!isLiveArmed) {
+      dataSource = 'locked'; // Not armed = NO DATA
+    } else if (coinbaseError || (coinbaseData && !coinbaseData.ok)) {
+      dataSource = 'error'; // Armed but fetch failed
+    } else {
+      dataSource = 'coinbase';
+    }
+  } else {
+    dataSource = 'locked'; // Fallback safety
+  }
 
-  // Build unified account data
-  const account: PortfolioAccount | null = isPaper && paperAccount
-    ? {
+  // ========== BUILD UNIFIED DATA (based on dataSource) ==========
+  
+  // LOCKED or ERROR = null/empty data, never fallback to paper
+  const account: PortfolioAccount | null = (() => {
+    if (dataSource === 'paper' && paperAccount) {
+      return {
         id: paperAccount.id,
         name: 'Paper Account',
         cash: paperAccount.cash,
         startingCash: paperAccount.starting_cash,
         baseCurrency: 'USD',
-      }
-    : isLive && coinbaseData?.ok
-    ? {
+      };
+    }
+    if (dataSource === 'coinbase' && coinbaseData?.ok) {
+      const usdAccount = coinbaseData.accounts?.find(a => a.currency === 'USD');
+      return {
         id: 'coinbase-live',
         name: 'Coinbase Live',
-        cash: coinbaseData.accounts?.find(a => a.currency === 'USD')?.available ?? 0,
+        cash: usdAccount?.available ?? 0,
         startingCash: 0, // Unknown for live
         baseCurrency: 'USD',
-      }
-    : null;
+      };
+    }
+    // LOCKED or ERROR = null
+    return null;
+  })();
 
-  // Build unified positions data
-  const positions: PortfolioPosition[] = isPaper
-    ? paperPositions.filter(p => p.qty !== 0).map(pos => {
-        const market = marketData.find(m => m.symbol === pos.symbol);
-        const currentPrice = market?.price ?? pos.avg_entry_price;
-        const value = pos.qty * currentPrice;
-        const cost = pos.qty * pos.avg_entry_price;
-        const unrealizedPnl = value - cost;
-        const unrealizedPnlPct = cost > 0 ? (unrealizedPnl / cost) * 100 : 0;
-        return {
-          id: pos.id,
-          symbol: pos.symbol,
-          qty: pos.qty,
-          avgEntryPrice: pos.avg_entry_price,
-          currentPrice,
-          value,
-          unrealizedPnl,
-          unrealizedPnlPct,
-        };
-      })
-    : isLive && coinbaseData?.ok
-    ? (coinbaseData.accounts || [])
-        .filter(a => a.currency !== 'USD' && a.available > 0)
+  const positions: PortfolioPosition[] = (() => {
+    if (dataSource === 'paper') {
+      return paperPositions
+        .filter(p => p.qty !== 0)
+        .map(pos => {
+          const market = marketData.find(m => m.symbol === pos.symbol);
+          const currentPrice = market?.price ?? pos.avg_entry_price;
+          const value = pos.qty * currentPrice;
+          const cost = pos.qty * pos.avg_entry_price;
+          const unrealizedPnl = value - cost;
+          const unrealizedPnlPct = cost > 0 ? (unrealizedPnl / cost) * 100 : 0;
+          return {
+            id: pos.id,
+            symbol: pos.symbol,
+            qty: pos.qty,
+            avgEntryPrice: pos.avg_entry_price,
+            currentPrice,
+            value,
+            unrealizedPnl,
+            unrealizedPnlPct,
+          };
+        });
+    }
+    if (dataSource === 'coinbase' && coinbaseData?.ok) {
+      return (coinbaseData.accounts || [])
+        .filter(a => a.currency !== 'USD' && a.available > 0.0001)
         .map(a => {
           const symbol = `${a.currency}-USD`;
           const market = marketData.find(m => m.symbol === symbol);
@@ -144,12 +223,15 @@ export function usePortfolioData() {
             unrealizedPnl: 0, // Can't calculate without entry
             unrealizedPnlPct: 0,
           };
-        })
-    : [];
+        });
+    }
+    // LOCKED or ERROR = empty
+    return [];
+  })();
 
-  // Build unified orders data
-  const orders: PortfolioOrder[] = isPaper
-    ? paperOrders.map(o => ({
+  const orders: PortfolioOrder[] = (() => {
+    if (dataSource === 'paper') {
+      return paperOrders.map(o => ({
         id: o.id,
         symbol: o.symbol,
         side: o.side,
@@ -157,10 +239,14 @@ export function usePortfolioData() {
         status: o.status,
         filledPrice: o.filled_price,
         createdAt: o.created_at,
-      }))
-    : []; // Live orders would come from a different source (trades table or Coinbase API)
+      }));
+    }
+    // Live orders would come from a different source - empty for now
+    // LOCKED or ERROR = empty
+    return [];
+  })();
 
-  // Build summary
+  // ========== BUILD SUMMARY ==========
   const positionValue = positions.reduce((sum, p) => sum + p.value, 0);
   const unrealizedPnl = positions.reduce((sum, p) => sum + p.unrealizedPnl, 0);
   const cash = account?.cash ?? 0;
@@ -179,9 +265,20 @@ export function usePortfolioData() {
     positionCount: positions.length,
   };
 
-  const isLoading = isPaper
+  // ========== LOADING STATE ==========
+  const isLoading = modeLoading || (isPaper
     ? paperAccountLoading || paperPositionsLoading || paperOrdersLoading
-    : coinbaseLoading;
+    : isLiveArmed ? coinbaseLoading : false);
+
+  // ========== ERROR INFO ==========
+  const errorMessage = (() => {
+    if (dataSource === 'error') {
+      if (coinbaseError) return String(coinbaseError);
+      if (coinbaseData && !coinbaseData.ok) return coinbaseData.error ?? 'Coinbase fetch failed';
+      if (paperAccountError) return String(paperAccountError);
+    }
+    return null;
+  })();
 
   return {
     mode,
@@ -193,7 +290,10 @@ export function usePortfolioData() {
     orders,
     summary,
     isLoading,
-    // Source indicator for UI
-    dataSource: isPaper ? 'paper' : isLiveArmed ? 'coinbase' : 'locked',
+    // Data source contract - this is the ONLY truth
+    dataSource,
+    errorMessage,
+    // Retry function for error recovery
+    refetchCoinbase: dataSource === 'error' && isLive ? refetchCoinbase : undefined,
   };
 }

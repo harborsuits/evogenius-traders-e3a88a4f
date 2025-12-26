@@ -14,6 +14,8 @@ import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
 import { usePaperAccount, usePaperPositions, usePaperRealtimeSubscriptions } from '@/hooks/usePaperTrading';
 import { useDroughtState } from '@/hooks/useDroughtState';
 import { useShadowTradingStats } from '@/hooks/useShadowTradingStats';
+import { useCockpitLiveState } from '@/hooks/useCockpitLiveState';
+import { TileHeader, LiveBadge } from '@/components/dashboard/StalenessIndicator';
 import { SystemStatus } from '@/types/evotrader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { MetricCard } from '@/components/dashboard/MetricCard';
@@ -344,97 +346,95 @@ export function SystemControlTile({ compact }: { compact?: boolean }) {
   );
 }
 
-// Capital Overview Tile - Now shows REAL paper portfolio data
+// Capital Overview Tile - Now uses unified cockpit state with staleness
 export function CapitalOverviewTile({ compact }: { compact?: boolean }) {
+  const { account, staleness, refetchAll } = useCockpitLiveState();
   const { data: systemState } = useSystemState();
-  const { data: account } = usePaperAccount();
-  const { data: positions = [] } = usePaperPositions(account?.id);
-  const { data: marketData = [] } = useMarketData();
   const { data: genOrdersCount = 0 } = useGenOrdersCount(systemState?.current_generation_id ?? null);
   const { data: cohortCount = 0 } = useCohortCount(systemState?.current_generation_id ?? null);
   
-  usePaperRealtimeSubscriptions();
+  const isLoading = !account;
+  const isStale = staleness.account.stale;
   
-  // Calculate real portfolio values
   const cash = account?.cash ?? 0;
-  const startingCash = account?.starting_cash ?? 1000;
-  
-  const positionValues = positions.map(pos => {
-    const market = marketData.find(m => m.symbol === pos.symbol);
-    return pos.qty * (market?.price ?? pos.avg_entry_price);
-  });
-  
-  const totalPositionValue = positionValues.reduce((sum, v) => sum + v, 0);
-  const totalEquity = cash + totalPositionValue;
-  const totalPnl = totalEquity - startingCash;
-  const pnlPct = startingCash > 0 ? (totalPnl / startingCash) * 100 : 0;
-  
-  const activePositions = positions.filter(p => p.qty !== 0);
+  const totalEquity = account?.equity ?? 0;
+  const totalPnl = account?.pnl ?? 0;
+  const pnlPct = account?.pnlPct ?? 0;
+  const activePositions = account?.positions ?? [];
   
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-        <FlaskConical className="h-4 w-4 text-primary" />
-        Paper Portfolio
-        <Badge variant="glow" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
-      </div>
+      <TileHeader 
+        icon={<FlaskConical className="h-4 w-4 text-primary" />}
+        title="Paper Portfolio"
+        ageSeconds={staleness.account.ageSeconds}
+        stale={isStale}
+        onRefresh={refetchAll}
+      />
       
-      <div className={compact ? 'grid grid-cols-3 gap-2' : 'grid grid-cols-2 gap-3'}>
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <Wallet className="h-3 w-3" />
-            Equity
+      {isLoading ? (
+        <div className="animate-pulse space-y-2">
+          <div className="h-8 bg-muted/30 rounded" />
+          <div className="h-8 bg-muted/30 rounded" />
+        </div>
+      ) : (
+        <div className={compact ? 'grid grid-cols-3 gap-2' : 'grid grid-cols-2 gap-3'}>
+          <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <Wallet className="h-3 w-3" />
+              Equity
+            </div>
+            <div className="font-mono text-sm font-bold">
+              ${totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
           </div>
-          <div className="font-mono text-sm font-bold">
-            ${totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          
+          <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <DollarSign className="h-3 w-3" />
+              Cash
+            </div>
+            <div className="font-mono text-sm">
+              ${cash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          
+          <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              {totalPnl >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+              P&L
+            </div>
+            <div className={`font-mono text-sm font-bold ${totalPnl >= 0 ? 'text-success' : 'text-destructive'}`}>
+              {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
+              <span className="text-[10px] ml-1">({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)</span>
+            </div>
+          </div>
+          
+          <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <BarChart3 className="h-3 w-3" />
+              Positions
+            </div>
+            <div className="font-mono text-sm">{activePositions.length}</div>
+          </div>
+          
+          <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <Users className="h-3 w-3" />
+              Cohort
+            </div>
+            <div className="font-mono text-sm">{cohortCount}</div>
+          </div>
+          
+          <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <Activity className="h-3 w-3" />
+              Gen Orders
+            </div>
+            <div className="font-mono text-sm">{genOrdersCount}</div>
           </div>
         </div>
-        
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <DollarSign className="h-3 w-3" />
-            Cash
-          </div>
-          <div className="font-mono text-sm">
-            ${cash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-        </div>
-        
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            {totalPnl >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-            P&L
-          </div>
-          <div className={`font-mono text-sm font-bold ${totalPnl >= 0 ? 'text-success' : 'text-destructive'}`}>
-            {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
-            <span className="text-[10px] ml-1">({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)</span>
-          </div>
-        </div>
-        
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <BarChart3 className="h-3 w-3" />
-            Positions
-          </div>
-          <div className="font-mono text-sm">{activePositions.length}</div>
-        </div>
-        
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <Users className="h-3 w-3" />
-            Cohort
-          </div>
-          <div className="font-mono text-sm">{cohortCount}</div>
-        </div>
-        
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <Activity className="h-3 w-3" />
-            Gen Orders
-          </div>
-          <div className="font-mono text-sm">{genOrdersCount}</div>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -459,60 +459,21 @@ export function LineageTile({ compact }: { compact?: boolean }) {
   return <LineageWidget />;
 }
 
-// Decision Log Tile - Shows recent HOLD/BUY/SELL decisions with interpretive context
+// Decision Log Tile - Now uses unified cockpit state with staleness
 export function DecisionLogTile({ compact }: { compact?: boolean }) {
-  const { data: systemState } = useSystemState();
+  const { decisions, staleness, refetchAll } = useCockpitLiveState();
   
-  const { data: decisionStats, isLoading } = useQuery({
-    queryKey: ['decision-log-summary', systemState?.current_generation_id],
-    queryFn: async () => {
-      if (!systemState?.current_generation_id) return null;
-      
-      // Query trade_decision events (the canonical decision source)
-      const { data: events } = await supabase
-        .from('control_events')
-        .select('metadata')
-        .eq('action', 'trade_decision')
-        .order('triggered_at', { ascending: false })
-        .limit(100);
-      
-      if (!events?.length) return { buy: 0, sell: 0, hold: 0, blocked: 0, topReasons: [], total: 0 };
-      
-      // Count decisions by metadata.decision
-      let buy = 0, sell = 0, hold = 0, blocked = 0;
-      const reasonCounts: Record<string, number> = {};
-      
-      for (const e of events) {
-        const meta = e.metadata as any;
-        const decision = meta?.decision?.toLowerCase();
-        
-        if (decision === 'buy') buy++;
-        else if (decision === 'sell') sell++;
-        else if (decision === 'hold') {
-          hold++;
-          // Extract hold reasons from top_hold_reasons array
-          const reasons = meta?.top_hold_reasons || [];
-          for (const r of reasons) {
-            // Format: "no_signal:3" -> extract reason name
-            const match = typeof r === 'string' ? r.match(/^([^:]+)/) : null;
-            if (match) {
-              reasonCounts[match[1]] = (reasonCounts[match[1]] || 0) + 1;
-            }
-          }
-        } else if (decision === 'blocked') blocked++;
-      }
-      
-      // Get top 3 reasons
-      const topReasons = Object.entries(reasonCounts)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([reason]) => reason.replace(/_/g, ' '));
-      
-      return { buy, sell, hold, blocked, topReasons, total: events.length };
-    },
-    enabled: !!systemState?.current_generation_id,
-    refetchInterval: 30000,
-  });
+  const isLoading = !decisions;
+  const isStale = staleness.decisions.stale;
+  
+  const decisionStats = decisions ? {
+    buy: decisions.buyCount,
+    sell: decisions.sellCount,
+    hold: decisions.holdCount,
+    blocked: decisions.blockedCount,
+    topReasons: decisions.topHoldReasons,
+    total: decisions.buyCount + decisions.sellCount + decisions.holdCount + decisions.blockedCount,
+  } : null;
   
   // Interpretive signals
   const getSignalQuality = () => {
@@ -529,14 +490,19 @@ export function DecisionLogTile({ compact }: { compact?: boolean }) {
   
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-        <Activity className="h-4 w-4 text-primary" />
-        Recent Decisions
-        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
-      </div>
+      <TileHeader 
+        icon={<Activity className="h-4 w-4 text-primary" />}
+        title="Recent Decisions"
+        ageSeconds={staleness.decisions.ageSeconds}
+        stale={isStale}
+        onRefresh={refetchAll}
+      />
       
       {isLoading || !decisionStats ? (
-        <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
+        <div className="animate-pulse space-y-2">
+          <div className="h-8 bg-muted/30 rounded" />
+          <div className="h-16 bg-muted/30 rounded" />
+        </div>
       ) : (
         <>
           {/* Interpretive signal */}
@@ -1792,112 +1758,111 @@ export { SystemVitals as SystemVitalsTile } from '@/components/dashboard/SystemV
 // Regime History Tile - 24h regime distribution and blocked rate
 export { RegimeHistoryCard as RegimeHistoryTile } from '@/components/dashboard/RegimeHistoryCard';
 
-// Shadow Trading Tile - Shows shadow trade learning statistics
+// Shadow Trading Tile - Now uses unified cockpit state with staleness
 export function ShadowTradingTile({ compact }: { compact?: boolean }) {
-  const { data: stats, isLoading } = useShadowTradingStats();
+  const { shadow, staleness, refetchAll } = useCockpitLiveState();
+  const { data: stats } = useShadowTradingStats(); // Keep for lastCalcRun details
   
-  if (isLoading || !stats) {
-    return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-          <Ghost className="h-4 w-4 text-primary" />
-          Shadow Learning
-          <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LOADING</Badge>
-        </div>
-        <div className="animate-pulse space-y-2">
-          <div className="h-8 bg-muted/30 rounded" />
-          <div className="h-8 bg-muted/30 rounded" />
-        </div>
-      </div>
-    );
-  }
+  const isLoading = !shadow;
+  const isStale = staleness.shadow.stale;
   
-  const lastRunAge = stats.lastCalcRun
+  const lastRunAge = stats?.lastCalcRun
     ? formatDistanceToNow(new Date(stats.lastCalcRun.timestamp), { addSuffix: true })
     : 'never';
   
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-        <Ghost className="h-4 w-4 text-primary" />
-        Shadow Learning
-        <Badge variant="glow" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
-      </div>
+      <TileHeader 
+        icon={<Ghost className="h-4 w-4 text-primary" />}
+        title="Shadow Learning"
+        ageSeconds={staleness.shadow.ageSeconds}
+        stale={isStale}
+        onRefresh={refetchAll}
+      />
       
-      {/* Main metrics grid */}
-      <div className={compact ? 'grid grid-cols-3 gap-2' : 'grid grid-cols-2 gap-3'}>
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <Activity className="h-3 w-3" />
-            Today
-          </div>
-          <div className="font-mono text-sm font-bold">{stats.todayCount}</div>
+      {isLoading ? (
+        <div className="animate-pulse space-y-2">
+          <div className="h-8 bg-muted/30 rounded" />
+          <div className="h-8 bg-muted/30 rounded" />
         </div>
-        
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <HelpCircle className="h-3 w-3" />
-            Pending
+      ) : (
+        <>
+          {/* Main metrics grid */}
+          <div className={compact ? 'grid grid-cols-3 gap-2' : 'grid grid-cols-2 gap-3'}>
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Activity className="h-3 w-3" />
+                Today
+              </div>
+              <div className="font-mono text-sm font-bold">{shadow.todayCount}</div>
+            </div>
+            
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <HelpCircle className="h-3 w-3" />
+                Pending
+              </div>
+              <div className="font-mono text-sm">
+                {shadow.pendingCount}
+                {shadow.oldestPendingAge !== null && (
+                  <span className="text-[10px] text-muted-foreground ml-1">
+                    ({shadow.oldestPendingAge}m old)
+                  </span>
+                )}
+              </div>
+            </div>
+            
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <CheckCircle className="h-3 w-3" />
+                Calc 24h
+              </div>
+              <div className="font-mono text-sm">{shadow.calculatedLast24h}</div>
+            </div>
+            
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                {(shadow.avgPnlPct ?? 0) >= 0 
+                  ? <TrendingUp className="h-3 w-3" /> 
+                  : <TrendingDown className="h-3 w-3" />}
+                Avg PnL
+              </div>
+              <div className={cn(
+                "font-mono text-sm font-bold",
+                (shadow.avgPnlPct ?? 0) >= 0 ? 'text-success' : 'text-destructive'
+              )}>
+                {shadow.avgPnlPct !== null 
+                  ? `${shadow.avgPnlPct >= 0 ? '+' : ''}${shadow.avgPnlPct.toFixed(2)}%`
+                  : '—'}
+              </div>
+            </div>
           </div>
-          <div className="font-mono text-sm">
-            {stats.pendingCount}
-            {stats.oldestPendingAge !== null && (
-              <span className="text-[10px] text-muted-foreground ml-1">
-                ({stats.oldestPendingAge}m old)
-              </span>
-            )}
-          </div>
-        </div>
-        
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <CheckCircle className="h-3 w-3" />
-            Calc 24h
-          </div>
-          <div className="font-mono text-sm">{stats.calculatedLast24h}</div>
-        </div>
-        
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            {(stats.avgPnlPctLast24h ?? 0) >= 0 
-              ? <TrendingUp className="h-3 w-3" /> 
-              : <TrendingDown className="h-3 w-3" />}
-            Avg PnL
-          </div>
-          <div className={cn(
-            "font-mono text-sm font-bold",
-            (stats.avgPnlPctLast24h ?? 0) >= 0 ? 'text-success' : 'text-destructive'
-          )}>
-            {stats.avgPnlPctLast24h !== null 
-              ? `${stats.avgPnlPctLast24h >= 0 ? '+' : ''}${stats.avgPnlPctLast24h.toFixed(2)}%`
-              : '—'}
-          </div>
-        </div>
-      </div>
-      
-      {/* Last calc run info */}
-      {stats.lastCalcRun && (
-        <div className="text-[10px] font-mono text-muted-foreground space-y-1 border-t border-border/30 pt-2">
-          <div className="flex justify-between">
-            <span>Last calc run:</span>
-            <span>{lastRunAge}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Processed:</span>
-            <span>
-              {stats.lastCalcRun.calculated} calc / {stats.lastCalcRun.skipped} skip / {stats.lastCalcRun.errors} err
-            </span>
-          </div>
-          {Object.keys(stats.lastCalcRun.byReason).length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1">
-              {Object.entries(stats.lastCalcRun.byReason).map(([reason, count]) => (
-                <Badge key={reason} variant="secondary" className="text-[8px] px-1 py-0">
-                  {reason}: {count}
-                </Badge>
-              ))}
+          
+          {/* Last calc run info */}
+          {stats?.lastCalcRun && (
+            <div className="text-[10px] font-mono text-muted-foreground space-y-1 border-t border-border/30 pt-2">
+              <div className="flex justify-between">
+                <span>Last calc run:</span>
+                <span>{lastRunAge}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Processed:</span>
+                <span>
+                  {stats.lastCalcRun.calculated} calc / {stats.lastCalcRun.skipped} skip / {stats.lastCalcRun.errors} err
+                </span>
+              </div>
+              {Object.keys(stats.lastCalcRun.byReason).length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {Object.entries(stats.lastCalcRun.byReason).map(([reason, count]) => (
+                    <Badge key={reason} variant="secondary" className="text-[8px] px-1 py-0">
+                      {reason}: {count}
+                    </Badge>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );

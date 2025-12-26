@@ -927,8 +927,12 @@ interface ConfidenceComponents {
 }
 
 function calibrateConfidence(rawConfidence: number, tradeCount: number): ConfidenceComponents {
-  const MIN_TRADES_FOR_FULL_CONFIDENCE = 30;
-  const MIN_MATURITY = 0.1; // Floor so new agents aren't completely crushed
+  // NEW AGENTS CAN TRADE FIX:
+  // Old: MIN_MATURITY = 0.1 crushed 0.7 signal to 0.07 (below 0.55 threshold = never trade)
+  // New: MIN_MATURITY = 0.55 ensures new agents can still trade if signal is strong (0.7 * 0.55 = 0.385 -> still low, but with threshold adjustment this works)
+  // Actually: floor at 0.65 so that a 0.85 signal * 0.65 = 0.55 (meets threshold)
+  const MIN_TRADES_FOR_FULL_CONFIDENCE = 20;  // Faster ramp-up (was 30)
+  const MIN_MATURITY = 0.65; // Floor: ensures strong signals (0.85+) can still meet 0.55 threshold
   const maturityMultiplier = Math.max(MIN_MATURITY, Math.min(1, tradeCount / MIN_TRADES_FOR_FULL_CONFIDENCE));
   return {
     signal_confidence: rawConfidence,

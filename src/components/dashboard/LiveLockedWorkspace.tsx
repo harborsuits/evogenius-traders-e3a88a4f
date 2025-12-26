@@ -13,11 +13,15 @@ import {
   Zap,
   DollarSign,
   Lock,
-  RefreshCw
+  RefreshCw,
+  OctagonX,
+  TestTube2
 } from 'lucide-react';
 import { useTradeModeContext } from '@/contexts/TradeModeContext';
 import { useLiveSafety } from '@/hooks/useLiveSafety';
-import { useArmLive, getArmedSecondsRemaining } from '@/hooks/useArmLive';
+import { useArmLive } from '@/hooks/useArmLive';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 
 interface ChecklistItem {
   label: string;
@@ -29,9 +33,11 @@ interface ChecklistItem {
 export function LiveLockedWorkspace() {
   const { setMode } = useTradeModeContext();
   const { status: liveSafety, isLoading, refresh } = useLiveSafety();
-  const { arm, isArming } = useArmLive();
+  const { arm, disarm, isArming, isDisarming } = useArmLive();
+  const { toast } = useToast();
   
   const [secondsRemaining, setSecondsRemaining] = useState(0);
+  const [isTestingOrder, setIsTestingOrder] = useState(false);
 
   // Countdown timer effect
   useEffect(() => {
@@ -49,6 +55,10 @@ export function LiveLockedWorkspace() {
     return () => clearInterval(interval);
   }, [liveSafety.isArmed, liveSafety.secondsRemaining]);
 
+  // Required permissions for trading
+  const REQUIRED_PERMISSIONS = ['wallet:orders:create', 'wallet:accounts:read'];
+  const missingPermissions = REQUIRED_PERMISSIONS.filter(p => !liveSafety.permissions.includes(p));
+
   // Build checklist from live safety status
   const checklist: ChecklistItem[] = [
     {
@@ -61,8 +71,8 @@ export function LiveLockedWorkspace() {
       label: 'Trade Permission',
       checked: liveSafety.canTrade,
       detail: liveSafety.canTrade 
-        ? 'wallet:orders:create ✓' 
-        : 'Missing create order permission',
+        ? 'All required permissions ✓' 
+        : `Missing: ${missingPermissions.join(', ') || 'Unknown'}`,
       icon: <Shield className="h-4 w-4" />,
     },
     {
@@ -89,6 +99,54 @@ export function LiveLockedWorkspace() {
 
   const preArmReady = checklist.slice(0, 4).every((item) => item.checked);
   const passedCount = checklist.filter(c => c.checked).length;
+
+  // Emergency kill handler
+  const handleKill = () => {
+    disarm();
+  };
+
+  // Test order handler - SELL 1 DOGE-USD as canary
+  const handleTestOrder = async () => {
+    if (!liveSafety.isArmed) {
+      toast({
+        title: 'Not Armed',
+        description: 'ARM live mode first to execute test order.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsTestingOrder(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('live-execute', {
+        body: {
+          symbol: 'DOGE-USD',
+          side: 'SELL',
+          qty: 1,
+          reason: 'CANARY_TEST: Manual test from Live Desk',
+        },
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: 'Test Order Submitted',
+        description: `Order ID: ${data?.order_id || 'N/A'} — Status: ${data?.status || 'unknown'}`,
+      });
+
+      console.log('[LiveDesk] Test order result:', data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      toast({
+        title: 'Test Order Failed',
+        description: message,
+        variant: 'destructive',
+      });
+      console.error('[LiveDesk] Test order error:', err);
+    } finally {
+      setIsTestingOrder(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -146,6 +204,27 @@ export function LiveLockedWorkspace() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Emergency Kill Switch - Always Visible */}
+      {liveSafety.isArmed && (
+        <Card className="border-destructive bg-destructive/20">
+          <CardContent className="pt-4">
+            <Button
+              variant="destructive"
+              className="w-full h-14 text-lg font-bold"
+              onClick={handleKill}
+              disabled={isDisarming}
+            >
+              {isDisarming ? (
+                <Loader2 className="h-6 w-6 mr-2 animate-spin" />
+              ) : (
+                <OctagonX className="h-6 w-6 mr-2" />
+              )}
+              EMERGENCY KILL — DISARM NOW
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Data Source Contract */}
       <Card className="border-primary/30 bg-primary/5">
@@ -220,6 +299,7 @@ export function LiveLockedWorkspace() {
           <CardTitle className="text-base font-mono">Actions</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {/* ARM Button */}
           <Button
             variant="destructive"
             className="w-full justify-center h-12 text-base"
@@ -246,6 +326,28 @@ export function LiveLockedWorkspace() {
               </>
             )}
           </Button>
+
+          {/* Test Order Button - Only when armed */}
+          {liveSafety.isArmed && (
+            <Button
+              variant="outline"
+              className="w-full justify-center h-10 border-primary/50 text-primary hover:bg-primary/10"
+              disabled={isTestingOrder}
+              onClick={handleTestOrder}
+            >
+              {isTestingOrder ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Submitting...
+                </>
+              ) : (
+                <>
+                  <TestTube2 className="h-4 w-4 mr-2" />
+                  Test Order: SELL 1 DOGE-USD
+                </>
+              )}
+            </Button>
+          )}
           
           <div className="pt-2 border-t border-border">
             <Button

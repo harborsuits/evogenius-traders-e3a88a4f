@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { StatusIndicator } from '@/components/dashboard/StatusIndicator';
 import { TradeModeToggle } from '@/components/dashboard/TradeModeToggle';
 import { GenerationSelector } from '@/components/dashboard/GenerationSelector';
@@ -7,14 +7,15 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { SystemStatus } from '@/types/evotrader';
-import { Dna, ExternalLink, Square, Activity, AlertTriangle, CheckCircle, Clock, Loader2, FlaskConical, GitCompare } from 'lucide-react';
+import { Dna, ExternalLink, Square, Activity, AlertTriangle, CheckCircle, Clock, Loader2, FlaskConical, GitCompare, Shield, Timer, Zap } from 'lucide-react';
 import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
 import { useTradeMode } from '@/hooks/usePaperTrading';
 import { useStrategyTestMode } from '@/hooks/useSystemConfig';
+import { useLiveSafety } from '@/hooks/useLiveSafety';
 import { supabase } from '@/integrations/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/hooks/use-toast';
-import { useEffect } from 'react';
+import { cn } from '@/lib/utils';
 
 interface HeaderProps {
   status: SystemStatus;
@@ -25,6 +26,7 @@ export function Header({ status, generationNumber }: HeaderProps) {
   const { data: marketData = [] } = useMarketData();
   const { data: tradeMode } = useTradeMode();
   const isTestMode = useStrategyTestMode();
+  const { status: liveSafety } = useLiveSafety();
   const queryClient = useQueryClient();
   const [emergencyStopping, setEmergencyStopping] = useState(false);
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState<number | null>(null);
@@ -33,6 +35,8 @@ export function Header({ status, generationNumber }: HeaderProps) {
 
   const mode = tradeMode ?? 'paper';
   const isLive = mode === 'live';
+  const isArmed = liveSafety.isArmed;
+  const armedSeconds = liveSafety.secondsRemaining;
   const isRunning = status === 'running';
   const isPaused = status === 'paused';
 
@@ -82,17 +86,31 @@ export function Header({ status, generationNumber }: HeaderProps) {
   };
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-background/90 backdrop-blur-lg">
+    <header className={cn(
+      "sticky top-0 z-50 border-b backdrop-blur-lg transition-colors",
+      isLive 
+        ? isArmed 
+          ? "border-destructive/50 bg-destructive/10" 
+          : "border-destructive/30 bg-destructive/5"
+        : "border-border bg-background/90"
+    )}>
       <div className="flex h-12 items-center justify-between px-3 gap-2">
         {/* Logo + Gen Badge */}
         <div className="flex items-center gap-2 shrink-0">
           <div className="relative flex items-center gap-1.5">
-            <Dna className="h-5 w-5 text-primary" />
-            <span className="font-mono text-sm font-bold gradient-text hidden sm:inline">
+            {isLive ? (
+              <Shield className={cn("h-5 w-5", isArmed ? "text-destructive animate-pulse" : "text-destructive/70")} />
+            ) : (
+              <Dna className="h-5 w-5 text-primary" />
+            )}
+            <span className={cn(
+              "font-mono text-sm font-bold hidden sm:inline",
+              isLive ? "text-destructive" : "gradient-text"
+            )}>
               EvoTrader
             </span>
           </div>
-          {generationNumber && (
+          {generationNumber && !isLive && (
             <Badge variant="glow" className="text-[10px] px-1.5 py-0 h-5">
               G{generationNumber}
             </Badge>
@@ -101,15 +119,45 @@ export function Header({ status, generationNumber }: HeaderProps) {
 
         {/* Center: Status Cluster */}
         <div className="flex items-center gap-1.5 flex-wrap justify-center">
-          {/* Trade Mode */}
-          <Badge 
-            variant={isLive ? 'destructive' : 'outline'}
-            className={`text-[10px] font-mono px-1.5 py-0 h-5 ${
-              isLive ? 'bg-destructive animate-pulse' : 'border-primary/50 text-primary'
-            }`}
-          >
-            {isLive ? 'LIVE' : 'PAPER'}
-          </Badge>
+          {/* Trade Mode - Prominent when live */}
+          {isLive ? (
+            <div className="flex items-center gap-1.5">
+              <Badge 
+                variant="destructive"
+                className={cn(
+                  "text-[10px] font-mono px-2 py-0 h-5",
+                  isArmed && "animate-pulse"
+                )}
+              >
+                <Shield className="h-2.5 w-2.5 mr-1" />
+                LIVE
+              </Badge>
+              {isArmed ? (
+                <Badge className="text-[10px] font-mono px-2 py-0 h-5 bg-destructive/80 text-destructive-foreground">
+                  <Timer className="h-2.5 w-2.5 mr-1" />
+                  ARMED {armedSeconds}s
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="text-[10px] font-mono px-2 py-0 h-5 border-destructive/30 text-destructive/70">
+                  LOCKED
+                </Badge>
+              )}
+              {liveSafety.coinbaseConnected && (
+                <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5 border-primary/50 text-primary hidden sm:flex">
+                  <Zap className="h-2.5 w-2.5 mr-0.5" />
+                  CB
+                </Badge>
+              )}
+            </div>
+          ) : (
+            <Badge 
+              variant="outline"
+              className="text-[10px] font-mono px-1.5 py-0 h-5 border-primary/50 text-primary"
+            >
+              <FlaskConical className="h-2.5 w-2.5 mr-1" />
+              PAPER
+            </Badge>
+          )}
 
           {/* System Status */}
           <Badge 

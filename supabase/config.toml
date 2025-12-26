@@ -57,3 +57,6 @@ verify_jwt = false
 
 [functions.shadow-outcome-calc]
 verify_jwt = false
+
+[functions.live-execute]
+verify_jwt = false

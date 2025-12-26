@@ -308,7 +308,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // === GATE 6: Live mode requires explicit arm (timestamp-based) ===
+// === GATE 6: Live mode requires explicit arm (timestamp-based) ===
     if (tradeMode === 'live') {
       const isArmed = liveArmedUntil && new Date(liveArmedUntil) > new Date();
       
@@ -340,7 +340,133 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Live is armed - forward to live-execute
+      // === GATE 7: Preflight balance check (live mode only) ===
+      console.log('[trade-execute] Fetching Coinbase balances for preflight check...');
+      
+      try {
+        const balanceUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/coinbase-balances`;
+        const balanceResponse = await fetch(balanceUrl, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+          },
+        });
+        
+        if (!balanceResponse.ok) {
+          console.error('[trade-execute] Failed to fetch balances:', balanceResponse.status);
+          return new Response(
+            JSON.stringify({ 
+              ok: false, 
+              blocked: true, 
+              reason: 'BLOCKED_BALANCE_CHECK_FAILED',
+              error: 'Could not verify Coinbase balances before trade'
+            }),
+            { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        
+        const balanceData = await balanceResponse.json();
+        const balances = balanceData.balances || [];
+        console.log('[trade-execute] Coinbase balances:', balances.map((b: { currency: string; available: string }) => 
+          `${b.currency}: ${b.available}`).join(', '));
+        
+        // Parse the symbol (e.g., "DOGE-USD" -> base="DOGE", quote="USD")
+        const [baseCurrency, quoteCurrency] = body.symbol.split('-');
+        
+        // Get available balances
+        const baseBalance = balances.find((b: { currency: string }) => b.currency === baseCurrency);
+        const quoteBalance = balances.find((b: { currency: string }) => b.currency === quoteCurrency);
+        
+        const baseAvailable = parseFloat(baseBalance?.available || '0');
+        const quoteAvailable = parseFloat(quoteBalance?.available || '0');
+        
+        console.log(`[trade-execute] Preflight: side=${body.side}, qty=${body.qty}, baseAvailable=${baseAvailable}, quoteAvailable=${quoteAvailable}`);
+        
+        // SELL requires base currency (e.g., DOGE)
+        if (body.side === 'sell') {
+          if (baseAvailable < body.qty) {
+            console.log(`[trade-execute] BLOCKED_INSUFFICIENT_BALANCE: need ${body.qty} ${baseCurrency}, have ${baseAvailable}`);
+            
+            await logDecision(supabase, 'trade_blocked', {
+              symbol: body.symbol,
+              side: body.side,
+              qty: body.qty,
+              block_reason: 'BLOCKED_INSUFFICIENT_BALANCE',
+              required: body.qty,
+              available: baseAvailable,
+              currency: baseCurrency,
+              agent_id: body.agentId,
+              generation_id: generationId,
+              mode: 'live',
+            });
+            
+            return new Response(
+              JSON.stringify({ 
+                ok: false, 
+                blocked: true, 
+                reason: 'BLOCKED_INSUFFICIENT_BALANCE',
+                error: `Cannot sell ${body.qty} ${baseCurrency}: only ${baseAvailable.toFixed(4)} available`,
+                required: body.qty,
+                available: baseAvailable,
+                currency: baseCurrency,
+              }),
+              { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        }
+        
+        // BUY requires quote currency (e.g., USD)
+        if (body.side === 'buy') {
+          // Get current price to estimate cost
+          const { data: marketData } = await supabase
+            .from('market_data')
+            .select('price')
+            .eq('symbol', body.symbol)
+            .single();
+          
+          const price = marketData?.price || 0;
+          const estimatedCost = body.qty * price * 1.01; // 1% buffer for slippage
+          
+          if (quoteAvailable < estimatedCost) {
+            console.log(`[trade-execute] BLOCKED_INSUFFICIENT_BALANCE: need ~$${estimatedCost.toFixed(2)}, have $${quoteAvailable.toFixed(2)}`);
+            
+            await logDecision(supabase, 'trade_blocked', {
+              symbol: body.symbol,
+              side: body.side,
+              qty: body.qty,
+              block_reason: 'BLOCKED_INSUFFICIENT_BALANCE',
+              estimated_cost: estimatedCost,
+              available: quoteAvailable,
+              currency: quoteCurrency,
+              agent_id: body.agentId,
+              generation_id: generationId,
+              mode: 'live',
+            });
+            
+            return new Response(
+              JSON.stringify({ 
+                ok: false, 
+                blocked: true, 
+                reason: 'BLOCKED_INSUFFICIENT_BALANCE',
+                error: `Cannot buy ${body.qty} ${baseCurrency}: need ~$${estimatedCost.toFixed(2)}, only $${quoteAvailable.toFixed(2)} available`,
+                estimated_cost: estimatedCost,
+                available: quoteAvailable,
+                currency: quoteCurrency,
+              }),
+              { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        }
+        
+        console.log('[trade-execute] Preflight balance check passed');
+        
+      } catch (prefErr) {
+        console.error('[trade-execute] Preflight balance check error:', prefErr);
+        // Don't block on preflight errors - let live-execute handle it
+        console.log('[trade-execute] Continuing despite preflight error...');
+      }
+
+      // Live is armed and preflight passed - forward to live-execute
       console.log(`[trade-execute] Live mode armed until ${liveArmedUntil}, forwarding to live-execute`);
       
       const liveUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/live-execute`;

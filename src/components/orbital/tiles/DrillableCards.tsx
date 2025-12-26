@@ -16,7 +16,8 @@ import {
   History,
   Activity,
   Bell,
-  Zap
+  Zap,
+  Lock
 } from 'lucide-react';
 
 // Portfolio Card Content - Uses unified hook for Paper/Live data
@@ -24,6 +25,7 @@ export function PortfolioCardContent({ compact }: { compact?: boolean }) {
   const { summary, positions, dataSource, isPaper, isLive, isLiveArmed } = usePortfolioData();
   
   const { totalEquity, totalPnl, totalPnlPct } = summary;
+  const isLocked = dataSource === 'locked';
 
   return (
     <div className="space-y-3">
@@ -40,30 +42,41 @@ export function PortfolioCardContent({ compact }: { compact?: boolean }) {
         )}
       </div>
       
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Wallet className="h-4 w-4" />
-          <span className="text-xs">Total Equity</span>
+      {isLocked ? (
+        // LOCKED state - show placeholder, no paper data
+        <div className="text-center py-6 text-muted-foreground">
+          <Lock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+          <p className="text-xs">ARM required to view live data</p>
+          <p className="text-[10px] mt-1 opacity-70">Enable ARM (60s) to unlock</p>
         </div>
-        <div className="font-mono font-bold">
-          ${totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-        </div>
-      </div>
-      
-      {isPaper && (
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">Total P&L</span>
-          <div className={`font-mono ${totalPnl >= 0 ? 'text-success' : 'text-destructive'}`}>
-            {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} ({totalPnlPct >= 0 ? '+' : ''}{totalPnlPct.toFixed(2)}%)
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Wallet className="h-4 w-4" />
+              <span className="text-xs">Total Equity</span>
+            </div>
+            <div className="font-mono font-bold">
+              ${totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </div>
           </div>
-        </div>
+          
+          {isPaper && (
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Total P&L</span>
+              <div className={`font-mono ${totalPnl >= 0 ? 'text-success' : 'text-destructive'}`}>
+                {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} ({totalPnlPct >= 0 ? '+' : ''}{totalPnlPct.toFixed(2)}%)
+              </div>
+            </div>
+          )}
+          
+          <div className="text-xs text-muted-foreground pt-2 border-t border-border/50">
+            <span>{positions.length} positions</span>
+            <span className="mx-2">•</span>
+            <span>Click to view details →</span>
+          </div>
+        </>
       )}
-      
-      <div className="text-xs text-muted-foreground pt-2 border-t border-border/50">
-        <span>{positions.length} positions</span>
-        <span className="mx-2">•</span>
-        <span>Click to view details →</span>
-      </div>
     </div>
   );
 }
@@ -71,12 +84,13 @@ export function PortfolioCardContent({ compact }: { compact?: boolean }) {
 // Positions Card Content - Uses unified hook for Paper/Live data
 export function PositionsCardContent({ compact }: { compact?: boolean }) {
   const { positions, dataSource, isPaper, isLive, isLiveArmed } = usePortfolioData();
+  const isLocked = dataSource === 'locked';
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-muted-foreground">
         <Package className="h-4 w-4" />
-        <span className="text-xs">{positions.length} Open Positions</span>
+        <span className="text-xs">{isLocked ? 'Positions' : `${positions.length} Open Positions`}</span>
         {isLive && isLiveArmed && (
           <Badge variant="glow" className="text-[10px] ml-auto flex items-center gap-1">
             <Zap className="h-2.5 w-2.5" />LIVE
@@ -85,9 +99,17 @@ export function PositionsCardContent({ compact }: { compact?: boolean }) {
         {isPaper && (
           <Badge variant="outline" className="text-[10px] ml-auto">PAPER</Badge>
         )}
+        {isLocked && (
+          <Badge variant="destructive" className="text-[10px] ml-auto">LOCKED</Badge>
+        )}
       </div>
       
-      {positions.length === 0 ? (
+      {isLocked ? (
+        <div className="text-center py-4 text-muted-foreground">
+          <Lock className="h-6 w-6 mx-auto mb-2 opacity-50" />
+          <p className="text-xs">ARM to view positions</p>
+        </div>
+      ) : positions.length === 0 ? (
         <div className="text-xs text-muted-foreground text-center py-4">
           No open positions
         </div>
@@ -121,17 +143,27 @@ export function PositionsCardContent({ compact }: { compact?: boolean }) {
 
 // Orders Card Content - Uses unified hook
 export function OrdersCardContent({ compact }: { compact?: boolean }) {
-  const { orders, isPaper, isLive, isLiveArmed } = usePortfolioData();
+  const { orders, dataSource, isPaper, isLive, isLiveArmed } = usePortfolioData();
+  const isLocked = dataSource === 'locked';
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-muted-foreground">
         <ShoppingCart className="h-4 w-4" />
         <span className="text-xs">Recent Orders</span>
-        <Badge variant="outline" className="text-[10px] ml-auto">{orders.length}</Badge>
+        {isLocked ? (
+          <Badge variant="destructive" className="text-[10px] ml-auto">LOCKED</Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px] ml-auto">{orders.length}</Badge>
+        )}
       </div>
       
-      {orders.length === 0 ? (
+      {isLocked ? (
+        <div className="text-center py-4 text-muted-foreground">
+          <Lock className="h-6 w-6 mx-auto mb-2 opacity-50" />
+          <p className="text-xs">ARM to view orders</p>
+        </div>
+      ) : orders.length === 0 ? (
         <div className="text-xs text-muted-foreground text-center py-4">
           {isLive && isLiveArmed ? 'Live orders not tracked here' : 'No orders yet'}
         </div>
@@ -166,9 +198,32 @@ export function OrdersCardContent({ compact }: { compact?: boolean }) {
 
 // Activity Card Content - Uses unified hook, shows Paper activity or Live message
 export function ActivityCardContent({ compact }: { compact?: boolean }) {
-  const { orders, isPaper, isLive, isLiveArmed } = usePortfolioData();
+  const { orders, dataSource, isPaper, isLive, isLiveArmed } = usePortfolioData();
+  const isLocked = dataSource === 'locked';
 
-  // For live mode, we show a different message since orders aren't tracked in paper tables
+  // LOCKED state - show placeholder
+  if (isLocked) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Activity className="h-4 w-4" />
+          <span className="text-xs">Recent Activity</span>
+          <Badge variant="destructive" className="text-[10px] ml-auto">LOCKED</Badge>
+        </div>
+        
+        <div className="text-center py-4 text-muted-foreground">
+          <Lock className="h-6 w-6 mx-auto mb-2 opacity-50" />
+          <p className="text-xs">ARM to view activity</p>
+        </div>
+        
+        <div className="text-xs text-muted-foreground pt-2 border-t border-border/50">
+          Click to view trades →
+        </div>
+      </div>
+    );
+  }
+
+  // For live mode armed, we show a different message since orders aren't tracked in paper tables
   if (isLive && isLiveArmed) {
     return (
       <div className="space-y-3">

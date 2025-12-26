@@ -46,37 +46,101 @@ function parsePrivateKey(input: string): Uint8Array {
   return Uint8Array.from(atob(key), c => c.charCodeAt(0));
 }
 
-function sec1ToJWK(sec1Bytes: Uint8Array): JsonWebKey {
-  let privateKeyStart = -1;
-  for (let i = 0; i < sec1Bytes.length - 33; i++) {
-    if (sec1Bytes[i] === 0x04 && sec1Bytes[i + 1] === 0x20) {
-      privateKeyStart = i + 2;
-      break;
+// Find a byte sequence in an array
+function findSequence(arr: Uint8Array, seq: number[], startFrom = 0): number {
+  for (let i = startFrom; i <= arr.length - seq.length; i++) {
+    let found = true;
+    for (let j = 0; j < seq.length; j++) {
+      if (arr[i + j] !== seq[j]) {
+        found = false;
+        break;
+      }
+    }
+    if (found) return i;
+  }
+  return -1;
+}
+
+// Convert EC private key bytes to JWK format for P-256
+function derToJWK(derBytes: Uint8Array): JsonWebKey {
+  let privateKeyBytes: Uint8Array | null = null;
+  let publicKeyBytes: Uint8Array | null = null;
+  
+  // Pattern 1: OCTET STRING with length 32 (0x04 0x20)
+  let idx = findSequence(derBytes, [0x04, 0x20]);
+  if (idx !== -1 && idx + 34 <= derBytes.length) {
+    privateKeyBytes = derBytes.slice(idx + 2, idx + 34);
+  }
+  
+  // Pattern 2: For PKCS8, look for P-256 OID
+  if (!privateKeyBytes) {
+    const p256OidIdx = findSequence(derBytes, [0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07]);
+    if (p256OidIdx !== -1) {
+      for (let i = p256OidIdx + 10; i < derBytes.length - 40; i++) {
+        if (derBytes[i] === 0x04 && derBytes[i + 2] === 0x30) {
+          const nestedIdx = findSequence(derBytes, [0x04, 0x20], i + 2);
+          if (nestedIdx !== -1 && nestedIdx + 34 <= derBytes.length) {
+            privateKeyBytes = derBytes.slice(nestedIdx + 2, nestedIdx + 34);
+            break;
+          }
+        }
+      }
     }
   }
   
-  if (privateKeyStart === -1) {
-    throw new Error('Could not find private key in SEC1 structure');
+  // Pattern 3: Scan for any 32-byte sequence after 0x04 0x20
+  if (!privateKeyBytes) {
+    for (let i = 0; i < derBytes.length - 33; i++) {
+      if (derBytes[i] === 0x04 && derBytes[i + 1] === 0x20) {
+        privateKeyBytes = derBytes.slice(i + 2, i + 34);
+        break;
+      }
+    }
   }
   
-  const privateKeyBytes = sec1Bytes.slice(privateKeyStart, privateKeyStart + 32);
+  if (!privateKeyBytes) {
+    if (derBytes.length === 32) {
+      privateKeyBytes = derBytes;
+    } else if (derBytes.length === 64) {
+      privateKeyBytes = derBytes.slice(0, 32);
+      publicKeyBytes = derBytes.slice(32, 64);
+    } else {
+      throw new Error(`Could not find private key (length: ${derBytes.length})`);
+    }
+  }
+  
+  // Find public key
+  if (!publicKeyBytes) {
+    let pubIdx = findSequence(derBytes, [0x03, 0x42, 0x00, 0x04]);
+    if (pubIdx !== -1 && pubIdx + 68 <= derBytes.length) {
+      publicKeyBytes = derBytes.slice(pubIdx + 4, pubIdx + 68);
+    }
+    if (!publicKeyBytes) {
+      pubIdx = findSequence(derBytes, [0x03, 0x41, 0x04]);
+      if (pubIdx !== -1 && pubIdx + 67 <= derBytes.length) {
+        publicKeyBytes = derBytes.slice(pubIdx + 3, pubIdx + 67);
+      }
+    }
+    if (!publicKeyBytes) {
+      for (let i = (privateKeyBytes ? 34 : 0); i < derBytes.length - 64; i++) {
+        if (derBytes[i] === 0x04) {
+          const potentialPub = derBytes.slice(i + 1, i + 65);
+          if (potentialPub.length === 64) {
+            publicKeyBytes = potentialPub;
+            break;
+          }
+        }
+      }
+    }
+  }
+  
+  if (!publicKeyBytes || publicKeyBytes.length !== 64) {
+    throw new Error('Could not find public key in key structure');
+  }
+  
   const d = base64urlEncode(privateKeyBytes);
-  
-  let publicKeyStart = -1;
-  for (let i = privateKeyStart + 32; i < sec1Bytes.length - 65; i++) {
-    if (sec1Bytes[i] === 0x03 && sec1Bytes[i + 1] === 0x42 && 
-        sec1Bytes[i + 2] === 0x00 && sec1Bytes[i + 3] === 0x04) {
-      publicKeyStart = i + 4;
-      break;
-    }
-  }
-  
-  if (publicKeyStart === -1) {
-    throw new Error('Could not find public key in SEC1 structure');
-  }
-  
-  const x = base64urlEncode(sec1Bytes.slice(publicKeyStart, publicKeyStart + 32));
-  const y = base64urlEncode(sec1Bytes.slice(publicKeyStart + 32, publicKeyStart + 64));
+  const x = base64urlEncode(publicKeyBytes.slice(0, 32));
+  const y = base64urlEncode(publicKeyBytes.slice(32, 64));
   
   return { kty: 'EC', crv: 'P-256', d, x, y };
 }
@@ -247,7 +311,7 @@ Deno.serve(async (req) => {
     console.log('[live-execute] Fetching Coinbase account balances...');
     
     const keyBytes = parsePrivateKey(privateKeyInput);
-    const jwk = sec1ToJWK(keyBytes);
+    const jwk = derToJWK(keyBytes);
     const privateKey = await crypto.subtle.importKey(
       'jwk',
       jwk,

@@ -7,68 +7,88 @@ import {
   AlertTriangle, 
   CheckCircle2, 
   XCircle, 
-  Users, 
-  Key, 
   Timer,
   FlaskConical,
-  Loader2
+  Loader2,
+  Zap,
+  DollarSign,
+  Lock,
+  RefreshCw
 } from 'lucide-react';
 import { useTradeModeContext } from '@/contexts/TradeModeContext';
-import { useSystemState } from '@/hooks/useEvoTraderData';
-import { useArmLive, isArmedNow, getArmedSecondsRemaining } from '@/hooks/useArmLive';
+import { useLiveSafety } from '@/hooks/useLiveSafety';
+import { useArmLive, getArmedSecondsRemaining } from '@/hooks/useArmLive';
 
 interface ChecklistItem {
   label: string;
   checked: boolean;
+  detail?: string;
   icon: React.ReactNode;
 }
 
 export function LiveLockedWorkspace() {
-  const { setMode, isLiveArmed } = useTradeModeContext();
-  const { data: systemState } = useSystemState();
+  const { setMode } = useTradeModeContext();
+  const { status: liveSafety, isLoading, refresh } = useLiveSafety();
   const { arm, isArming } = useArmLive();
   
-  // Get armed status from system state
-  const armedUntil = (systemState as any)?.live_armed_until ?? null;
-  const isArmed = isArmedNow(armedUntil);
   const [secondsRemaining, setSecondsRemaining] = useState(0);
 
   // Countdown timer effect
   useEffect(() => {
-    if (!armedUntil) {
+    if (!liveSafety.isArmed) {
       setSecondsRemaining(0);
       return;
     }
 
     const updateCountdown = () => {
-      setSecondsRemaining(getArmedSecondsRemaining(armedUntil));
+      setSecondsRemaining(liveSafety.secondsRemaining);
     };
 
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [armedUntil]);
+  }, [liveSafety.isArmed, liveSafety.secondsRemaining]);
 
-  // TODO: These will be real checks once implemented
+  // Build checklist from live safety status
   const checklist: ChecklistItem[] = [
     {
-      label: 'Deployed cohort selected',
-      checked: false, // Will check agents with status='DEPLOYED'
-      icon: <Users className="h-4 w-4" />,
+      label: 'Coinbase Connected',
+      checked: liveSafety.coinbaseConnected,
+      detail: liveSafety.coinbaseConnected ? 'API keys configured' : 'Connect in settings',
+      icon: <Zap className="h-4 w-4" />,
     },
     {
-      label: 'Live API keys connected',
-      checked: false, // Will check exchange_connections
-      icon: <Key className="h-4 w-4" />,
+      label: 'Trade Permission',
+      checked: liveSafety.canTrade,
+      detail: liveSafety.canTrade 
+        ? 'wallet:orders:create ✓' 
+        : 'Missing create order permission',
+      icon: <Shield className="h-4 w-4" />,
     },
     {
-      label: 'ARM enabled (60s window)',
-      checked: isArmed,
+      label: 'Live Cap Set',
+      checked: liveSafety.liveCap > 0,
+      detail: `$${liveSafety.liveCap.toFixed(2)} max per trade`,
+      icon: <DollarSign className="h-4 w-4" />,
+    },
+    {
+      label: 'Cash Available',
+      checked: liveSafety.maxAllowed > 0,
+      detail: liveSafety.usdAvailable > 0 
+        ? `$${liveSafety.usdAvailable.toFixed(2)} available` 
+        : 'No USD in Coinbase',
+      icon: <DollarSign className="h-4 w-4" />,
+    },
+    {
+      label: 'ARM Enabled (60s window)',
+      checked: liveSafety.isArmed,
+      detail: liveSafety.isArmed ? `${secondsRemaining}s remaining` : 'Click ARM to unlock',
       icon: <Timer className="h-4 w-4" />,
     },
   ];
 
-  const preArmChecks = checklist.slice(0, 2).every((item) => item.checked);
+  const preArmReady = checklist.slice(0, 4).every((item) => item.checked);
+  const passedCount = checklist.filter(c => c.checked).length;
 
   return (
     <div className="space-y-6">
@@ -80,51 +100,94 @@ export function LiveLockedWorkspace() {
               <Shield className="h-6 w-6 text-destructive" />
               <div>
                 <CardTitle className="text-lg flex items-center gap-2">
-                  LIVE MODE
-                  {isArmed ? (
+                  LIVE DESK
+                  {liveSafety.isArmed ? (
                     <Badge variant="destructive" className="animate-pulse">
                       ARMED — {secondsRemaining}s
                     </Badge>
                   ) : (
-                    <Badge variant="destructive" className="opacity-70">
+                    <Badge variant="outline" className="border-destructive/50 text-destructive">
+                      <Lock className="h-3 w-3 mr-1" />
                       LOCKED
                     </Badge>
                   )}
                 </CardTitle>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Front lines workspace — real money execution
+                  Real money execution — Coinbase only
                 </p>
               </div>
             </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={refresh}
+              disabled={isLoading}
+              className="h-8 px-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </Button>
           </div>
         </CardHeader>
         <CardContent>
           <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-            isArmed 
+            liveSafety.isArmed 
               ? 'bg-destructive/20 border-destructive/40' 
               : 'bg-destructive/10 border-destructive/20'
           }`}>
             <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
-            <p className="text-sm text-destructive">
-              {isArmed 
+            <div className="text-sm text-destructive">
+              {liveSafety.isArmed 
                 ? `Live execution unlocked for ${secondsRemaining} seconds. Execute with caution.`
-                : 'Live trading is locked until all safety checks pass and ARM is enabled.'
+                : liveSafety.blockers.length > 0
+                  ? `Blocked: ${liveSafety.blockers.join(', ')}`
+                  : 'Live trading is locked. Complete all checks and ARM to unlock.'
               }
-            </p>
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Deployment Checklist */}
+      {/* Data Source Contract */}
+      <Card className="border-primary/30 bg-primary/5">
+        <CardContent className="pt-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground uppercase tracking-wider">Data Source</span>
+            {liveSafety.isArmed ? (
+              <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1">
+                <Zap className="h-2.5 w-2.5" />
+                COINBASE
+              </Badge>
+            ) : (
+              <Badge variant="destructive" className="text-[10px] font-mono">
+                <Lock className="h-2.5 w-2.5 mr-1" />
+                LOCKED
+              </Badge>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            {liveSafety.isArmed 
+              ? 'All portfolio data comes from Coinbase API. No paper data shown.'
+              : 'No data displayed until ARM is enabled. Paper data is never shown here.'
+            }
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Safety Checklist */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-mono">Deployment Checklist</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base font-mono">Safety Checklist</CardTitle>
+            <Badge variant="outline" className="text-[10px] font-mono">
+              {passedCount}/{checklist.length}
+            </Badge>
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
           {checklist.map((item, index) => (
             <div
               key={index}
-              className={`flex items-center gap-3 p-3 rounded-lg border ${
+              className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
                 item.checked
                   ? 'bg-primary/5 border-primary/20'
                   : 'bg-muted/30 border-border'
@@ -133,13 +196,18 @@ export function LiveLockedWorkspace() {
               <div className={item.checked ? 'text-primary' : 'text-muted-foreground'}>
                 {item.icon}
               </div>
-              <span className={`text-sm flex-1 ${item.checked ? 'text-foreground' : 'text-muted-foreground'}`}>
-                {item.label}
-              </span>
+              <div className="flex-1 min-w-0">
+                <span className={`text-sm ${item.checked ? 'text-foreground' : 'text-muted-foreground'}`}>
+                  {item.label}
+                </span>
+                {item.detail && (
+                  <p className="text-[10px] text-muted-foreground truncate">{item.detail}</p>
+                )}
+              </div>
               {item.checked ? (
-                <CheckCircle2 className="h-5 w-5 text-primary" />
+                <CheckCircle2 className="h-5 w-5 text-primary shrink-0" />
               ) : (
-                <XCircle className="h-5 w-5 text-muted-foreground/50" />
+                <XCircle className="h-5 w-5 text-muted-foreground/50 shrink-0" />
               )}
             </div>
           ))}
@@ -152,32 +220,30 @@ export function LiveLockedWorkspace() {
           <CardTitle className="text-base font-mono">Actions</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <Button variant="outline" className="w-full justify-start" disabled>
-            <Users className="h-4 w-4 mr-2" />
-            View Deployed Cohort
-            <Badge variant="secondary" className="ml-auto">Coming Soon</Badge>
-          </Button>
-          
-          <Button variant="outline" className="w-full justify-start" disabled>
-            <Shield className="h-4 w-4 mr-2" />
-            Deploy Winners from Paper
-            <Badge variant="secondary" className="ml-auto">Coming Soon</Badge>
-          </Button>
-          
           <Button
             variant="destructive"
-            className="w-full justify-start"
-            disabled={isArming || isArmed}
+            className="w-full justify-center h-12 text-base"
+            disabled={isArming || liveSafety.isArmed || !preArmReady}
             onClick={() => arm()}
           >
             {isArming ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              <>
+                <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                Arming...
+              </>
+            ) : liveSafety.isArmed ? (
+              <>
+                <Timer className="h-5 w-5 mr-2" />
+                Armed — {secondsRemaining}s remaining
+              </>
             ) : (
-              <Timer className="h-4 w-4 mr-2" />
-            )}
-            {isArmed ? `Armed — ${secondsRemaining}s remaining` : 'ARM Live (60s)'}
-            {!isArmed && !isArming && (
-              <span className="ml-auto text-xs opacity-70">⚠️ Danger</span>
+              <>
+                <Timer className="h-5 w-5 mr-2" />
+                ARM Live (60s)
+                {!preArmReady && (
+                  <span className="ml-2 text-xs opacity-70">Complete checks first</span>
+                )}
+              </>
             )}
           </Button>
           
@@ -199,10 +265,10 @@ export function LiveLockedWorkspace() {
         <CardContent className="pt-4">
           <div className="text-xs text-muted-foreground space-y-2 font-mono">
             <p>
-              <strong>Live workspace</strong> shows only DEPLOYED agents (5-20 elite winners).
+              <strong className="text-destructive">Live Desk</strong> shows ONLY Coinbase-sourced data.
             </p>
             <p>
-              Paper workspace is your training ground with 100 agents running the evolution loop.
+              Paper data is <strong>never</strong> displayed here — not even as a fallback.
             </p>
             <p>
               Think of it as: <span className="text-primary">Paper = training camp</span>,{' '}

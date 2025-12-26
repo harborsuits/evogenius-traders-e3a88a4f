@@ -340,30 +340,38 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Live is armed - but we still don't execute live trades yet (future implementation)
-      console.log(`[trade-execute] Live mode is armed until ${liveArmedUntil}, but live execution not implemented yet`);
+      // Live is armed - forward to live-execute
+      console.log(`[trade-execute] Live mode armed until ${liveArmedUntil}, forwarding to live-execute`);
       
-      await logDecision(supabase, 'trade_blocked', {
-        symbol: body.symbol,
-        side: body.side,
-        qty: body.qty,
-        block_reason: 'LIVE_NOT_IMPLEMENTED',
-        live_armed_until: liveArmedUntil,
-        agent_id: body.agentId,
-        generation_id: generationId,
-        mode: 'live',
+      const liveUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/live-execute`;
+      
+      const liveResponse = await fetch(liveUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+        },
+        body: JSON.stringify({
+          symbol: body.symbol,
+          side: body.side,
+          qty: body.qty,
+          orderType: body.orderType,
+          limitPrice: body.limitPrice,
+          agentId: body.agentId,
+          generationId: generationId,
+          tags: body.tags,
+        }),
       });
 
+      const liveResult = await liveResponse.json();
+      console.log('[trade-execute] Live result:', liveResult);
+
       return new Response(
-        JSON.stringify({ 
-          ok: false, 
-          blocked: true,
-          reason: 'LIVE_NOT_IMPLEMENTED',
-          error: 'Live execution is armed but not yet implemented. Use paper mode.',
-          mode: 'live',
-          armed: true,
-        }),
-        { status: 501, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ ...liveResult, mode: 'live', gates_passed: true }),
+        { 
+          status: liveResponse.status, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
       );
     }
 

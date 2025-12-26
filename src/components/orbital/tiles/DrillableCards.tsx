@@ -1,11 +1,6 @@
 // Drillable Card Content Components - Compact summaries that link to full pages
-import { 
-  usePaperAccount, 
-  usePaperPositions, 
-  usePaperOrders,
-  usePaperRealtimeSubscriptions 
-} from '@/hooks/usePaperTrading';
-import { useMarketData, useGenerationHistory } from '@/hooks/useEvoTraderData';
+import { usePortfolioData } from '@/hooks/usePortfolioData';
+import { useGenerationHistory } from '@/hooks/useEvoTraderData';
 import { useSystemState } from '@/hooks/useEvoTraderData';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -20,32 +15,31 @@ import {
   Trophy,
   History,
   Activity,
-  Bell
+  Bell,
+  Zap
 } from 'lucide-react';
 
-// Portfolio Card Content
+// Portfolio Card Content - Uses unified hook for Paper/Live data
 export function PortfolioCardContent({ compact }: { compact?: boolean }) {
-  const { data: account } = usePaperAccount();
-  const { data: positions = [] } = usePaperPositions(account?.id);
-  const { data: marketData = [] } = useMarketData();
+  const { summary, positions, dataSource, isPaper, isLive, isLiveArmed } = usePortfolioData();
   
-  usePaperRealtimeSubscriptions();
-  
-  const cash = account?.cash ?? 0;
-  const startingCash = account?.starting_cash ?? 1000;
-  
-  const positionValues = positions.map(pos => {
-    const market = marketData.find(m => m.symbol === pos.symbol);
-    return pos.qty * (market?.price ?? pos.avg_entry_price);
-  });
-  
-  const totalPositionValue = positionValues.reduce((sum, v) => sum + v, 0);
-  const totalEquity = cash + totalPositionValue;
-  const totalPnl = totalEquity - startingCash;
-  const pnlPct = startingCash > 0 ? (totalPnl / startingCash) * 100 : 0;
+  const { totalEquity, totalPnl, totalPnlPct } = summary;
 
   return (
     <div className="space-y-3">
+      {/* Mode indicator */}
+      <div className="flex items-center gap-2">
+        {isPaper ? (
+          <Badge variant="outline" className="text-[10px]">PAPER</Badge>
+        ) : isLiveArmed ? (
+          <Badge variant="glow" className="text-[10px] flex items-center gap-1">
+            <Zap className="h-2.5 w-2.5" />LIVE
+          </Badge>
+        ) : (
+          <Badge variant="destructive" className="text-[10px]">LOCKED</Badge>
+        )}
+      </div>
+      
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-muted-foreground">
           <Wallet className="h-4 w-4" />
@@ -56,12 +50,14 @@ export function PortfolioCardContent({ compact }: { compact?: boolean }) {
         </div>
       </div>
       
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">Total P&L</span>
-        <div className={`font-mono ${totalPnl >= 0 ? 'text-success' : 'text-destructive'}`}>
-          {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%)
+      {isPaper && (
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">Total P&L</span>
+          <div className={`font-mono ${totalPnl >= 0 ? 'text-success' : 'text-destructive'}`}>
+            {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} ({totalPnlPct >= 0 ? '+' : ''}{totalPnlPct.toFixed(2)}%)
+          </div>
         </div>
-      </div>
+      )}
       
       <div className="text-xs text-muted-foreground pt-2 border-t border-border/50">
         <span>{positions.length} positions</span>
@@ -72,42 +68,46 @@ export function PortfolioCardContent({ compact }: { compact?: boolean }) {
   );
 }
 
-// Positions Card Content
+// Positions Card Content - Uses unified hook for Paper/Live data
 export function PositionsCardContent({ compact }: { compact?: boolean }) {
-  const { data: account } = usePaperAccount();
-  const { data: positions = [] } = usePaperPositions(account?.id);
-  const { data: marketData = [] } = useMarketData();
-  
-  const activePositions = positions.filter(p => p.qty !== 0);
+  const { positions, dataSource, isPaper, isLive, isLiveArmed } = usePortfolioData();
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-muted-foreground">
         <Package className="h-4 w-4" />
-        <span className="text-xs">{activePositions.length} Open Positions</span>
+        <span className="text-xs">{positions.length} Open Positions</span>
+        {isLive && isLiveArmed && (
+          <Badge variant="glow" className="text-[10px] ml-auto flex items-center gap-1">
+            <Zap className="h-2.5 w-2.5" />LIVE
+          </Badge>
+        )}
+        {isPaper && (
+          <Badge variant="outline" className="text-[10px] ml-auto">PAPER</Badge>
+        )}
       </div>
       
-      {activePositions.length === 0 ? (
+      {positions.length === 0 ? (
         <div className="text-xs text-muted-foreground text-center py-4">
           No open positions
         </div>
       ) : (
         <ScrollArea className="max-h-[100px]">
           <div className="space-y-1">
-            {activePositions.slice(0, 5).map(pos => {
-              const market = marketData.find(m => m.symbol === pos.symbol);
-              const currentPrice = market?.price ?? pos.avg_entry_price;
-              const unrealizedPnl = pos.qty * (currentPrice - pos.avg_entry_price);
-              
-              return (
-                <div key={pos.id} className="flex items-center justify-between text-xs">
-                  <span className="font-mono">{pos.symbol}</span>
-                  <span className={unrealizedPnl >= 0 ? 'text-success' : 'text-destructive'}>
-                    {unrealizedPnl >= 0 ? '+' : ''}${unrealizedPnl.toFixed(2)}
+            {positions.slice(0, 5).map(pos => (
+              <div key={pos.id} className="flex items-center justify-between text-xs">
+                <span className="font-mono">{pos.symbol}</span>
+                {isPaper ? (
+                  <span className={pos.unrealizedPnl >= 0 ? 'text-success' : 'text-destructive'}>
+                    {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
                   </span>
-                </div>
-              );
-            })}
+                ) : (
+                  <span className="font-mono text-muted-foreground">
+                    {pos.qty.toFixed(4)}
+                  </span>
+                )}
+              </div>
+            ))}
           </div>
         </ScrollArea>
       )}
@@ -119,10 +119,9 @@ export function PositionsCardContent({ compact }: { compact?: boolean }) {
   );
 }
 
-// Orders Card Content
+// Orders Card Content - Uses unified hook
 export function OrdersCardContent({ compact }: { compact?: boolean }) {
-  const { data: account } = usePaperAccount();
-  const { data: orders = [] } = usePaperOrders(account?.id, 10);
+  const { orders, isPaper, isLive, isLiveArmed } = usePortfolioData();
 
   return (
     <div className="space-y-3">
@@ -134,7 +133,7 @@ export function OrdersCardContent({ compact }: { compact?: boolean }) {
       
       {orders.length === 0 ? (
         <div className="text-xs text-muted-foreground text-center py-4">
-          No orders yet
+          {isLive && isLiveArmed ? 'Live orders not tracked here' : 'No orders yet'}
         </div>
       ) : (
         <ScrollArea className="max-h-[100px]">
@@ -147,8 +146,8 @@ export function OrdersCardContent({ compact }: { compact?: boolean }) {
                   </Badge>
                   <span className="font-mono">{order.symbol}</span>
                 </div>
-                {order.status === 'filled' && order.filled_price ? (
-                  <span className="font-mono text-muted-foreground">${order.filled_price.toLocaleString()}</span>
+                {order.status === 'filled' && order.filledPrice ? (
+                  <span className="font-mono text-muted-foreground">${order.filledPrice.toLocaleString()}</span>
                 ) : (
                   <Badge variant="outline" className="text-[10px]">{order.status}</Badge>
                 )}
@@ -165,111 +164,59 @@ export function OrdersCardContent({ compact }: { compact?: boolean }) {
   );
 }
 
-// Activity Card Content - Combined Orders + Fills (properly scoped to account)
+// Activity Card Content - Uses unified hook, shows Paper activity or Live message
 export function ActivityCardContent({ compact }: { compact?: boolean }) {
-  const { data: account } = usePaperAccount();
-  
-  const { data: activity = [] } = useQuery({
-    queryKey: ['recent-activity', account?.id],
-    queryFn: async () => {
-      if (!account?.id) return [];
-      
-      // Get recent orders for this account
-      const { data: orders } = await supabase
-        .from('paper_orders')
-        .select('id, side, symbol, status, filled_price, created_at')
-        .eq('account_id', account.id)
-        .order('created_at', { ascending: false })
-        .limit(15);
-      
-      if (!orders?.length) return [];
-      
-      // Get order IDs to filter fills (ensures fills belong to this account)
-      const orderIds = orders.map(o => o.id);
-      
-      // Get fills only for orders belonging to this account
-      const { data: fills } = await supabase
-        .from('paper_fills')
-        .select('id, order_id, side, symbol, price, timestamp')
-        .in('order_id', orderIds)
-        .order('timestamp', { ascending: false })
-        .limit(15);
-      
-      // Create a set of order IDs that have fills (for deduplication)
-      const filledOrderIds = new Set((fills || []).map(f => f.order_id));
-      
-      // Build activity list: prefer fills over orders when both exist
-      const activity: Array<{
-        id: string;
-        type: 'order' | 'fill';
-        side: string;
-        symbol: string;
-        price: number | null;
-        status: string;
-        time: string;
-      }> = [];
-      
-      // Add fills first (these are confirmed executions)
-      for (const f of fills || []) {
-        activity.push({
-          id: f.id,
-          type: 'fill',
-          side: f.side,
-          symbol: f.symbol,
-          price: f.price,
-          status: 'filled',
-          time: f.timestamp,
-        });
-      }
-      
-      // Add orders that don't have fills (pending/rejected)
-      for (const o of orders) {
-        if (!filledOrderIds.has(o.id)) {
-          activity.push({
-            id: o.id,
-            type: 'order',
-            side: o.side,
-            symbol: o.symbol,
-            price: o.filled_price,
-            status: o.status,
-            time: o.created_at,
-          });
-        }
-      }
-      
-      // Sort by time descending
-      return activity
-        .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-        .slice(0, 8);
-    },
-    enabled: !!account?.id,
-  });
+  const { orders, isPaper, isLive, isLiveArmed } = usePortfolioData();
 
+  // For live mode, we show a different message since orders aren't tracked in paper tables
+  if (isLive && isLiveArmed) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Activity className="h-4 w-4" />
+          <span className="text-xs">Recent Activity</span>
+          <Badge variant="glow" className="text-[10px] ml-auto flex items-center gap-1">
+            <Zap className="h-2.5 w-2.5" />LIVE
+          </Badge>
+        </div>
+        
+        <div className="text-xs text-muted-foreground text-center py-4">
+          Live activity shown on Coinbase
+        </div>
+        
+        <div className="text-xs text-muted-foreground pt-2 border-t border-border/50">
+          Click to view trades →
+        </div>
+      </div>
+    );
+  }
+
+  // Paper mode - show orders as activity
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-muted-foreground">
         <Activity className="h-4 w-4" />
         <span className="text-xs">Recent Activity</span>
-        <Badge variant="outline" className="text-[10px] ml-auto">{activity.length}</Badge>
+        <Badge variant="outline" className="text-[10px] ml-auto">{orders.length}</Badge>
       </div>
       
-      {activity.length === 0 ? (
+      {orders.length === 0 ? (
         <div className="text-xs text-muted-foreground text-center py-4">
           No activity yet
         </div>
       ) : (
         <ScrollArea className="max-h-[120px]">
           <div className="space-y-1">
-            {activity.slice(0, 6).map((item) => (
-              <div key={`${item.type}-${item.id}`} className="flex items-center justify-between text-xs">
+            {orders.slice(0, 6).map((item) => (
+              <div key={item.id} className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2">
                   <Badge variant={item.side === 'buy' ? 'success' : 'danger'} className="text-[10px] px-1">
                     {item.side.toUpperCase()}
                   </Badge>
                   <span className="font-mono">{item.symbol}</span>
                 </div>
-                {item.price ? (
-                  <span className="font-mono text-muted-foreground">${item.price.toLocaleString()}</span>
+                {item.filledPrice ? (
+                  <span className="font-mono text-muted-foreground">${item.filledPrice.toLocaleString()}</span>
                 ) : (
                   <Badge variant="outline" className="text-[10px]">{item.status}</Badge>
                 )}

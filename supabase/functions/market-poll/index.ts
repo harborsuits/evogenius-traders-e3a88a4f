@@ -104,6 +104,35 @@ async function fetch24hChange(symbol: string, currentPrice: number): Promise<num
   }
 }
 
+// Regime classification based on price movement and volatility
+// Returns: 'Trending' | 'Ranging' | 'Volatile' | 'Unknown'
+function classifyRegime(change24h: number, volume24h: number): string {
+  const absChange = Math.abs(change24h);
+  
+  // Strong trend: > 3% move in 24h
+  if (absChange > 3) {
+    return 'Trending';
+  }
+  
+  // Moderate volatility but no clear direction: likely ranging
+  if (absChange > 1 && absChange <= 3) {
+    return 'Ranging';
+  }
+  
+  // Low volatility with volume: ranging market
+  if (absChange <= 1 && volume24h > 500000) {
+    return 'Ranging';
+  }
+  
+  // Very low activity: can't classify
+  if (volume24h < 100000) {
+    return 'Unknown';
+  }
+  
+  // Default to Ranging for stable markets
+  return 'Ranging';
+}
+
 async function logPollRun(
   supabase: any,
   status: 'success' | 'skipped' | 'error',
@@ -211,6 +240,9 @@ serve(async (req) => {
           
           const change_24h = await fetch24hChange(symbol, priceData.price);
           
+          // Classify regime based on 24h change and volume
+          const regime = classifyRegime(change_24h, priceData.volume_24h);
+          
           const { error } = await supabase
             .from('market_data')
             .upsert({
@@ -218,6 +250,7 @@ serve(async (req) => {
               price: priceData.price,
               volume_24h: priceData.volume_24h,
               change_24h: change_24h,
+              regime: regime,  // NOW ACTUALLY SETTING REGIME
               updated_at: new Date().toISOString(),
             }, {
               onConflict: 'symbol',
@@ -285,6 +318,9 @@ serve(async (req) => {
             
             const change_24h = await fetch24hChange(symbol, priceData.price);
             
+            // Classify regime based on 24h change and volume
+            const regime = classifyRegime(change_24h, priceData.volume_24h);
+            
             const { error } = await supabase
               .from('market_data')
               .upsert({
@@ -292,6 +328,7 @@ serve(async (req) => {
                 price: priceData.price,
                 volume_24h: priceData.volume_24h,
                 change_24h: change_24h,
+                regime: regime,  // NOW ACTUALLY SETTING REGIME
                 updated_at: new Date().toISOString(),
               }, {
                 onConflict: 'symbol',

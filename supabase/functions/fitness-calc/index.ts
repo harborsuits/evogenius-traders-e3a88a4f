@@ -540,25 +540,34 @@ const GENERATION_TIME_LIMIT_DAYS = 7;
 const GENERATION_TRADE_LIMIT = 100;
 const GENERATION_DRAWDOWN_LIMIT = 0.15;
 
+// NEW: Drought/stagnation termination to prevent infinite stall
+const DROUGHT_TERMINATION_HOURS = 48;  // End generation if stuck for 48h with no learning
+const MIN_LEARNING_SAMPLES = 5;        // Minimum trades OR calculated shadow trades to avoid drought termination
+
 interface GenerationEndCheck {
   should_end: boolean;
-  reason: 'time' | 'trades' | 'drawdown' | null;
+  reason: 'time' | 'trades' | 'drawdown' | 'drought' | null;
   details: {
     elapsed_days: number;
     trade_count: number;
     max_drawdown: number;
+    learning_samples?: number;
+    hours_since_last_learning?: number;
   };
 }
 
-function checkGenerationEnd(
+async function checkGenerationEnd(
+  supabase: any,
+  generationId: string,
   startTime: string,
   tradeCount: number,
   maxDrawdown: number
-): GenerationEndCheck {
+): Promise<GenerationEndCheck> {
   const elapsedMs = Date.now() - new Date(startTime).getTime();
   const elapsedDays = elapsedMs / (1000 * 60 * 60 * 24);
+  const elapsedHours = elapsedDays * 24;
 
-  const details = {
+  const details: GenerationEndCheck['details'] = {
     elapsed_days: elapsedDays,
     trade_count: tradeCount,
     max_drawdown: maxDrawdown,
@@ -577,6 +586,27 @@ function checkGenerationEnd(
   // Check drawdown limit (15%)
   if (maxDrawdown >= GENERATION_DRAWDOWN_LIMIT) {
     return { should_end: true, reason: 'drawdown', details };
+  }
+
+  // NEW: Drought termination - end generation if stuck with no learning signal
+  // Only applies after 48 hours have passed to give generation a fair chance
+  if (elapsedHours >= DROUGHT_TERMINATION_HOURS) {
+    // Count calculated shadow trades for this generation (learning signal without real trades)
+    const { count: calculatedShadowCount } = await supabase
+      .from('shadow_trades')
+      .select('*', { count: 'exact', head: true })
+      .eq('generation_id', generationId)
+      .eq('outcome_status', 'calculated');
+    
+    const learningSamples = tradeCount + (calculatedShadowCount ?? 0);
+    details.learning_samples = learningSamples;
+    
+    // If we still have < MIN_LEARNING_SAMPLES after 48h, end the generation
+    // This prevents infinite stall in chop/drought conditions
+    if (learningSamples < MIN_LEARNING_SAMPLES) {
+      console.log(`[fitness-calc] Drought termination: ${learningSamples} learning samples after ${elapsedHours.toFixed(1)}h`);
+      return { should_end: true, reason: 'drought', details };
+    }
   }
 
   return { should_end: false, reason: null, details };
@@ -770,7 +800,9 @@ Deno.serve(async (req) => {
     }
 
     // 10. CHECK GENERATION END CONDITIONS (using ACCOUNT-LEVEL drawdown)
-    const endCheck = checkGenerationEnd(
+    const endCheck = await checkGenerationEnd(
+      supabase,
+      generationId,
       generation.start_time,
       learnableOrders.length,  // order_count, not round-trips
       accountLevelDrawdown     // account-level, not per-agent max

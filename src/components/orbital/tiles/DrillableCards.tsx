@@ -29,16 +29,17 @@ export function PortfolioCardContent({ compact }: { compact?: boolean }) {
 
   return (
     <div className="space-y-3">
-      {/* Mode indicator */}
-      <div className="flex items-center gap-2">
+      {/* Data source indicator - explicit label */}
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Data Source</span>
         {isPaper ? (
-          <Badge variant="outline" className="text-[10px]">PAPER</Badge>
+          <Badge variant="outline" className="text-[10px] font-mono">PAPER</Badge>
         ) : isLiveArmed ? (
-          <Badge variant="glow" className="text-[10px] flex items-center gap-1">
-            <Zap className="h-2.5 w-2.5" />LIVE
+          <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1">
+            <Zap className="h-2.5 w-2.5" />COINBASE
           </Badge>
         ) : (
-          <Badge variant="destructive" className="text-[10px]">LOCKED</Badge>
+          <Badge variant="destructive" className="text-[10px] font-mono">LOCKED</Badge>
         )}
       </div>
       
@@ -88,20 +89,23 @@ export function PositionsCardContent({ compact }: { compact?: boolean }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Package className="h-4 w-4" />
-        <span className="text-xs">{isLocked ? 'Positions' : `${positions.length} Open Positions`}</span>
-        {isLive && isLiveArmed && (
-          <Badge variant="glow" className="text-[10px] ml-auto flex items-center gap-1">
-            <Zap className="h-2.5 w-2.5" />LIVE
-          </Badge>
-        )}
-        {isPaper && (
-          <Badge variant="outline" className="text-[10px] ml-auto">PAPER</Badge>
-        )}
-        {isLocked && (
-          <Badge variant="destructive" className="text-[10px] ml-auto">LOCKED</Badge>
-        )}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Package className="h-4 w-4" />
+          <span className="text-xs">{isLocked ? 'Positions' : `${positions.length} Open`}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-[8px] text-muted-foreground uppercase">src:</span>
+          {isLive && isLiveArmed ? (
+            <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1">
+              <Zap className="h-2.5 w-2.5" />COINBASE
+            </Badge>
+          ) : isPaper ? (
+            <Badge variant="outline" className="text-[10px] font-mono">PAPER</Badge>
+          ) : (
+            <Badge variant="destructive" className="text-[10px] font-mono">LOCKED</Badge>
+          )}
+        </div>
       </div>
       
       {isLocked ? (
@@ -148,14 +152,24 @@ export function OrdersCardContent({ compact }: { compact?: boolean }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <ShoppingCart className="h-4 w-4" />
-        <span className="text-xs">Recent Orders</span>
-        {isLocked ? (
-          <Badge variant="destructive" className="text-[10px] ml-auto">LOCKED</Badge>
-        ) : (
-          <Badge variant="outline" className="text-[10px] ml-auto">{orders.length}</Badge>
-        )}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <ShoppingCart className="h-4 w-4" />
+          <span className="text-xs">Orders</span>
+          {!isLocked && <Badge variant="secondary" className="text-[10px]">{orders.length}</Badge>}
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-[8px] text-muted-foreground uppercase">src:</span>
+          {isLocked ? (
+            <Badge variant="destructive" className="text-[10px] font-mono">LOCKED</Badge>
+          ) : isLive && isLiveArmed ? (
+            <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1">
+              <Zap className="h-2.5 w-2.5" />COINBASE
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-[10px] font-mono">PAPER</Badge>
+          )}
+        </div>
       </div>
       
       {isLocked ? (
@@ -205,10 +219,15 @@ export function ActivityCardContent({ compact }: { compact?: boolean }) {
   if (isLocked) {
     return (
       <div className="space-y-3">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Activity className="h-4 w-4" />
-          <span className="text-xs">Recent Activity</span>
-          <Badge variant="destructive" className="text-[10px] ml-auto">LOCKED</Badge>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Activity className="h-4 w-4" />
+            <span className="text-xs">Activity</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[8px] text-muted-foreground uppercase">src:</span>
+            <Badge variant="destructive" className="text-[10px] font-mono">LOCKED</Badge>
+          </div>
         </div>
         
         <div className="text-center py-4 text-muted-foreground">
@@ -227,12 +246,17 @@ export function ActivityCardContent({ compact }: { compact?: boolean }) {
   if (isLive && isLiveArmed) {
     return (
       <div className="space-y-3">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Activity className="h-4 w-4" />
-          <span className="text-xs">Recent Activity</span>
-          <Badge variant="glow" className="text-[10px] ml-auto flex items-center gap-1">
-            <Zap className="h-2.5 w-2.5" />LIVE
-          </Badge>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Activity className="h-4 w-4" />
+            <span className="text-xs">Activity</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[8px] text-muted-foreground uppercase">src:</span>
+            <Badge variant="glow" className="text-[10px] font-mono flex items-center gap-1">
+              <Zap className="h-2.5 w-2.5" />COINBASE
+            </Badge>
+          </div>
         </div>
         
         <div className="text-xs text-muted-foreground text-center py-4">
@@ -249,10 +273,16 @@ export function ActivityCardContent({ compact }: { compact?: boolean }) {
   // Paper mode - show orders as activity
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Activity className="h-4 w-4" />
-        <span className="text-xs">Recent Activity</span>
-        <Badge variant="outline" className="text-[10px] ml-auto">{orders.length}</Badge>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Activity className="h-4 w-4" />
+          <span className="text-xs">Activity</span>
+          <Badge variant="secondary" className="text-[10px]">{orders.length}</Badge>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-[8px] text-muted-foreground uppercase">src:</span>
+          <Badge variant="outline" className="text-[10px] font-mono">PAPER</Badge>
+        </div>
       </div>
       
       {orders.length === 0 ? (

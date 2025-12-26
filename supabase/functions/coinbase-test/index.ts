@@ -21,7 +21,7 @@ function base64urlEncode(data: Uint8Array): string {
 
 // Parse the private key - handles raw base64, PEM with headers, or escaped newlines
 function parsePrivateKey(input: string): Uint8Array {
-  // Normalize escaped newlines
+  // Normalize escaped newlines and clean up
   let key = input.replace(/\\n/g, '\n').trim();
   
   // Check if it has PEM headers
@@ -43,45 +43,131 @@ function parsePrivateKey(input: string): Uint8Array {
   return Uint8Array.from(atob(key), c => c.charCodeAt(0));
 }
 
-// Convert SEC1 EC key to JWK format for P-256
-function sec1ToJWK(sec1Bytes: Uint8Array): JsonWebKey {
-  // SEC1 format for P-256: 0x30 len 0x02 0x01 version 0x04 0x20 privateKey [0xA1 len 0x03 oid] [0xA1 len publicKey]
-  // The private key 'd' is 32 bytes for P-256
+// Find a byte sequence in an array
+function findSequence(arr: Uint8Array, seq: number[], startFrom = 0): number {
+  for (let i = startFrom; i <= arr.length - seq.length; i++) {
+    let found = true;
+    for (let j = 0; j < seq.length; j++) {
+      if (arr[i + j] !== seq[j]) {
+        found = false;
+        break;
+      }
+    }
+    if (found) return i;
+  }
+  return -1;
+}
+
+// Convert EC private key bytes to JWK format for P-256
+// Handles both SEC1 (EC PRIVATE KEY) and PKCS8 (PRIVATE KEY) formats
+function derToJWK(derBytes: Uint8Array): JsonWebKey {
+  console.log('[coinbase-test] DER bytes length:', derBytes.length, 'First bytes:', Array.from(derBytes.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' '));
   
-  // Find the private key bytes - look for 0x04 0x20 (OCTET STRING, 32 bytes)
-  let privateKeyStart = -1;
-  for (let i = 0; i < sec1Bytes.length - 33; i++) {
-    if (sec1Bytes[i] === 0x04 && sec1Bytes[i + 1] === 0x20) {
-      privateKeyStart = i + 2;
-      break;
+  let privateKeyBytes: Uint8Array | null = null;
+  let publicKeyBytes: Uint8Array | null = null;
+  
+  // Try multiple patterns to find the 32-byte private key
+  // Pattern 1: OCTET STRING with length 32 (0x04 0x20)
+  let idx = findSequence(derBytes, [0x04, 0x20]);
+  if (idx !== -1 && idx + 34 <= derBytes.length) {
+    privateKeyBytes = derBytes.slice(idx + 2, idx + 34);
+    console.log('[coinbase-test] Found private key via 0x04 0x20 pattern at index', idx);
+  }
+  
+  // Pattern 2: For PKCS8, look for the nested OCTET STRING containing the SEC1 key
+  // PKCS8 has: SEQUENCE { version, AlgorithmIdentifier, OCTET STRING { SEC1 key } }
+  if (!privateKeyBytes) {
+    // Look for the P-256 OID: 1.2.840.10045.3.1.7 = 06 08 2A 86 48 CE 3D 03 01 07
+    const p256OidIdx = findSequence(derBytes, [0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07]);
+    if (p256OidIdx !== -1) {
+      console.log('[coinbase-test] Found P-256 OID at index', p256OidIdx);
+      // After the OID, there should be an OCTET STRING containing the SEC1 structure
+      // Search for 0x04 (OCTET STRING) followed by a length, then 0x30 (SEQUENCE - the SEC1 wrapper)
+      for (let i = p256OidIdx + 10; i < derBytes.length - 40; i++) {
+        if (derBytes[i] === 0x04 && derBytes[i + 2] === 0x30) {
+          // Found the nested SEC1 structure, look for private key inside
+          const nestedIdx = findSequence(derBytes, [0x04, 0x20], i + 2);
+          if (nestedIdx !== -1 && nestedIdx + 34 <= derBytes.length) {
+            privateKeyBytes = derBytes.slice(nestedIdx + 2, nestedIdx + 34);
+            console.log('[coinbase-test] Found private key in PKCS8 nested SEC1 at index', nestedIdx);
+            break;
+          }
+        }
+      }
     }
   }
   
-  if (privateKeyStart === -1) {
-    throw new Error('Could not find private key in SEC1 structure');
+  // Pattern 3: Just scan for any 32-byte sequence after 0x04 0x20
+  if (!privateKeyBytes) {
+    for (let i = 0; i < derBytes.length - 33; i++) {
+      if (derBytes[i] === 0x04 && derBytes[i + 1] === 0x20) {
+        privateKeyBytes = derBytes.slice(i + 2, i + 34);
+        console.log('[coinbase-test] Found potential private key at index', i);
+        break;
+      }
+    }
   }
   
-  const privateKeyBytes = sec1Bytes.slice(privateKeyStart, privateKeyStart + 32);
+  if (!privateKeyBytes) {
+    // Last resort: If the key is exactly 32 bytes or 64 bytes, use directly
+    if (derBytes.length === 32) {
+      privateKeyBytes = derBytes;
+      console.log('[coinbase-test] Using raw 32-byte key directly');
+    } else if (derBytes.length === 64) {
+      // Might be private key + public key concatenated
+      privateKeyBytes = derBytes.slice(0, 32);
+      publicKeyBytes = derBytes.slice(32, 64);
+      console.log('[coinbase-test] Using 64-byte split (32+32)');
+    } else {
+      throw new Error(`Could not find private key in key structure (length: ${derBytes.length})`);
+    }
+  }
+  
+  // Find public key (uncompressed point: 0x04 followed by 64 bytes for x and y)
+  // Look for BIT STRING (0x03) containing 0x00 0x04 (uncompressed point marker)
+  if (!publicKeyBytes) {
+    // Pattern: 0x03 0x42 0x00 0x04 (BIT STRING, 66 bytes, no unused bits, uncompressed point)
+    let pubIdx = findSequence(derBytes, [0x03, 0x42, 0x00, 0x04]);
+    if (pubIdx !== -1 && pubIdx + 68 <= derBytes.length) {
+      publicKeyBytes = derBytes.slice(pubIdx + 4, pubIdx + 68);
+      console.log('[coinbase-test] Found public key via 0x03 0x42 pattern at index', pubIdx);
+    }
+    
+    // Alternative pattern: 0x03 0x41 0x04 (no 0x00 padding)
+    if (!publicKeyBytes) {
+      pubIdx = findSequence(derBytes, [0x03, 0x41, 0x04]);
+      if (pubIdx !== -1 && pubIdx + 67 <= derBytes.length) {
+        publicKeyBytes = derBytes.slice(pubIdx + 3, pubIdx + 67);
+        console.log('[coinbase-test] Found public key via 0x03 0x41 pattern at index', pubIdx);
+      }
+    }
+    
+    // Look for raw uncompressed point (0x04 followed by 64 bytes)
+    if (!publicKeyBytes) {
+      for (let i = (privateKeyBytes ? 34 : 0); i < derBytes.length - 64; i++) {
+        if (derBytes[i] === 0x04) {
+          // Check if this could be a public key (not a length marker)
+          const potentialPub = derBytes.slice(i + 1, i + 65);
+          // Simple heuristic: public key bytes should look random
+          if (potentialPub.length === 64) {
+            publicKeyBytes = potentialPub;
+            console.log('[coinbase-test] Found potential public key at index', i);
+            break;
+          }
+        }
+      }
+    }
+  }
+  
+  if (!publicKeyBytes || publicKeyBytes.length !== 64) {
+    throw new Error('Could not find public key in key structure');
+  }
+  
   const d = base64urlEncode(privateKeyBytes);
+  const x = base64urlEncode(publicKeyBytes.slice(0, 32));
+  const y = base64urlEncode(publicKeyBytes.slice(32, 64));
   
-  // For signing, we only need the private key 'd' parameter
-  // The public key can be derived, but for ES256 signing we need x, y too
-  // Let's find the public key - it's after 0xA1 tag, then 0x03 0x42 0x00 0x04 (uncompressed point)
-  let publicKeyStart = -1;
-  for (let i = privateKeyStart + 32; i < sec1Bytes.length - 65; i++) {
-    if (sec1Bytes[i] === 0x03 && sec1Bytes[i + 1] === 0x42 && 
-        sec1Bytes[i + 2] === 0x00 && sec1Bytes[i + 3] === 0x04) {
-      publicKeyStart = i + 4;
-      break;
-    }
-  }
-  
-  if (publicKeyStart === -1) {
-    throw new Error('Could not find public key in SEC1 structure');
-  }
-  
-  const x = base64urlEncode(sec1Bytes.slice(publicKeyStart, publicKeyStart + 32));
-  const y = base64urlEncode(sec1Bytes.slice(publicKeyStart + 32, publicKeyStart + 64));
+  console.log('[coinbase-test] JWK parameters - d length:', d.length, 'x length:', x.length, 'y length:', y.length);
   
   return {
     kty: 'EC',
@@ -135,8 +221,8 @@ serve(async (req) => {
     const keyBytes = parsePrivateKey(privateKeyInput);
     console.log('[coinbase-test] Parsed key bytes:', keyBytes.length);
     
-    // Convert SEC1 to JWK
-    const jwk = sec1ToJWK(keyBytes);
+    // Convert DER to JWK (handles both SEC1 and PKCS8 formats)
+    const jwk = derToJWK(keyBytes);
     console.log('[coinbase-test] JWK created with d length:', jwk.d?.length);
     
     // Import as CryptoKey

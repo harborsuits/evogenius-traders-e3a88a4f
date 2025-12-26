@@ -15,6 +15,7 @@ import { usePaperAccount, usePaperPositions, usePaperRealtimeSubscriptions } fro
 import { useDroughtState } from '@/hooks/useDroughtState';
 import { useShadowTradingStats } from '@/hooks/useShadowTradingStats';
 import { useCockpitLiveState } from '@/hooks/useCockpitLiveState';
+import { useLiveSafety } from '@/hooks/useLiveSafety';
 import { TileHeader, LiveBadge } from '@/components/dashboard/StalenessIndicator';
 import { SystemStatus } from '@/types/evotrader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -50,7 +51,11 @@ import {
   XCircle,
   HelpCircle,
   Droplets,
-  Ghost
+  Ghost,
+  ChevronUp,
+  ChevronDown,
+  RefreshCw,
+  Zap
 } from 'lucide-react';
 import { useGenOrdersCount, useCohortCount } from '@/hooks/useGenOrders';
 import { useQuery } from '@tanstack/react-query';
@@ -346,12 +351,22 @@ export function SystemControlTile({ compact }: { compact?: boolean }) {
   );
 }
 
-// Capital Overview Tile - Now uses unified cockpit state with staleness
+// Capital Overview Tile - Now uses unified cockpit state with staleness + Live Safety
 export function CapitalOverviewTile({ compact }: { compact?: boolean }) {
   const { account, staleness, refetchAll } = useCockpitLiveState();
   const { data: systemState } = useSystemState();
   const { data: genOrdersCount = 0 } = useGenOrdersCount(systemState?.current_generation_id ?? null);
   const { data: cohortCount = 0 } = useCohortCount(systemState?.current_generation_id ?? null);
+  const { status: liveSafety, refresh: refreshLiveSafety } = useLiveSafety();
+  
+  const [testingPermission, setTestingPermission] = React.useState(false);
+  const [permissionResult, setPermissionResult] = React.useState<{
+    success: boolean;
+    can_create_orders?: boolean;
+    permissions?: string[];
+    error?: string;
+  } | null>(null);
+  const [showLiveSafety, setShowLiveSafety] = React.useState(false);
   
   const isLoading = !account;
   const isStale = staleness.account.stale;
@@ -362,11 +377,42 @@ export function CapitalOverviewTile({ compact }: { compact?: boolean }) {
   const pnlPct = account?.pnlPct ?? 0;
   const activePositions = account?.positions ?? [];
   
+  // Live safety checks from hook
+  const tradeMode = liveSafety.tradeMode;
+  const isLive = tradeMode === 'live';
+  const coinbaseConnected = liveSafety.coinbaseConnected;
+  const canCreateOrders = liveSafety.canTrade || permissionResult?.can_create_orders === true;
+  const liveCap = liveSafety.liveCap;
+  const maxAllowed = liveSafety.maxAllowed;
+  
+  // Safety check counts
+  const checks = [
+    { label: 'Coinbase Connected', pass: coinbaseConnected },
+    { label: 'Trade Permission', pass: canCreateOrders },
+    { label: 'Live Cap Set', pass: liveCap > 0 },
+    { label: 'Cash Available', pass: maxAllowed > 0 },
+  ];
+  const passedChecks = checks.filter(c => c.pass).length;
+  
+  const handleTestPermission = async () => {
+    setTestingPermission(true);
+    setPermissionResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('coinbase-test');
+      if (error) throw error;
+      setPermissionResult(data);
+    } catch (err: any) {
+      setPermissionResult({ success: false, error: err.message });
+    } finally {
+      setTestingPermission(false);
+    }
+  };
+  
   return (
     <div className="space-y-3">
       <TileHeader 
         icon={<FlaskConical className="h-4 w-4 text-primary" />}
-        title="Paper Portfolio"
+        title={isLive ? "Live Capital" : "Paper Portfolio"}
         ageSeconds={staleness.account.ageSeconds}
         stale={isStale}
         onRefresh={refetchAll}
@@ -378,62 +424,162 @@ export function CapitalOverviewTile({ compact }: { compact?: boolean }) {
           <div className="h-8 bg-muted/30 rounded" />
         </div>
       ) : (
-        <div className={compact ? 'grid grid-cols-3 gap-2' : 'grid grid-cols-2 gap-3'}>
-          <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              <Wallet className="h-3 w-3" />
-              Equity
+        <>
+          <div className={compact ? 'grid grid-cols-3 gap-2' : 'grid grid-cols-2 gap-3'}>
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Wallet className="h-3 w-3" />
+                Equity
+              </div>
+              <div className="font-mono text-sm font-bold">
+                ${totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
             </div>
-            <div className="font-mono text-sm font-bold">
-              ${totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <DollarSign className="h-3 w-3" />
+                Cash
+              </div>
+              <div className="font-mono text-sm">
+                ${cash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+            </div>
+            
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                {totalPnl >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                P&L
+              </div>
+              <div className={`font-mono text-sm font-bold ${totalPnl >= 0 ? 'text-success' : 'text-destructive'}`}>
+                {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
+                <span className="text-[10px] ml-1">({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)</span>
+              </div>
+            </div>
+            
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <BarChart3 className="h-3 w-3" />
+                Positions
+              </div>
+              <div className="font-mono text-sm">{activePositions.length}</div>
+            </div>
+            
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Users className="h-3 w-3" />
+                Cohort
+              </div>
+              <div className="font-mono text-sm">{cohortCount}</div>
+            </div>
+            
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Activity className="h-3 w-3" />
+                Gen Orders
+              </div>
+              <div className="font-mono text-sm">{genOrdersCount}</div>
             </div>
           </div>
           
-          <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              <DollarSign className="h-3 w-3" />
-              Cash
-            </div>
-            <div className="font-mono text-sm">
-              ${cash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
+          {/* Live Safety Section */}
+          <div className="border-t border-border/50 pt-3 mt-3">
+            <button
+              onClick={() => setShowLiveSafety(!showLiveSafety)}
+              className="flex items-center justify-between w-full text-left"
+            >
+              <div className="flex items-center gap-2">
+                <Shield className={`h-4 w-4 ${passedChecks === checks.length ? 'text-success' : 'text-amber-500'}`} />
+                <span className="text-xs font-medium">Live Safety</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                  passedChecks === checks.length 
+                    ? 'bg-success/20 text-success' 
+                    : 'bg-amber-500/20 text-amber-500'
+                }`}>
+                  {passedChecks}/{checks.length} checks
+                </span>
+              </div>
+              {showLiveSafety ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+            
+            {showLiveSafety && (
+              <div className="mt-3 space-y-2">
+                {checks.map((check, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    {check.pass ? (
+                      <CheckCircle className="h-3.5 w-3.5 text-success" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5 text-destructive" />
+                    )}
+                    <span className={check.pass ? 'text-muted-foreground' : 'text-foreground'}>
+                      {check.label}
+                    </span>
+                  </div>
+                ))}
+                
+                {/* Live Cap & Max Allowed */}
+                <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
+                  <div className="bg-muted/30 rounded p-2">
+                    <div className="text-muted-foreground text-[10px]">Live Cap</div>
+                    <div className="font-mono">${liveCap.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-muted/30 rounded p-2">
+                    <div className="text-muted-foreground text-[10px]">Max Allowed</div>
+                    <div className="font-mono">${maxAllowed.toFixed(2)}</div>
+                  </div>
+                </div>
+                
+                {/* Test Permission Button */}
+                <button
+                  onClick={handleTestPermission}
+                  disabled={testingPermission}
+                  className="w-full mt-2 px-3 py-2 text-xs bg-primary/10 hover:bg-primary/20 text-primary rounded-md flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                >
+                  {testingPermission ? (
+                    <>
+                      <RefreshCw className="h-3 w-3 animate-spin" />
+                      Testing...
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="h-3 w-3" />
+                      Test Live Permission
+                    </>
+                  )}
+                </button>
+                
+                {/* Permission Result */}
+                {permissionResult && (
+                  <div className={`mt-2 p-2 rounded text-xs ${
+                    permissionResult.can_create_orders 
+                      ? 'bg-success/20 text-success' 
+                      : 'bg-destructive/20 text-destructive'
+                  }`}>
+                    {permissionResult.can_create_orders ? (
+                      <div className="flex items-center gap-1">
+                        <CheckCircle className="h-3 w-3" />
+                        <span>Trade permission verified</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <XCircle className="h-3 w-3" />
+                        <span>{permissionResult.error || 'Cannot create orders'}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                {/* Missing permission warning */}
+                {!canCreateOrders && !permissionResult && (
+                  <div className="mt-2 p-2 rounded bg-amber-500/20 text-amber-500 text-xs flex items-start gap-2">
+                    <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                    <span>API key may lack trade permission. Click "Test Live Permission" to verify.</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-          
-          <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              {totalPnl >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-              P&L
-            </div>
-            <div className={`font-mono text-sm font-bold ${totalPnl >= 0 ? 'text-success' : 'text-destructive'}`}>
-              {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
-              <span className="text-[10px] ml-1">({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)</span>
-            </div>
-          </div>
-          
-          <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              <BarChart3 className="h-3 w-3" />
-              Positions
-            </div>
-            <div className="font-mono text-sm">{activePositions.length}</div>
-          </div>
-          
-          <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              <Users className="h-3 w-3" />
-              Cohort
-            </div>
-            <div className="font-mono text-sm">{cohortCount}</div>
-          </div>
-          
-          <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              <Activity className="h-3 w-3" />
-              Gen Orders
-            </div>
-            <div className="font-mono text-sm">{genOrdersCount}</div>
-          </div>
-        </div>
+        </>
       )}
     </div>
   );

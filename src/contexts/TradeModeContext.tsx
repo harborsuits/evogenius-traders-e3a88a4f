@@ -50,7 +50,9 @@ export function TradeModeProvider({ children }: { children: ReactNode }) {
 
   const handleSetMode = async (newMode: TradeMode) => {
     await setTradeMode(newMode);
-    // Invalidate ALL queries on mode switch to ensure clean UI flip
+    // Invalidate trade-mode query specifically, then all queries
+    await queryClient.invalidateQueries({ queryKey: ['trade-mode'] });
+    await queryClient.invalidateQueries({ queryKey: ['system-state-armed'] });
     queryClient.invalidateQueries();
   };
 

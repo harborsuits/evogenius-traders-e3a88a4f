@@ -154,6 +154,8 @@ export function useTradeMode() {
       if (error) throw error;
       return (data?.trade_mode ?? 'paper') as 'paper' | 'live';
     },
+    staleTime: 0, // Always refetch when invalidated
+    refetchOnWindowFocus: true,
   });
 }
 

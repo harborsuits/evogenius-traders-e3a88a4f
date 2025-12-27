@@ -15,7 +15,8 @@ import {
   Lock,
   RefreshCw,
   OctagonX,
-  TestTube2
+  TestTube2,
+  KeyRound
 } from 'lucide-react';
 import { useTradeModeContext } from '@/contexts/TradeModeContext';
 import { useLiveSafety } from '@/hooks/useLiveSafety';
@@ -23,6 +24,7 @@ import { useArmLive } from '@/hooks/useArmLive';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { LivePositionsCard } from './LivePositionsCard';
+import { useQueryClient } from '@tanstack/react-query';
 
 interface ChecklistItem {
   label: string;
@@ -36,9 +38,11 @@ export function LiveLockedWorkspace() {
   const { status: liveSafety, isLoading, refresh } = useLiveSafety();
   const { arm, disarm, isArming, isDisarming } = useArmLive();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   
   const [secondsRemaining, setSecondsRemaining] = useState(0);
   const [isTestingOrder, setIsTestingOrder] = useState(false);
+  const [isRetestingPermissions, setIsRetestingPermissions] = useState(false);
 
   // Countdown timer effect
   useEffect(() => {
@@ -58,7 +62,8 @@ export function LiveLockedWorkspace() {
 
   // Required permissions for trading
   const REQUIRED_PERMISSIONS = ['wallet:orders:create', 'wallet:accounts:read'];
-  const missingPermissions = REQUIRED_PERMISSIONS.filter(p => !liveSafety.permissions.includes(p));
+  const storedPermissions = liveSafety.permissions || [];
+  const missingPermissions = REQUIRED_PERMISSIONS.filter(p => !storedPermissions.includes(p));
 
   // Build checklist from live safety status
   const checklist: ChecklistItem[] = [
@@ -72,8 +77,8 @@ export function LiveLockedWorkspace() {
       label: 'Trade Permission',
       checked: liveSafety.canTrade,
       detail: liveSafety.canTrade 
-        ? 'All required permissions ✓' 
-        : `Missing: ${missingPermissions.join(', ') || 'Unknown'}`,
+        ? 'Order creation enabled ✓' 
+        : `Missing: ${missingPermissions.join(', ')}. Verify CDP key has "Trade" enabled, then Retest.`,
       icon: <Shield className="h-4 w-4" />,
     },
     {
@@ -104,6 +109,46 @@ export function LiveLockedWorkspace() {
   // Emergency kill handler
   const handleKill = () => {
     disarm();
+  };
+
+  // Retest permissions by calling coinbase-test edge function
+  const handleRetestPermissions = async () => {
+    setIsRetestingPermissions(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('coinbase-test');
+      
+      if (error) throw error;
+
+      if (data?.ok) {
+        const hasCreate = data.permissions?.includes('wallet:orders:create');
+        toast({
+          title: hasCreate ? 'Trade Permission Confirmed!' : 'Trade Permission Missing',
+          description: hasCreate 
+            ? `All permissions granted: ${data.permissions?.join(', ')}`
+            : `CDP key lacks order creation. Current: ${data.permissions?.join(', ')}. Update your Coinbase API key to include Trade permission.`,
+          variant: hasCreate ? 'default' : 'destructive',
+        });
+      } else {
+        toast({
+          title: 'Permission Test Failed',
+          description: data?.error || 'Unknown error',
+          variant: 'destructive',
+        });
+      }
+
+      // Refresh queries to update UI
+      queryClient.invalidateQueries({ queryKey: ['live-safety-exchange'] });
+      queryClient.invalidateQueries({ queryKey: ['exchange-connection'] });
+      refresh();
+    } catch (err) {
+      toast({
+        title: 'Test Failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsRetestingPermissions(false);
+    }
   };
 
   // Test order handler - SELL 1 DOGE-USD as canary
@@ -345,6 +390,28 @@ export function LiveLockedWorkspace() {
                 <>
                   <TestTube2 className="h-4 w-4 mr-2" />
                   Test Order: SELL 1 DOGE-USD
+                </>
+              )}
+            </Button>
+          )}
+
+          {/* Retest Permissions Button - Show when trade permission is missing */}
+          {!liveSafety.canTrade && liveSafety.coinbaseConnected && (
+            <Button
+              variant="outline"
+              className="w-full justify-center h-10 border-warning/50 text-warning hover:bg-warning/10"
+              disabled={isRetestingPermissions}
+              onClick={handleRetestPermissions}
+            >
+              {isRetestingPermissions ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Testing Permissions...
+                </>
+              ) : (
+                <>
+                  <KeyRound className="h-4 w-4 mr-2" />
+                  Retest API Permissions
                 </>
               )}
             </Button>

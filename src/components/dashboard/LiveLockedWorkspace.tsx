@@ -22,6 +22,7 @@ import { useLiveSafety } from '@/hooks/useLiveSafety';
 import { useArmLive } from '@/hooks/useArmLive';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { LivePositionsCard } from './LivePositionsCard';
 
 interface ChecklistItem {
   label: string;
@@ -361,6 +362,9 @@ export function LiveLockedWorkspace() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Live Positions Card - Shows LOCKED or Coinbase data */}
+      <LivePositionsCard isArmed={liveSafety.isArmed} />
 
       {/* Info Panel */}
       <Card className="bg-muted/30">

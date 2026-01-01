@@ -2072,3 +2072,6 @@ export function ShadowTradingTile({ compact }: { compact?: boolean }) {
     </div>
   );
 }
+
+// Live Brain Tile - Shows active brain snapshot and allows promotion
+export { LiveBrainPanel as LiveBrainTile } from '@/components/dashboard/LiveBrainPanel';

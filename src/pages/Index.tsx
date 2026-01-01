@@ -32,6 +32,7 @@ import {
   EliteRotationTile,
   RegimeHistoryTile,
   ShadowTradingTile,
+  LiveBrainTile,
 } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PositionsCardContent, ActivityCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
@@ -51,6 +52,7 @@ const staticCards: CommandCard[] = [
   // Middle column - Operations
   { id: 'trade-cycle', title: 'Trade Cycle', type: 'cockpit', component: TradeCycleTile },
   { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
+  { id: 'live-brain', title: 'Live Brain', type: 'cockpit', component: LiveBrainTile },
   { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
   { id: 'vitals', title: 'System Vitals', type: 'cockpit', component: SystemVitalsTile },
   { id: 'shadow-trading', title: 'Shadow Trading', type: 'cockpit', component: ShadowTradingTile },

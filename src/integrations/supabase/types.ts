@@ -247,6 +247,53 @@ export type Database = {
         }
         Relationships: []
       }
+      live_brain_snapshots: {
+        Row: {
+          agent_snapshots: Json
+          created_at: string
+          id: string
+          is_active: boolean
+          notes: string | null
+          performance_summary: Json
+          promoted_at: string
+          promoted_by: string | null
+          source_generation_id: string | null
+          version_number: number
+        }
+        Insert: {
+          agent_snapshots?: Json
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          notes?: string | null
+          performance_summary?: Json
+          promoted_at?: string
+          promoted_by?: string | null
+          source_generation_id?: string | null
+          version_number: number
+        }
+        Update: {
+          agent_snapshots?: Json
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          notes?: string | null
+          performance_summary?: Json
+          promoted_at?: string
+          promoted_by?: string | null
+          source_generation_id?: string | null
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_brain_snapshots_source_generation_id_fkey"
+            columns: ["source_generation_id"]
+            isOneToOne: false
+            referencedRelation: "generations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       market_data: {
         Row: {
           atr_ratio: number
@@ -793,6 +840,7 @@ export type Database = {
       }
       system_state: {
         Row: {
+          active_brain_version_id: string | null
           active_pool: number
           current_generation_id: string | null
           id: string
@@ -806,6 +854,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          active_brain_version_id?: string | null
           active_pool?: number
           current_generation_id?: string | null
           id?: string
@@ -819,6 +868,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          active_brain_version_id?: string | null
           active_pool?: number
           current_generation_id?: string | null
           id?: string
@@ -832,6 +882,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "system_state_active_brain_version_id_fkey"
+            columns: ["active_brain_version_id"]
+            isOneToOne: false
+            referencedRelation: "live_brain_snapshots"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "system_state_current_generation_id_fkey"
             columns: ["current_generation_id"]

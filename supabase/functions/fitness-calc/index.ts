@@ -769,27 +769,60 @@ Deno.serve(async (req) => {
     const accountLevelDrawdown = calculateMaxDrawdown(accountPnlResult.equityCurve);
     console.log(`[fitness-calc] Account-level drawdown: ${(accountLevelDrawdown * 100).toFixed(2)}%`);
 
-    // 9. Calculate fitness for each agent
-    const results: { agent_id: string; fitness: FitnessComponents }[] = [];
+    // 8b. Fetch ALL shadow trades for this generation (for blended fitness)
+    const { data: shadowTrades } = await supabase
+      .from('shadow_trades')
+      .select('id, agent_id, symbol, side, confidence, simulated_pnl, simulated_pnl_pct, hit_stop, hit_target, outcome_status, regime, regime_match')
+      .eq('generation_id', generationId);
+
+    // Group shadow trades by agent
+    const shadowByAgent = new Map<string, ShadowTradeRecord[]>();
+    for (const st of shadowTrades ?? []) {
+      const agentShadows = shadowByAgent.get(st.agent_id) ?? [];
+      agentShadows.push(st as ShadowTradeRecord);
+      shadowByAgent.set(st.agent_id, agentShadows);
+    }
+    console.log(`[fitness-calc] Found ${shadowTrades?.length ?? 0} shadow trades for ${shadowByAgent.size} agents`);
+
+    // 9. Calculate fitness for each agent (blending real + shadow)
+    const results: { agent_id: string; fitness: FitnessComponents; shadow: ShadowPerformance; blended: ReturnType<typeof blendFitnessScores> }[] = [];
     
     for (const agent of agents) {
       const agentTrades = ordersByAgent.get(agent.id) ?? [];
+      const agentShadows = shadowByAgent.get(agent.id) ?? [];
+      
+      // Calculate real fitness from paper orders
       const fitness = calculateFitness(agentTrades, startingCapital);
       
-      results.push({ agent_id: agent.id, fitness });
+      // Calculate shadow performance
+      const shadowPerf = calculateShadowPerformance(agentShadows);
+      
+      // Blend real and shadow fitness
+      const blended = blendFitnessScores(
+        fitness.fitness_score,
+        fitness.total_trades,
+        shadowPerf.shadow_fitness_score,
+        shadowPerf.shadow_trades
+      );
+      
+      // COMBINED TRADE COUNT: real trades + shadow trades (for gate evaluation)
+      // This is the key fix - gates now consider shadow decisions as "trades"
+      const combinedTrades = fitness.total_trades + shadowPerf.shadow_trades;
+      
+      results.push({ agent_id: agent.id, fitness, shadow: shadowPerf, blended });
 
-      // Upsert performance record
+      // Upsert performance record with BLENDED fitness and COMBINED trades
       const { error: upsertError } = await supabase
         .from('performance')
         .upsert({
           agent_id: agent.id,
           generation_id: generationId,
-          fitness_score: fitness.fitness_score,
+          fitness_score: blended.blended_score, // Use blended score
           net_pnl: fitness.realized_pnl,
           sharpe_ratio: fitness.sharpe_ratio,
           max_drawdown: fitness.max_drawdown,
           profitable_days_ratio: fitness.profitable_days_ratio,
-          total_trades: fitness.total_trades,
+          total_trades: combinedTrades, // Combined real + shadow
         }, {
           onConflict: 'agent_id,generation_id',
         });
@@ -798,6 +831,11 @@ Deno.serve(async (req) => {
         console.error(`[fitness-calc] Failed to upsert performance for ${agent.id}:`, upsertError);
       }
     }
+    
+    // Log shadow blending stats
+    const shadowOnlyAgents = results.filter(r => r.blended.blend_reason === 'shadow_only').length;
+    const earlyBlendAgents = results.filter(r => r.blended.blend_reason === 'early_blend').length;
+    console.log(`[fitness-calc] Blending: ${shadowOnlyAgents} shadow-only, ${earlyBlendAgents} early-blend, ${results.length - shadowOnlyAgents - earlyBlendAgents} other`);
 
     // 10. CHECK GENERATION END CONDITIONS (using ACCOUNT-LEVEL drawdown)
     const endCheck = await checkGenerationEnd(

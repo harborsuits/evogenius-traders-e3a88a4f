@@ -9,7 +9,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { SystemStatus } from '@/types/evotrader';
 import { Dna, ExternalLink, Square, Activity, AlertTriangle, CheckCircle, Clock, Loader2, FlaskConical, GitCompare, Shield, Timer, Zap } from 'lucide-react';
 import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
-import { useTradeMode } from '@/hooks/usePaperTrading';
+import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
 import { useStrategyTestMode } from '@/hooks/useSystemConfig';
 import { useLiveSafety } from '@/hooks/useLiveSafety';
 import { supabase } from '@/integrations/supabase/client';
@@ -24,7 +24,7 @@ interface HeaderProps {
 
 export function Header({ status, generationNumber }: HeaderProps) {
   const { data: marketData = [] } = useMarketData();
-  const { data: tradeMode } = useTradeMode();
+  const { mode, isLive } = useCurrentTradeMode();
   const isTestMode = useStrategyTestMode();
   const { status: liveSafety } = useLiveSafety();
   const queryClient = useQueryClient();
@@ -33,8 +33,6 @@ export function Header({ status, generationNumber }: HeaderProps) {
   const [rotationModalOpen, setRotationModalOpen] = useState(false);
   const [genSheetOpen, setGenSheetOpen] = useState(false);
 
-  const mode = tradeMode ?? 'paper';
-  const isLive = mode === 'live';
   const isArmed = liveSafety.isArmed;
   const armedSeconds = liveSafety.secondsRemaining;
   const isRunning = status === 'running';

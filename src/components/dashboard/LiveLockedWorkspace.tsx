@@ -16,7 +16,8 @@ import {
   RefreshCw,
   OctagonX,
   TestTube2,
-  KeyRound
+  KeyRound,
+  Ban
 } from 'lucide-react';
 import { useTradeModeContext } from '@/contexts/TradeModeContext';
 import { useLiveSafety } from '@/hooks/useLiveSafety';
@@ -36,7 +37,19 @@ interface ChecklistItem {
 export function LiveLockedWorkspace() {
   const { setMode } = useTradeModeContext();
   const { status: liveSafety, isLoading, refresh } = useLiveSafety();
-  const { arm, disarm, isArming, isDisarming } = useArmLive();
+  const { 
+    arm, 
+    disarm, 
+    isArming, 
+    isDisarming,
+    currentSessionId,
+    currentSession,
+    isSessionSpent,
+    isSessionExpired,
+    canExecute,
+    generateRequestId,
+    refetchSession,
+  } = useArmLive();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   
@@ -65,7 +78,7 @@ export function LiveLockedWorkspace() {
   const storedPermissions = liveSafety.permissions || [];
   const missingPermissions = REQUIRED_PERMISSIONS.filter(p => !storedPermissions.includes(p));
 
-  // Build checklist from live safety status
+  // Build checklist from live safety status - now includes canary session
   const checklist: ChecklistItem[] = [
     {
       label: 'Coinbase Connected',
@@ -97,8 +110,12 @@ export function LiveLockedWorkspace() {
     },
     {
       label: 'ARM Enabled (60s window)',
-      checked: liveSafety.isArmed,
-      detail: liveSafety.isArmed ? `${secondsRemaining}s remaining` : 'Click ARM to unlock',
+      checked: liveSafety.isArmed && !isSessionSpent,
+      detail: isSessionSpent 
+        ? 'CANARY CONSUMED — Re-ARM for new order'
+        : liveSafety.isArmed 
+          ? `${secondsRemaining}s remaining` 
+          : 'Click ARM to unlock',
       icon: <Timer className="h-4 w-4" />,
     },
   ];
@@ -152,6 +169,7 @@ export function LiveLockedWorkspace() {
   };
 
   // Test order handler - SELL 1 DOGE-USD as canary
+  // Now uses session-based atomic execution
   const handleTestOrder = async () => {
     if (!liveSafety.isArmed) {
       toast({
@@ -162,23 +180,68 @@ export function LiveLockedWorkspace() {
       return;
     }
 
+    if (!currentSessionId) {
+      toast({
+        title: 'No Session',
+        description: 'ARM session not found. Re-ARM to get a new session.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (isSessionSpent) {
+      toast({
+        title: 'Canary Already Consumed',
+        description: 'This ARM session has been used. Disarm and re-ARM for a new order.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setIsTestingOrder(true);
     try {
+      const requestId = generateRequestId();
+      
       const { data, error } = await supabase.functions.invoke('live-execute', {
         body: {
           symbol: 'DOGE-USD',
-          side: 'SELL',
+          side: 'sell',
           qty: 1,
           reason: 'CANARY_TEST: Manual test from Live Desk',
+          arm_session_id: currentSessionId,
+          request_id: requestId,
         },
       });
 
       if (error) throw error;
 
+      // Check if blocked due to canary consumed
+      if (data?.blocked && data?.reason === 'CANARY_ALREADY_CONSUMED') {
+        toast({
+          title: 'Canary Already Consumed',
+          description: 'This ARM session was already used. Re-ARM for a new order.',
+          variant: 'destructive',
+        });
+        refetchSession();
+        return;
+      }
+
+      if (data?.blocked) {
+        toast({
+          title: 'Order Blocked',
+          description: data?.error || `Blocked: ${data?.reason}`,
+          variant: 'destructive',
+        });
+        return;
+      }
+
       toast({
-        title: 'Test Order Submitted',
-        description: `Order ID: ${data?.order_id || 'N/A'} — Status: ${data?.status || 'unknown'}`,
+        title: '✅ Live Order Executed!',
+        description: `Order ID: ${data?.order_id || 'N/A'}`,
       });
+
+      // Refetch session to show spent state
+      refetchSession();
 
       console.log('[LiveDesk] Test order result:', data);
     } catch (err) {
@@ -205,7 +268,12 @@ export function LiveLockedWorkspace() {
               <div>
                 <CardTitle className="text-lg flex items-center gap-2">
                   LIVE DESK
-                  {liveSafety.isArmed ? (
+                  {isSessionSpent ? (
+                    <Badge variant="outline" className="border-warning/50 text-warning">
+                      <Ban className="h-3 w-3 mr-1" />
+                      CANARY CONSUMED
+                    </Badge>
+                  ) : liveSafety.isArmed ? (
                     <Badge variant="destructive" className="animate-pulse">
                       ARMED — {secondsRemaining}s
                     </Badge>
@@ -234,24 +302,36 @@ export function LiveLockedWorkspace() {
         </CardHeader>
         <CardContent>
           <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-            liveSafety.isArmed 
-              ? 'bg-destructive/20 border-destructive/40' 
-              : 'bg-destructive/10 border-destructive/20'
+            isSessionSpent
+              ? 'bg-warning/20 border-warning/40'
+              : liveSafety.isArmed 
+                ? 'bg-destructive/20 border-destructive/40' 
+                : 'bg-destructive/10 border-destructive/20'
           }`}>
-            <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
-            <div className="text-sm text-destructive">
-              {liveSafety.isArmed 
-                ? `Live execution unlocked for ${secondsRemaining} seconds. Execute with caution.`
-                : liveSafety.blockers.length > 0
-                  ? `Blocked: ${liveSafety.blockers.join(', ')}`
-                  : 'Live trading is locked. Complete all checks and ARM to unlock.'
+            <AlertTriangle className={`h-5 w-5 shrink-0 mt-0.5 ${isSessionSpent ? 'text-warning' : 'text-destructive'}`} />
+            <div className={`text-sm ${isSessionSpent ? 'text-warning' : 'text-destructive'}`}>
+              {isSessionSpent 
+                ? 'This ARM session has been consumed. Disarm and re-ARM to place another order.'
+                : liveSafety.isArmed 
+                  ? `Live execution unlocked for ${secondsRemaining} seconds. ONE order only (canary mode).`
+                  : liveSafety.blockers.length > 0
+                    ? `Blocked: ${liveSafety.blockers.join(', ')}`
+                    : 'Live trading is locked. Complete all checks and ARM to unlock.'
               }
             </div>
           </div>
+          
+          {/* Session Info Badge */}
+          {currentSessionId && (
+            <div className="mt-3 text-[10px] font-mono text-muted-foreground">
+              Session: {currentSessionId.slice(0, 8)}...{currentSessionId.slice(-4)}
+              {isSessionSpent && <span className="text-warning ml-2">• SPENT</span>}
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Emergency Kill Switch - Always Visible */}
+      {/* Emergency Kill Switch - Always Visible when armed */}
       {liveSafety.isArmed && (
         <Card className="border-destructive bg-destructive/20">
           <CardContent className="pt-4">
@@ -315,22 +395,28 @@ export function LiveLockedWorkspace() {
               className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
                 item.checked
                   ? 'bg-primary/5 border-primary/20'
-                  : 'bg-muted/30 border-border'
+                  : isSessionSpent && index === 4
+                    ? 'bg-warning/10 border-warning/30'
+                    : 'bg-muted/30 border-border'
               }`}
             >
-              <div className={item.checked ? 'text-primary' : 'text-muted-foreground'}>
+              <div className={item.checked ? 'text-primary' : isSessionSpent && index === 4 ? 'text-warning' : 'text-muted-foreground'}>
                 {item.icon}
               </div>
               <div className="flex-1 min-w-0">
-                <span className={`text-sm ${item.checked ? 'text-foreground' : 'text-muted-foreground'}`}>
+                <span className={`text-sm ${item.checked ? 'text-foreground' : isSessionSpent && index === 4 ? 'text-warning' : 'text-muted-foreground'}`}>
                   {item.label}
                 </span>
                 {item.detail && (
-                  <p className="text-[10px] text-muted-foreground truncate">{item.detail}</p>
+                  <p className={`text-[10px] truncate ${isSessionSpent && index === 4 ? 'text-warning' : 'text-muted-foreground'}`}>
+                    {item.detail}
+                  </p>
                 )}
               </div>
               {item.checked ? (
                 <CheckCircle2 className="h-5 w-5 text-primary shrink-0" />
+              ) : isSessionSpent && index === 4 ? (
+                <Ban className="h-5 w-5 text-warning shrink-0" />
               ) : (
                 <XCircle className="h-5 w-5 text-muted-foreground/50 shrink-0" />
               )}
@@ -345,36 +431,57 @@ export function LiveLockedWorkspace() {
           <CardTitle className="text-base font-mono">Actions</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {/* ARM Button */}
-          <Button
-            variant="destructive"
-            className="w-full justify-center h-12 text-base"
-            disabled={isArming || liveSafety.isArmed || !preArmReady}
-            onClick={() => arm()}
-          >
-            {isArming ? (
-              <>
-                <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                Arming...
-              </>
-            ) : liveSafety.isArmed ? (
-              <>
-                <Timer className="h-5 w-5 mr-2" />
-                Armed — {secondsRemaining}s remaining
-              </>
-            ) : (
-              <>
-                <Timer className="h-5 w-5 mr-2" />
-                ARM Live (60s)
-                {!preArmReady && (
-                  <span className="ml-2 text-xs opacity-70">Complete checks first</span>
-                )}
-              </>
-            )}
-          </Button>
+          {/* ARM Button - changes based on session state */}
+          {isSessionSpent ? (
+            <Button
+              variant="outline"
+              className="w-full justify-center h-12 text-base border-warning/50 text-warning"
+              disabled={isDisarming}
+              onClick={() => disarm()}
+            >
+              {isDisarming ? (
+                <>
+                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                  Disarming...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-5 w-5 mr-2" />
+                  Disarm to Reset (Canary Consumed)
+                </>
+              )}
+            </Button>
+          ) : (
+            <Button
+              variant="destructive"
+              className="w-full justify-center h-12 text-base"
+              disabled={isArming || liveSafety.isArmed || !preArmReady}
+              onClick={() => arm()}
+            >
+              {isArming ? (
+                <>
+                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                  Arming...
+                </>
+              ) : liveSafety.isArmed ? (
+                <>
+                  <Timer className="h-5 w-5 mr-2" />
+                  Armed — {secondsRemaining}s (1 order max)
+                </>
+              ) : (
+                <>
+                  <Timer className="h-5 w-5 mr-2" />
+                  ARM Live (60s, 1 order)
+                  {!preArmReady && (
+                    <span className="ml-2 text-xs opacity-70">Complete checks first</span>
+                  )}
+                </>
+              )}
+            </Button>
+          )}
 
-          {/* Test Order Button - Only when armed */}
-          {liveSafety.isArmed && (
+          {/* Test Order Button - Only when armed AND not spent */}
+          {liveSafety.isArmed && !isSessionSpent && (
             <Button
               variant="outline"
               className="w-full justify-center h-10 border-primary/50 text-primary hover:bg-primary/10"
@@ -393,6 +500,18 @@ export function LiveLockedWorkspace() {
                 </>
               )}
             </Button>
+          )}
+
+          {/* Show consumed state message */}
+          {isSessionSpent && (
+            <div className="text-center p-3 bg-warning/10 border border-warning/30 rounded-lg">
+              <p className="text-sm text-warning font-medium">
+                ✓ Canary order executed
+              </p>
+              <p className="text-xs text-warning/80 mt-1">
+                Click "Disarm to Reset" above, then re-ARM for another order.
+              </p>
+            </div>
           )}
 
           {/* Retest Permissions Button - Show when trade permission is missing */}
@@ -433,7 +552,7 @@ export function LiveLockedWorkspace() {
       {/* Live Positions Card - Shows LOCKED or Coinbase data */}
       <LivePositionsCard isArmed={liveSafety.isArmed} />
 
-      {/* Info Panel */}
+      {/* Info Panel - Updated to explain canary mode */}
       <Card className="bg-muted/30">
         <CardContent className="pt-4">
           <div className="text-xs text-muted-foreground space-y-2 font-mono">
@@ -441,11 +560,11 @@ export function LiveLockedWorkspace() {
               <strong className="text-destructive">Live Desk</strong> shows ONLY Coinbase-sourced data.
             </p>
             <p>
-              Paper data is <strong>never</strong> displayed here — not even as a fallback.
+              <strong className="text-warning">Canary Mode:</strong> Each ARM allows exactly ONE order.
+              This prevents double-clicks, retries, or race conditions.
             </p>
             <p>
-              Think of it as: <span className="text-primary">Paper = training camp</span>,{' '}
-              <span className="text-destructive">Live = active duty</span>.
+              Paper data is <strong>never</strong> displayed here — not even as a fallback.
             </p>
           </div>
         </CardContent>

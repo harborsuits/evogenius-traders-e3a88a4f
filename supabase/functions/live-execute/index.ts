@@ -187,6 +187,9 @@ interface ExecuteTradeRequest {
   agentId?: string;
   generationId?: string;
   tags?: Record<string, unknown>;
+  // NEW: Canary hard-lock fields
+  arm_session_id?: string;
+  request_id?: string;
 }
 
 interface CoinbaseAccount {
@@ -237,6 +240,86 @@ Deno.serve(async (req) => {
     const body: ExecuteTradeRequest = await req.json();
     console.log('[live-execute] Received live trade request:', body);
 
+    // Generate request_id if not provided (for idempotency)
+    const requestId = body.request_id || crypto.randomUUID();
+    console.log(`[live-execute] Request ID: ${requestId}`);
+
+    // ============= GATE 0: CANARY HARD-LOCK (ONE ORDER PER ARM) =============
+    // This is the non-negotiable atomic spend check
+    
+    if (!body.arm_session_id) {
+      const reason = 'BLOCKED_NO_SESSION';
+      console.log(`[live-execute] ${reason}: arm_session_id is required`);
+      
+      await logLiveEvent(supabase, 'live_trade_blocked', {
+        symbol: body.symbol,
+        side: body.side,
+        qty: body.qty,
+        block_reason: reason,
+        request_id: requestId,
+      });
+
+      return new Response(
+        JSON.stringify({ 
+          ok: false, 
+          blocked: true, 
+          reason,
+          error: 'Missing arm_session_id. ARM the system first to get a session token.'
+        }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Atomically spend the ARM session using the database function
+    console.log(`[live-execute] Attempting to spend ARM session: ${body.arm_session_id}`);
+    
+    const { data: spendResult, error: spendError } = await supabase
+      .rpc('spend_arm_session', {
+        session_id: body.arm_session_id,
+        request_id: requestId,
+      });
+
+    if (spendError) {
+      console.error('[live-execute] Spend RPC error:', spendError);
+      throw spendError;
+    }
+
+    const spendRow = spendResult?.[0];
+    console.log('[live-execute] Spend result:', spendRow);
+
+    if (!spendRow?.success) {
+      const reason = spendRow?.reason || 'CANARY_SPEND_FAILED';
+      console.log(`[live-execute] ${reason}`);
+      
+      await logLiveEvent(supabase, 'live_trade_blocked', {
+        symbol: body.symbol,
+        side: body.side,
+        qty: body.qty,
+        block_reason: reason,
+        arm_session_id: body.arm_session_id,
+        request_id: requestId,
+      });
+
+      // Use 409 Conflict for already-consumed canary
+      const statusCode = reason === 'CANARY_ALREADY_CONSUMED' ? 409 : 403;
+      
+      return new Response(
+        JSON.stringify({ 
+          ok: false, 
+          blocked: true, 
+          reason,
+          error: reason === 'CANARY_ALREADY_CONSUMED' 
+            ? 'This ARM session has already been used. Disarm and re-ARM for a new order.'
+            : reason === 'SESSION_EXPIRED'
+            ? 'ARM session has expired. Re-ARM to continue.'
+            : 'ARM session validation failed.'
+        }),
+        { status: statusCode, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    console.log('[live-execute] ✅ ARM session spent successfully. Proceeding with order...');
+
     // ============= GATE 1: Validate credentials exist =============
     const keyName = Deno.env.get('COINBASE_KEY_NAME');
     const privateKeyInput = Deno.env.get('COINBASE_PRIVATE_KEY');
@@ -250,6 +333,7 @@ Deno.serve(async (req) => {
         side: body.side,
         qty: body.qty,
         block_reason: reason,
+        request_id: requestId,
       });
 
       return new Response(
@@ -283,6 +367,7 @@ Deno.serve(async (req) => {
         qty: body.qty,
         block_reason: reason,
         armed_until: liveArmedUntil,
+        request_id: requestId,
       });
 
       return new Response(
@@ -341,6 +426,7 @@ Deno.serve(async (req) => {
         qty: body.qty,
         block_reason: 'BLOCKED_COINBASE_ERROR',
         error: errorData.message || accountsResponse.statusText,
+        request_id: requestId,
       });
 
       return new Response(
@@ -384,6 +470,7 @@ Deno.serve(async (req) => {
         side: body.side,
         qty: body.qty,
         block_reason: reason,
+        request_id: requestId,
       });
 
       return new Response(
@@ -427,6 +514,7 @@ Deno.serve(async (req) => {
         hold_cash: holdCash,
         live_cap: liveCapUsd,
         max_allowed: maxAllowed,
+        request_id: requestId,
       });
 
       return new Response(
@@ -463,6 +551,7 @@ Deno.serve(async (req) => {
           block_reason: reason,
           available_qty: availableQty,
           base_currency: baseCurrency,
+          request_id: requestId,
         });
 
         return new Response(
@@ -536,6 +625,7 @@ Deno.serve(async (req) => {
         block_reason: reason,
         coinbase_error: orderData.message || orderData.error,
         http_status: orderResponse.status,
+        request_id: requestId,
       });
 
       return new Response(
@@ -564,6 +654,8 @@ Deno.serve(async (req) => {
       agent_id: body.agentId,
       generation_id: systemState?.current_generation_id,
       coinbase_response: orderData,
+      arm_session_id: body.arm_session_id,
+      request_id: requestId,
     });
 
     console.log(`[live-execute] ✅ Live order placed successfully: ${orderId}`);
@@ -578,6 +670,8 @@ Deno.serve(async (req) => {
         qty: body.qty,
         estimated_cost: orderCost,
         coinbase_response: orderData,
+        arm_session_id: body.arm_session_id,
+        request_id: requestId,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

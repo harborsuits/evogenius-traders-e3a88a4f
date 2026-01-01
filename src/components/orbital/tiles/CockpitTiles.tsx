@@ -353,7 +353,7 @@ export function SystemControlTile({ compact }: { compact?: boolean }) {
 
 // Capital Overview Tile - Now uses unified cockpit state with staleness + Live Safety
 export function CapitalOverviewTile({ compact }: { compact?: boolean }) {
-  const { account, staleness, refetchAll } = useCockpitLiveState();
+  const { account, staleness, refetchAll, system } = useCockpitLiveState();
   const { data: systemState } = useSystemState();
   const { data: genOrdersCount = 0 } = useGenOrdersCount(systemState?.current_generation_id ?? null);
   const { data: cohortCount = 0 } = useCohortCount(systemState?.current_generation_id ?? null);
@@ -368,7 +368,16 @@ export function CapitalOverviewTile({ compact }: { compact?: boolean }) {
   } | null>(null);
   const [showLiveSafety, setShowLiveSafety] = React.useState(false);
   
-  const isLoading = !account;
+  // Mode detection from system state
+  const tradeMode = system?.tradeMode ?? liveSafety.tradeMode;
+  const isLive = tradeMode === 'live';
+  const isLiveArmed = isLive && system?.liveArmedUntil && 
+    new Date(system.liveArmedUntil) > new Date();
+  
+  // In live mode without ARM: show LOCKED state
+  const isLocked = isLive && !isLiveArmed;
+  
+  const isLoading = !system;
   const isStale = staleness.account.stale;
   
   const cash = account?.cash ?? 0;
@@ -378,8 +387,6 @@ export function CapitalOverviewTile({ compact }: { compact?: boolean }) {
   const activePositions = account?.positions ?? [];
   
   // Live safety checks from hook
-  const tradeMode = liveSafety.tradeMode;
-  const isLive = tradeMode === 'live';
   const coinbaseConnected = liveSafety.coinbaseConnected;
   const canCreateOrders = liveSafety.canTrade || permissionResult?.can_create_orders === true;
   const liveCap = liveSafety.liveCap;
@@ -422,6 +429,58 @@ export function CapitalOverviewTile({ compact }: { compact?: boolean }) {
         <div className="animate-pulse space-y-2">
           <div className="h-8 bg-muted/30 rounded" />
           <div className="h-8 bg-muted/30 rounded" />
+        </div>
+      ) : isLocked ? (
+        // LOCKED STATE: Live mode but not armed - NEVER show paper data
+        <div className="space-y-3">
+          <div className="flex flex-col items-center justify-center py-6 text-center">
+            <Shield className="h-8 w-8 text-amber-500 mb-2" />
+            <div className="text-sm font-mono font-bold text-amber-500">LOCKED</div>
+            <div className="text-[10px] text-muted-foreground mt-1">
+              ARM required to view Coinbase balances
+            </div>
+            <div className="text-[9px] text-muted-foreground mt-1">
+              Paper data is never shown in live mode
+            </div>
+          </div>
+          
+          {/* Still show safety checks so user can ARM */}
+          <div className="border-t border-border/50 pt-3">
+            <button
+              onClick={() => setShowLiveSafety(!showLiveSafety)}
+              className="flex items-center justify-between w-full text-left"
+            >
+              <div className="flex items-center gap-2">
+                <Shield className={`h-4 w-4 ${passedChecks === checks.length ? 'text-success' : 'text-amber-500'}`} />
+                <span className="text-xs font-medium">Live Safety</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                  passedChecks === checks.length 
+                    ? 'bg-success/20 text-success' 
+                    : 'bg-amber-500/20 text-amber-500'
+                }`}>
+                  {passedChecks}/{checks.length} checks
+                </span>
+              </div>
+              {showLiveSafety ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+            
+            {showLiveSafety && (
+              <div className="mt-3 space-y-2">
+                {checks.map((check, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    {check.pass ? (
+                      <CheckCircle className="h-3.5 w-3.5 text-success" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5 text-destructive" />
+                    )}
+                    <span className={check.pass ? 'text-muted-foreground' : 'text-foreground'}>
+                      {check.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <>

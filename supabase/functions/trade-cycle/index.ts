@@ -1825,18 +1825,24 @@ Deno.serve(async (req) => {
       
       if (regimeBlocked) {
         regimeBlockedCount++;
-        console.log(`[trade-cycle] ${sym}: REGIME BLOCKED (agent=${agentPreferredRegime}, market=${regimeContext.gating_regime})`);
         
-        // Still add as candidate for telemetry, but with forced hold
+        // STILL RUN STRATEGY for shadow trade learning (but force hold for real trades)
+        // This gives us real confidence scores for counterfactual learning
+        const result = makeDecision(agent, mkt, hasPos, posQty, testMode, droughtModeActive, agentTradeCount);
+        
+        console.log(`[trade-cycle] ${sym}: REGIME BLOCKED (agent=${agentPreferredRegime}, market=${regimeContext.gating_regime}) | shadow_conf=${result.confidence_components.signal_confidence.toFixed(2)}`);
+        
+        // Add as blocked candidate with REAL signal confidence for shadow learning
         candidates.push({
           symbol: sym,
           market: mkt,
-          decision: 'hold',
-          reasons: [`wrong_regime:${regimeContext.gating_regime}`],
-          confidence: 0,
-          confidence_components: { signal_confidence: 0, maturity_multiplier: 1, final_confidence: 0 },
+          decision: 'hold', // Force hold for real trading
+          reasons: [`wrong_regime:${regimeContext.gating_regime}`, ...result.reasons],
+          confidence: 0, // Zero for real trading gate
+          confidence_components: result.confidence_components, // REAL values for shadow learning
           positionQty: posQty,
-          gateFailures: [],
+          gateFailures: result.gateFailures,
+          nearestPass: result.nearestPass,
           regimeContext,
           regimeBlocked: true,
         });

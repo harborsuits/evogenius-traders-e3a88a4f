@@ -2109,3 +2109,248 @@ export function ShadowTradingTile({ compact }: { compact?: boolean }) {
 
 // Live Brain Tile - Shows active brain snapshot and allows promotion
 export { LiveBrainPanel as LiveBrainTile } from '@/components/dashboard/LiveBrainPanel';
+
+// ============================================
+// PIPELINE HEALTH TILE - Snapshot-native
+// Shows trade-cycle, fitness, market-poll, shadow status
+// ============================================
+export function PipelineHealthTile({ compact }: { compact?: boolean }) {
+  const { pipeline, staleness, refetchAll } = useSystemSnapshot();
+
+  const tradeStale = pipeline?.tradeCycle.isStale ?? true;
+  const fitnessStale = pipeline?.fitnessCycle.isStale ?? true;
+  const marketStale = pipeline?.marketPoll.isStale ?? true;
+  const pendingShadow = pipeline?.shadowOutcome.pendingCount ?? 0;
+
+  const formatTime = (ts: string | null) => {
+    if (!ts) return 'no runs yet';
+    return formatDistanceToNow(new Date(ts), { addSuffix: true });
+  };
+
+  const StatusDot = ({ stale }: { stale: boolean }) => (
+    <span className={cn(
+      "inline-block w-1.5 h-1.5 rounded-full",
+      stale ? "bg-amber-500" : "bg-emerald-500"
+    )} />
+  );
+
+  return (
+    <div className="space-y-3">
+      <SnapshotTileHeader 
+        icon={<Activity className="h-4 w-4 text-primary" />}
+        title="Pipeline Health"
+        badges={
+          <div className="flex items-center gap-1">
+            <PipelineBadge compact />
+          </div>
+        }
+        onRefresh={refetchAll}
+      />
+
+      <div className="grid grid-cols-2 gap-2">
+        {/* Trade Cycle */}
+        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <StatusDot stale={tradeStale} />
+            Trade Cycle
+          </div>
+          <div className={cn(
+            "font-mono text-sm",
+            tradeStale ? "text-amber-500" : "text-emerald-500"
+          )}>
+            {tradeStale ? "STALE" : "OK"}
+          </div>
+          <div className="text-[9px] text-muted-foreground">
+            {formatTime(pipeline?.tradeCycle.lastRun ?? null)}
+          </div>
+          {pipeline?.tradeCycle.lastDecision && (
+            <div className="text-[8px] font-mono text-muted-foreground/70">
+              → {pipeline.tradeCycle.lastDecision}
+            </div>
+          )}
+        </div>
+
+        {/* Market Poll */}
+        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <StatusDot stale={marketStale} />
+            Market Poll
+          </div>
+          <div className={cn(
+            "font-mono text-sm",
+            marketStale ? "text-amber-500" : "text-emerald-500"
+          )}>
+            {marketStale ? "STALE" : "OK"}
+          </div>
+          <div className="text-[9px] text-muted-foreground">
+            {formatTime(pipeline?.marketPoll.lastRun ?? null)}
+            {pipeline?.marketPoll.symbolsUpdated ? ` · ${pipeline.marketPoll.symbolsUpdated} sym` : ''}
+          </div>
+        </div>
+
+        {/* Fitness Cycle */}
+        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <StatusDot stale={fitnessStale} />
+            Fitness Calc
+          </div>
+          <div className={cn(
+            "font-mono text-sm",
+            fitnessStale ? "text-amber-500" : "text-emerald-500"
+          )}>
+            {fitnessStale ? "STALE" : "OK"}
+          </div>
+          <div className="text-[9px] text-muted-foreground">
+            {formatTime(pipeline?.fitnessCycle.lastRun ?? null)}
+          </div>
+        </div>
+
+        {/* Shadow Outcomes */}
+        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <StatusDot stale={pendingShadow > 10} />
+            Shadow Outcomes
+          </div>
+          <div className={cn(
+            "font-mono text-sm",
+            pendingShadow > 10 ? "text-amber-500" : 
+            pendingShadow > 0 ? "text-primary" : "text-emerald-500"
+          )}>
+            {pendingShadow > 0 ? `${pendingShadow} pending` : "clear"}
+          </div>
+          <div className="text-[9px] text-muted-foreground">
+            {formatTime(pipeline?.shadowOutcome.lastRun ?? null)}
+          </div>
+        </div>
+      </div>
+
+      {/* Overall staleness warning */}
+      {staleness.pipeline.stale && (
+        <div className="flex items-center gap-1 text-[10px] text-amber-500 bg-amber-500/10 rounded px-2 py-1">
+          <AlertTriangle className="h-3 w-3" />
+          Pipeline stale for {Math.floor(staleness.pipeline.ageSeconds / 60)}m
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================
+// RISK STATE TILE - Snapshot-native
+// Shows rollback thresholds and breach status
+// ============================================
+export function RiskStateTile({ compact }: { compact?: boolean }) {
+  const { risk, refetchAll } = useSystemSnapshot();
+
+  const daily = risk?.dailyLossPct ?? 0;
+  const dd = risk?.drawdownPct ?? 0;
+  const streak = risk?.consecutiveLossDays ?? 0;
+  const shouldRollback = risk?.shouldRollback ?? false;
+  const breaches = risk?.rollbackBreaches ?? [];
+
+  // Thresholds (should match fitness-calc)
+  const THRESHOLDS = {
+    dailyLoss: 0.05,
+    drawdown: 0.10,
+    consecutiveLossDays: 5,
+  };
+
+  const MetricBar = ({ value, threshold, label, format }: { 
+    value: number; 
+    threshold: number; 
+    label: string;
+    format: (v: number) => string;
+  }) => {
+    const pct = Math.min((value / threshold) * 100, 100);
+    const danger = value >= threshold;
+    const warning = value >= threshold * 0.7;
+    
+    return (
+      <div className="space-y-1">
+        <div className="flex justify-between text-[10px]">
+          <span className="text-muted-foreground">{label}</span>
+          <span className={cn(
+            "font-mono",
+            danger ? "text-destructive font-bold" : 
+            warning ? "text-amber-500" : "text-foreground"
+          )}>
+            {format(value)} / {format(threshold)}
+          </span>
+        </div>
+        <div className="h-1.5 bg-muted/30 rounded-full overflow-hidden">
+          <div 
+            className={cn(
+              "h-full rounded-full transition-all",
+              danger ? "bg-destructive" : 
+              warning ? "bg-amber-500" : "bg-emerald-500"
+            )}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      <SnapshotTileHeader 
+        icon={<Shield className="h-4 w-4 text-primary" />}
+        title="Risk State"
+        badges={
+          <div className="flex items-center gap-1">
+            <RiskBadge compact />
+          </div>
+        }
+        onRefresh={refetchAll}
+      />
+
+      {/* Rollback alert */}
+      {shouldRollback ? (
+        <div className="flex items-center gap-2 bg-destructive/10 text-destructive rounded-lg p-2 border border-destructive/30">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <div>
+            <div className="text-xs font-medium">ROLLBACK TRIGGERED</div>
+            <div className="text-[10px] opacity-80">
+              {breaches.length > 0 ? breaches.join(' · ') : 'Threshold breached'}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 bg-emerald-500/10 text-emerald-500 rounded-lg p-2">
+          <CheckCircle className="h-4 w-4 shrink-0" />
+          <div>
+            <div className="text-xs font-medium">Normal</div>
+            <div className="text-[10px] opacity-80">No rollback conditions detected</div>
+          </div>
+        </div>
+      )}
+
+      {/* Metric bars */}
+      <div className="space-y-3">
+        <MetricBar 
+          label="Daily Loss" 
+          value={daily} 
+          threshold={THRESHOLDS.dailyLoss}
+          format={(v) => `${(v * 100).toFixed(2)}%`}
+        />
+        <MetricBar 
+          label="Drawdown" 
+          value={dd} 
+          threshold={THRESHOLDS.drawdown}
+          format={(v) => `${(v * 100).toFixed(2)}%`}
+        />
+        <MetricBar 
+          label="Loss Streak" 
+          value={streak} 
+          threshold={THRESHOLDS.consecutiveLossDays}
+          format={(v) => `${v} days`}
+        />
+      </div>
+
+      {/* Thresholds info */}
+      <div className="text-[9px] text-muted-foreground border-t border-border/30 pt-2">
+        Rollback triggers: &gt;5% daily loss, &gt;10% drawdown, or &gt;5 consecutive losing days
+      </div>
+    </div>
+  );
+}

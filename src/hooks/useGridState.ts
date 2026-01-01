@@ -26,6 +26,8 @@ const DEFAULT_ORBIT_ORDER = [
   'trade-cycle',
   'control',
   'live-brain',
+  'live-orders-fills',
+  'live-risk-guardrails',
   'pipeline-health',
   'risk-state',
   'polling',

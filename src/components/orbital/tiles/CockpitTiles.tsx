@@ -2495,3 +2495,6 @@ export function RiskStateTile({ compact }: { compact?: boolean }) {
     </div>
   );
 }
+
+// Live Proof Tile - Shows execution state proof (Mode/Armed/Broker)
+export { LiveProofTile } from '@/components/dashboard/LiveProofTile';

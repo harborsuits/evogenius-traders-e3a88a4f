@@ -17,7 +17,8 @@ const MIN_ROWS = 3; // Always show at least 3 rows
 // Default ordering for orbit
 const DEFAULT_ORBIT_ORDER = [
   'decision-state',
-  'market-conditions', 
+  'market-conditions',
+  'live-proof',
   'capital',
   'gen-health',
   'agent-activity',

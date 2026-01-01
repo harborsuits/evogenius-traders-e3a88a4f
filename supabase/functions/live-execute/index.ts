@@ -190,6 +190,8 @@ interface ExecuteTradeRequest {
   // NEW: Canary hard-lock fields
   arm_session_id?: string;
   request_id?: string;
+  // NEW: Direct USD quote for BUY orders (avoids qty*price calculation)
+  quote_usd?: number;
 }
 
 interface CoinbaseAccount {
@@ -244,8 +246,71 @@ Deno.serve(async (req) => {
     const requestId = body.request_id || crypto.randomUUID();
     console.log(`[live-execute] Request ID: ${requestId}`);
 
-    // ============= GATE 0: CANARY HARD-LOCK (ONE ORDER PER ARM) =============
+    // ============= GATE 0: Validate credentials exist =============
+    const keyName = Deno.env.get('COINBASE_KEY_NAME');
+    const privateKeyInput = Deno.env.get('COINBASE_PRIVATE_KEY');
+
+    if (!keyName || !privateKeyInput) {
+      const reason = 'BLOCKED_NO_CREDENTIALS';
+      console.log(`[live-execute] ${reason}`);
+      
+      await logLiveEvent(supabase, 'live_trade_blocked', {
+        symbol: body.symbol,
+        side: body.side,
+        qty: body.qty,
+        block_reason: reason,
+        request_id: requestId,
+      });
+
+      return new Response(
+        JSON.stringify({ 
+          ok: false, 
+          blocked: true, 
+          reason,
+          error: 'Coinbase API credentials not configured'
+        }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // ============= GATE 1: Verify system is armed for live =============
+    // IMPORTANT: Check ARM status BEFORE spending session to avoid wasting sessions
+    const { data: systemState } = await supabase
+      .from('system_state')
+      .select('trade_mode, live_armed_until, current_generation_id')
+      .limit(1)
+      .single();
+
+    const liveArmedUntil = systemState?.live_armed_until;
+    const isArmed = liveArmedUntil && new Date(liveArmedUntil) > new Date();
+
+    if (!isArmed) {
+      const reason = 'BLOCKED_LIVE_NOT_ARMED';
+      console.log(`[live-execute] ${reason}`);
+      
+      await logLiveEvent(supabase, 'live_trade_blocked', {
+        symbol: body.symbol,
+        side: body.side,
+        qty: body.qty,
+        block_reason: reason,
+        armed_until: liveArmedUntil,
+        request_id: requestId,
+      });
+
+      return new Response(
+        JSON.stringify({ 
+          ok: false, 
+          blocked: true, 
+          reason,
+          error: 'Live trading requires ARM. System is not armed.'
+        }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // ============= GATE 2: CANARY HARD-LOCK (ONE ORDER PER ARM) =============
     // This is the non-negotiable atomic spend check
+    // Now happens AFTER ARM check so sessions aren't wasted on expired ARM
     
     if (!body.arm_session_id) {
       const reason = 'BLOCKED_NO_SESSION';
@@ -320,67 +385,6 @@ Deno.serve(async (req) => {
 
     console.log('[live-execute] ✅ ARM session spent successfully. Proceeding with order...');
 
-    // ============= GATE 1: Validate credentials exist =============
-    const keyName = Deno.env.get('COINBASE_KEY_NAME');
-    const privateKeyInput = Deno.env.get('COINBASE_PRIVATE_KEY');
-
-    if (!keyName || !privateKeyInput) {
-      const reason = 'BLOCKED_NO_CREDENTIALS';
-      console.log(`[live-execute] ${reason}`);
-      
-      await logLiveEvent(supabase, 'live_trade_blocked', {
-        symbol: body.symbol,
-        side: body.side,
-        qty: body.qty,
-        block_reason: reason,
-        request_id: requestId,
-      });
-
-      return new Response(
-        JSON.stringify({ 
-          ok: false, 
-          blocked: true, 
-          reason,
-          error: 'Coinbase API credentials not configured'
-        }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // ============= GATE 2: Verify system is armed for live =============
-    const { data: systemState } = await supabase
-      .from('system_state')
-      .select('trade_mode, live_armed_until, current_generation_id')
-      .limit(1)
-      .single();
-
-    const liveArmedUntil = systemState?.live_armed_until;
-    const isArmed = liveArmedUntil && new Date(liveArmedUntil) > new Date();
-
-    if (!isArmed) {
-      const reason = 'BLOCKED_LIVE_NOT_ARMED';
-      console.log(`[live-execute] ${reason}`);
-      
-      await logLiveEvent(supabase, 'live_trade_blocked', {
-        symbol: body.symbol,
-        side: body.side,
-        qty: body.qty,
-        block_reason: reason,
-        armed_until: liveArmedUntil,
-        request_id: requestId,
-      });
-
-      return new Response(
-        JSON.stringify({ 
-          ok: false, 
-          blocked: true, 
-          reason,
-          error: 'Live trading requires ARM. System is not armed.'
-        }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
     // ============= GATE 3: Get live cap from config =============
     const { data: configData } = await supabase
       .from('system_config')
@@ -391,6 +395,12 @@ Deno.serve(async (req) => {
     const config = configData?.config as Record<string, unknown> | null;
     const liveCapUsd = (config?.live_cap_usd as number) ?? DEFAULT_LIVE_CAP_USD;
     console.log(`[live-execute] Live cap: $${liveCapUsd}`);
+
+    // NEW: If quote_usd is provided, use it directly (for BUY canary orders)
+    const useQuoteUsd = body.side === 'buy' && body.quote_usd && body.quote_usd > 0;
+    if (useQuoteUsd) {
+      console.log(`[live-execute] Using quote_usd mode: $${body.quote_usd}`);
+    }
 
     // ============= GATE 4: Fetch Coinbase balances =============
     console.log('[live-execute] Fetching Coinbase account balances...');
@@ -484,17 +494,33 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Calculate order cost with slippage buffer
-    const slippageBuffer = 1 + MAX_SLIPPAGE_PCT;
-    const estimatedPrice = currentPrice * slippageBuffer;
-    const orderCost = body.side === 'buy' ? body.qty * estimatedPrice : 0;
-    const feeBuffer = orderCost * FEE_BUFFER_PCT;
-    const totalRequired = orderCost + feeBuffer;
-
     // Calculate truly available cash (minus holds and cap)
     const maxAllowedByBalance = availableCash - holdCash;
     const maxAllowedByCap = liveCapUsd;
     const maxAllowed = Math.min(maxAllowedByBalance, maxAllowedByCap);
+
+    // Calculate order cost with slippage buffer
+    // NEW: If quote_usd is provided, use it directly instead of qty * price
+    const slippageBuffer = 1 + MAX_SLIPPAGE_PCT;
+    let orderCost: number;
+    let finalQuoteSize: number;
+
+    if (useQuoteUsd && body.quote_usd) {
+      // Clamp quote_usd to maxAllowed
+      finalQuoteSize = Math.min(body.quote_usd, maxAllowed);
+      orderCost = finalQuoteSize;
+      console.log(`[live-execute] Quote USD mode: requested=$${body.quote_usd}, clamped=$${finalQuoteSize}`);
+    } else if (body.side === 'buy') {
+      const estimatedPrice = currentPrice * slippageBuffer;
+      orderCost = body.qty * estimatedPrice;
+      finalQuoteSize = orderCost;
+    } else {
+      orderCost = 0; // Sells don't require cash
+      finalQuoteSize = 0;
+    }
+
+    const feeBuffer = orderCost * FEE_BUFFER_PCT;
+    const totalRequired = orderCost + feeBuffer;
 
     console.log(`[live-execute] Cash guard: orderCost=$${orderCost.toFixed(2)}, feeBuffer=$${feeBuffer.toFixed(2)}, totalRequired=$${totalRequired.toFixed(2)}, maxAllowed=$${maxAllowed.toFixed(2)}`);
 
@@ -574,6 +600,7 @@ Deno.serve(async (req) => {
     console.log('[live-execute] All safety gates passed. Placing live order...');
 
     // Convert symbol format (BTC-USD -> BTC-USD is already correct for Coinbase Advanced Trade)
+    // For BUY with quote_usd, use the clamped finalQuoteSize directly
     const orderPayload = {
       client_order_id: `live_${Date.now()}_${randomHex(4)}`,
       product_id: body.symbol,
@@ -587,7 +614,8 @@ Deno.serve(async (req) => {
           }
         : {
             market_market_ioc: {
-              quote_size: body.side === 'buy' ? totalRequired.toString() : undefined,
+              // For BUY: use finalQuoteSize (which is clamped quote_usd or calculated from qty)
+              quote_size: body.side === 'buy' ? finalQuoteSize.toFixed(2) : undefined,
               base_size: body.side === 'sell' ? body.qty.toString() : undefined,
             }
           }

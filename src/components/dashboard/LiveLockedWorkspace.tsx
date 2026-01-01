@@ -202,11 +202,13 @@ export function LiveLockedWorkspace() {
     try {
       const requestId = generateRequestId();
       
+      // BUY $5 BTC-USD is safest canary: works even with just USD, avoids tiny-quote rejection
       const { data, error } = await supabase.functions.invoke('live-execute', {
         body: {
-          symbol: 'DOGE-USD',
-          side: 'sell',
-          qty: 1,
+          symbol: 'BTC-USD',
+          side: 'buy',
+          qty: 1, // Placeholder, quote_usd takes precedence
+          quote_usd: 5, // Direct USD amount - avoids qty*price calculation
           reason: 'CANARY_TEST: Manual test from Live Desk',
           arm_session_id: currentSessionId,
           request_id: requestId,
@@ -496,7 +498,7 @@ export function LiveLockedWorkspace() {
               ) : (
                 <>
                   <TestTube2 className="h-4 w-4 mr-2" />
-                  Test Order: SELL 1 DOGE-USD
+                  Test Order: BUY $5 BTC-USD
                 </>
               )}
             </Button>

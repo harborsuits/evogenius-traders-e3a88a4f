@@ -40,6 +40,8 @@ export function LiveLockedWorkspace() {
   const { 
     arm, 
     disarm, 
+    armAsync,
+    disarmAsync,
     isArming, 
     isDisarming,
     currentSessionId,
@@ -56,6 +58,24 @@ export function LiveLockedWorkspace() {
   const [secondsRemaining, setSecondsRemaining] = useState(0);
   const [isTestingOrder, setIsTestingOrder] = useState(false);
   const [isRetestingPermissions, setIsRetestingPermissions] = useState(false);
+  const [isRearming, setIsRearming] = useState(false);
+
+  // Re-ARM handler: disarm then immediately arm (one click escape from "consumed" state)
+  const handleRearm = async () => {
+    setIsRearming(true);
+    try {
+      await disarmAsync();
+      await armAsync();
+    } catch (err) {
+      toast({
+        title: 'Re-ARM Failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsRearming(false);
+    }
+  };
 
   // Countdown timer effect
   useEffect(() => {
@@ -435,24 +455,46 @@ export function LiveLockedWorkspace() {
         <CardContent className="space-y-3">
           {/* ARM Button - changes based on session state */}
           {isSessionSpent ? (
-            <Button
-              variant="outline"
-              className="w-full justify-center h-12 text-base border-warning/50 text-warning"
-              disabled={isDisarming}
-              onClick={() => disarm()}
-            >
-              {isDisarming ? (
-                <>
-                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                  Disarming...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-5 w-5 mr-2" />
-                  Disarm to Reset (Canary Consumed)
-                </>
-              )}
-            </Button>
+            <div className="space-y-2">
+              {/* Primary: One-click Re-ARM */}
+              <Button
+                variant="destructive"
+                className="w-full justify-center h-12 text-base"
+                disabled={isRearming || !preArmReady}
+                onClick={handleRearm}
+              >
+                {isRearming ? (
+                  <>
+                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                    Re-Arming...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-5 w-5 mr-2" />
+                    Re-ARM (60s, 1 new order)
+                  </>
+                )}
+              </Button>
+              {/* Secondary: Just disarm */}
+              <Button
+                variant="outline"
+                className="w-full justify-center h-10 text-sm border-muted-foreground/30"
+                disabled={isDisarming || isRearming}
+                onClick={() => disarm()}
+              >
+                {isDisarming ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Disarming...
+                  </>
+                ) : (
+                  <>
+                    <Lock className="h-4 w-4 mr-2" />
+                    Disarm Only
+                  </>
+                )}
+              </Button>
+            </div>
           ) : (
             <Button
               variant="destructive"

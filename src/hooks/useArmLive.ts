@@ -123,6 +123,8 @@ export function useArmLive() {
   return {
     arm: armMutation.mutate,
     disarm: disarmMutation.mutate,
+    armAsync: armMutation.mutateAsync,
+    disarmAsync: disarmMutation.mutateAsync,
     isArming: armMutation.isPending,
     isDisarming: disarmMutation.isPending,
     // New canary hard-lock fields

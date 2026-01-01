@@ -1581,13 +1581,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    if (systemState.trade_mode !== 'paper') {
-      console.log(`[trade-cycle] Not in paper mode (${systemState.trade_mode}), skipping`);
-      return new Response(
-        JSON.stringify({ ok: true, skipped: true, reason: 'not_paper_mode' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    // Track mode for later execution gating (shadow trades always run)
+    const isPaperMode = systemState.trade_mode === 'paper';
+    const executionMode = systemState.trade_mode;
+    console.log(`[trade-cycle] Mode: ${executionMode} (paper_orders=${isPaperMode ? 'enabled' : 'shadow_only'})`);
+
 
     // 2. Get market data first (needed for drought resolution)
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
@@ -2350,31 +2348,36 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`[trade-cycle] BEST: ${decision.toUpperCase()} ${finalQty} ${symbol} | conf=${confidence.toFixed(2)} | drought=${droughtModeActive} | explorer=${isExplorerTrade} | reasons=${reasons.join(',')}`);
+    console.log(`[trade-cycle] BEST: ${decision.toUpperCase()} ${finalQty} ${symbol} | conf=${confidence.toFixed(2)} | drought=${droughtModeActive} | explorer=${isExplorerTrade} | mode=${executionMode} | reasons=${reasons.join(',')}`);
 
-    // Submit to trade-execute
+    // Submit to trade-execute ONLY in paper mode
+    // In live mode, shadow trades are logged but no paper orders are created
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
     
-    const executeResponse = await fetch(`${supabaseUrl}/functions/v1/trade-execute`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${serviceKey}`,
-      },
-      body: JSON.stringify({
-        symbol,
-        side: decision,
-        qty: finalQty,
-        agentId: agent.id,
-        generationId: agent.generation_id,
-        tags,
-      }),
-    });
-
-    const executeResult = await executeResponse.json();
+    let executeResult: Record<string, unknown> = { skipped: true, reason: 'shadow_only_mode' };
     
-    console.log(`[trade-cycle] Execute result:`, executeResult);
+    if (isPaperMode) {
+      const executeResponse = await fetch(`${supabaseUrl}/functions/v1/trade-execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({
+          symbol,
+          side: decision,
+          qty: finalQty,
+          agentId: agent.id,
+          generationId: agent.generation_id,
+          tags,
+        }),
+      });
+      executeResult = await executeResponse.json();
+      console.log(`[trade-cycle] Execute result:`, executeResult);
+    } else {
+      console.log(`[trade-cycle] Skipping paper order (mode=${executionMode}, shadow trades logged)`);
+    }
 
     // Run adaptive tuning check at end of cycle
     await maybeTuneThresholds(supabase, droughtResolved);

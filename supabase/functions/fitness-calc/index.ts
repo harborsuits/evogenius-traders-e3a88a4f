@@ -360,7 +360,7 @@ function blendFitnessScores(
   shadowTrades: number
 ): { blended_score: number; real_weight: number; shadow_weight: number; blend_reason: string } {
   const MIN_REAL_TRADES = 10;  // Need 10+ real trades for full weight
-  const MIN_SHADOW_TRADES = 5; // Need 5+ shadow trades to contribute
+  const MIN_SHADOW_TRADES = 2; // Need 2+ shadow trades to contribute (lowered for warmup)
   
   // If no shadow trades, use real only
   if (shadowTrades < MIN_SHADOW_TRADES) {

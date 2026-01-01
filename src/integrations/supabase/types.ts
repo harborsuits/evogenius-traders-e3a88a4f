@@ -1011,7 +1011,7 @@ export type Database = {
     Enums: {
       agent_role: "core" | "explorer"
       agent_status: "elite" | "active" | "probation" | "removed"
-      generation_termination_reason: "time" | "trades" | "drawdown"
+      generation_termination_reason: "time" | "trades" | "drawdown" | "drought"
       paper_order_side: "buy" | "sell"
       paper_order_status: "pending" | "filled" | "rejected" | "cancelled"
       paper_order_type: "market" | "limit"
@@ -1148,7 +1148,7 @@ export const Constants = {
     Enums: {
       agent_role: ["core", "explorer"],
       agent_status: ["elite", "active", "probation", "removed"],
-      generation_termination_reason: ["time", "trades", "drawdown"],
+      generation_termination_reason: ["time", "trades", "drawdown", "drought"],
       paper_order_side: ["buy", "sell"],
       paper_order_status: ["pending", "filled", "rejected", "cancelled"],
       paper_order_type: ["market", "limit"],

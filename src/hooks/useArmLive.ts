@@ -86,9 +86,11 @@ export function useArmLive() {
       return data as ArmResponse;
     },
     onSuccess: () => {
+      // Clear session state FIRST
       setCurrentSessionId(null);
+      // Remove cached session data entirely (not just invalidate)
+      queryClient.removeQueries({ queryKey: ['arm-session'] });
       queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'system-state' });
-      queryClient.invalidateQueries({ queryKey: ['arm-session'] });
       toast({
         title: 'Live Mode Disarmed',
         description: 'Live trading is now locked.',

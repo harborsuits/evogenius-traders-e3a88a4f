@@ -35,6 +35,7 @@ import {
   LiveBrainTile,
   PipelineHealthTile,
   RiskStateTile,
+  LiveProofTile,
 } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PositionsCardContent, ActivityCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
@@ -47,6 +48,7 @@ const staticCards: CommandCard[] = [
   // Left column - Rolodex (primary status)
   { id: 'decision-state', title: 'Decision State', type: 'cockpit', component: DecisionStateTile },
   { id: 'market-conditions', title: 'Market Conditions', type: 'cockpit', component: MarketConditionsTile },
+  { id: 'live-proof', title: 'Live Proof', type: 'cockpit', component: LiveProofTile },
   { id: 'capital', title: 'Capital Overview', type: 'cockpit', component: CapitalOverviewTile },
   { id: 'agent-activity', title: 'Agent Activity', type: 'cockpit', component: AgentInactivityTile },
   { id: 'symbol-coverage', title: 'Symbol Coverage', type: 'cockpit', component: SymbolCoverageTile },

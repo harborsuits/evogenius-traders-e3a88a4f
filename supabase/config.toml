@@ -60,3 +60,6 @@ verify_jwt = false
 
 [functions.live-execute]
 verify_jwt = false
+
+[functions.promote-brain]
+verify_jwt = false

@@ -16,8 +16,8 @@ import { useDroughtState } from '@/hooks/useDroughtState';
 import { useShadowTradingStats } from '@/hooks/useShadowTradingStats';
 import { useCockpitLiveState } from '@/hooks/useCockpitLiveState';
 import { useLiveSafety } from '@/hooks/useLiveSafety';
-import { TileHeader, LiveBadge, SnapshotTileHeader } from '@/components/dashboard/StalenessIndicator';
-import { ModeBadge, GenerationBadge, DataSourceFooter } from '@/components/dashboard/SnapshotBadges';
+import { SnapshotTileHeader } from '@/components/dashboard/StalenessIndicator';
+import { ModeBadge, GenerationBadge, CardHeaderBadges, PipelineBadge, RiskBadge } from '@/components/dashboard/SnapshotBadges';
 import { useSystemSnapshot } from '@/contexts/SystemSnapshotContext';
 import { SystemStatus } from '@/types/evotrader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -115,13 +115,16 @@ export function DroughtMonitorTile({ compact }: { compact?: boolean }) {
     }
   };
   
+  const { refetchAll } = useSystemSnapshot();
+  
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-        <Droplets className="h-4 w-4 text-primary" />
-        Signal Drought
-        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
-      </div>
+      <SnapshotTileHeader 
+        icon={<Droplets className="h-4 w-4 text-primary" />}
+        title="Signal Drought"
+        badges={<CardHeaderBadges compact showMode showGeneration />}
+        onRefresh={() => { refetch(); refetchAll(); }}
+      />
       
       {isLoading || !droughtState ? (
         <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
@@ -701,11 +704,10 @@ export function DecisionLogTile({ compact }: { compact?: boolean }) {
   
   return (
     <div className="space-y-3">
-      <TileHeader 
+      <SnapshotTileHeader 
         icon={<Activity className="h-4 w-4 text-primary" />}
         title="Recent Decisions"
-        ageSeconds={staleness.decisions.ageSeconds}
-        stale={isStale}
+        badges={<CardHeaderBadges compact showMode showGeneration showPipeline />}
         onRefresh={refetchAll}
       />
       
@@ -845,13 +847,16 @@ export function AgentInactivityTile({ compact }: { compact?: boolean }) {
   const activitySignal = getActivitySignal();
   const eliteSignal = getEliteSignal();
   
+  const { refetchAll } = useSystemSnapshot();
+  
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-        <Users className="h-4 w-4 text-primary" />
-        Agent Activity
-        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
-      </div>
+      <SnapshotTileHeader 
+        icon={<Users className="h-4 w-4 text-primary" />}
+        title="Agent Activity"
+        badges={<CardHeaderBadges compact showMode showGeneration />}
+        onRefresh={refetchAll}
+      />
       
       {isLoading ? (
         <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
@@ -975,27 +980,34 @@ export function CatalystWatchTile({ compact }: { compact?: boolean }) {
     .sort(([, a], [, b]) => (b as number) - (a as number))
     .slice(0, 4);
   
+  const { refetchAll } = useSystemSnapshot();
+  
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-        <Eye className="h-4 w-4 text-primary" />
-        Catalyst Watch
-        {hotSymbols.length > 0 && (
+      <SnapshotTileHeader 
+        icon={<Eye className="h-4 w-4 text-primary" />}
+        title="Catalyst Watch"
+        badges={
           <div className="flex items-center gap-1">
-            <Flame className="h-3.5 w-3.5 text-orange-500" />
-            {hotSymbols.slice(0, 2).map(([symbol]) => (
-              <Badge 
-                key={symbol}
-                variant="outline"
-                className="text-[9px] px-1.5 py-0 h-4 font-mono border-orange-500/30 text-orange-400"
-              >
-                {symbol.replace('-USD', '')}
-              </Badge>
-            ))}
+            <CardHeaderBadges compact showMode={false} showGeneration={false} />
+            {hotSymbols.length > 0 && (
+              <div className="flex items-center gap-1">
+                <Flame className="h-3 w-3 text-orange-500" />
+                {hotSymbols.slice(0, 2).map(([symbol]) => (
+                  <Badge 
+                    key={symbol}
+                    variant="outline"
+                    className="text-[8px] px-1 py-0 h-4 font-mono border-orange-500/30 text-orange-400"
+                  >
+                    {symbol.replace('-USD', '')}
+                  </Badge>
+                ))}
+              </div>
+            )}
           </div>
-        )}
-        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
-      </div>
+        }
+        onRefresh={refetchAll}
+      />
       
       {isLoading ? (
         <div className="text-xs text-muted-foreground animate-pulse">Loading catalysts...</div>
@@ -1149,19 +1161,25 @@ export function AutopsyTile({ compact }: { compact?: boolean }) {
   };
   
   const signal = getDiagnosticSignal();
+  const { refetchAll } = useSystemSnapshot();
   
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-        <Skull className="h-4 w-4 text-amber-500" />
-        Performance Autopsy
-        {strictMisses.length > 0 && (
-          <Badge variant="destructive" className="text-[9px] px-1.5 py-0 h-4 font-mono">
-            {strictMisses.length} miss{strictMisses.length !== 1 ? 'es' : ''}
-          </Badge>
-        )}
-        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">24h</Badge>
-      </div>
+      <SnapshotTileHeader 
+        icon={<Skull className="h-4 w-4 text-amber-500" />}
+        title="Performance Autopsy"
+        badges={
+          <div className="flex items-center gap-1">
+            <CardHeaderBadges compact showMode showGeneration />
+            {strictMisses.length > 0 && (
+              <Badge variant="destructive" className="text-[8px] px-1 py-0 font-mono">
+                {strictMisses.length} miss{strictMisses.length !== 1 ? 'es' : ''}
+              </Badge>
+            )}
+          </div>
+        }
+        onRefresh={refetchAll}
+      />
       
       {isLoading ? (
         <div className="text-xs text-muted-foreground animate-pulse">Loading diagnostics...</div>
@@ -1406,14 +1424,16 @@ export function SymbolCoverageTile({ compact }: { compact?: boolean }) {
   };
   
   const diversitySignal = getDiversitySignal();
+  const { refetchAll } = useSystemSnapshot();
   
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-        <PieChart className="h-4 w-4 text-primary" />
-        Symbol Coverage
-        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
-      </div>
+      <SnapshotTileHeader 
+        icon={<PieChart className="h-4 w-4 text-primary" />}
+        title="Symbol Coverage"
+        badges={<CardHeaderBadges compact showMode showGeneration />}
+        onRefresh={refetchAll}
+      />
       
       {isLoading || !coverageData ? (
         <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
@@ -1603,13 +1623,16 @@ export function MarketRegimeTile({ compact }: { compact?: boolean }) {
     }
   };
   
+  const { refetchAll } = useSystemSnapshot();
+  
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-        <Globe className="h-4 w-4 text-primary" />
-        Market Regime
-        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">P5</Badge>
-      </div>
+      <SnapshotTileHeader 
+        icon={<Globe className="h-4 w-4 text-primary" />}
+        title="Market Regime"
+        badges={<CardHeaderBadges compact showMode={false} showGeneration={false} showPipeline />}
+        onRefresh={refetchAll}
+      />
       
       {isLoading ? (
         <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
@@ -1774,13 +1797,16 @@ export function TransactionCostTile({ compact }: { compact?: boolean }) {
     refetchInterval: 30000,
   });
   
+  const { refetchAll } = useSystemSnapshot();
+  
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-        <Scale className="h-4 w-4 text-primary" />
-        Transaction Costs
-        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">P5</Badge>
-      </div>
+      <SnapshotTileHeader 
+        icon={<Scale className="h-4 w-4 text-primary" />}
+        title="Transaction Costs"
+        badges={<CardHeaderBadges compact showMode showGeneration showRisk />}
+        onRefresh={refetchAll}
+      />
       
       {isLoading ? (
         <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
@@ -1901,13 +1927,16 @@ export function AuditTile({ compact }: { compact?: boolean }) {
     return 'event';
   };
   
+  const { refetchAll } = useSystemSnapshot();
+  
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-        <Eye className="h-4 w-4 text-primary" />
-        Tuning Audit
-        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">P4</Badge>
-      </div>
+      <SnapshotTileHeader 
+        icon={<Eye className="h-4 w-4 text-primary" />}
+        title="Tuning Audit"
+        badges={<CardHeaderBadges compact showMode showGeneration />}
+        onRefresh={refetchAll}
+      />
       
       {/* Tab selector */}
       <div className="flex gap-1">
@@ -1983,11 +2012,10 @@ export function ShadowTradingTile({ compact }: { compact?: boolean }) {
   
   return (
     <div className="space-y-3">
-      <TileHeader 
+      <SnapshotTileHeader 
         icon={<Ghost className="h-4 w-4 text-primary" />}
         title="Shadow Learning"
-        ageSeconds={staleness.shadow.ageSeconds}
-        stale={isStale}
+        badges={<CardHeaderBadges compact showMode showGeneration showPipeline />}
         onRefresh={refetchAll}
       />
       

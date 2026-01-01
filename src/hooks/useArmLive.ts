@@ -88,6 +88,8 @@ export function useArmLive() {
     onSuccess: () => {
       // Clear session state FIRST
       setCurrentSessionId(null);
+      // Clear any persisted session ID (belt + suspenders)
+      localStorage.removeItem('arm_session_id');
       // Nuke ALL arm-session queries (regardless of session ID suffix)
       queryClient.removeQueries({
         predicate: (q) => q.queryKey[0] === 'arm-session',

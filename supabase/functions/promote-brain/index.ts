@@ -552,6 +552,148 @@ Deno.serve(async (req) => {
     }
 
     // =========================================================================
+    // ACTION: rollback - Deactivate current brain and optionally activate previous
+    // =========================================================================
+    if (action === 'rollback') {
+      const { reason, activatePrevious = true } = await req.json().catch(() => ({}));
+      console.log(`[promote-brain] Rolling back active brain. Reason: ${reason || 'manual'}`);
+
+      // Get current active brain
+      const { data: activeBrain } = await supabase
+        .from('live_brain_snapshots')
+        .select('id, version_number')
+        .eq('is_active', true)
+        .single();
+
+      if (!activeBrain) {
+        return new Response(
+          JSON.stringify({ ok: false, error: 'No active brain to rollback' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Deactivate current brain
+      await supabase
+        .from('live_brain_snapshots')
+        .update({ is_active: false, status: 'rolled_back' })
+        .eq('id', activeBrain.id);
+
+      let newActiveBrain = null;
+
+      // Optionally activate the previous version
+      if (activatePrevious) {
+        const { data: previousBrain } = await supabase
+          .from('live_brain_snapshots')
+          .select('id, version_number')
+          .eq('status', 'inactive')
+          .lt('version_number', activeBrain.version_number)
+          .order('version_number', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (previousBrain) {
+          await supabase
+            .from('live_brain_snapshots')
+            .update({ is_active: true, status: 'active' })
+            .eq('id', previousBrain.id);
+
+          await supabase
+            .from('system_state')
+            .update({ active_brain_version_id: previousBrain.id })
+            .not('id', 'is', null);
+
+          newActiveBrain = previousBrain;
+        }
+      }
+
+      // Clear system_state if no new active brain
+      if (!newActiveBrain) {
+        await supabase
+          .from('system_state')
+          .update({ active_brain_version_id: null })
+          .not('id', 'is', null);
+      }
+
+      // Log rollback event
+      await supabase
+        .from('control_events')
+        .insert({
+          action: 'brain_rollback',
+          metadata: {
+            rolled_back_version: activeBrain.version_number,
+            reason: reason || 'manual',
+            new_active_version: newActiveBrain?.version_number || null,
+          },
+        });
+
+      // Create performance alert for visibility
+      await supabase
+        .from('performance_alerts')
+        .insert({
+          scope: 'system',
+          scope_id: 'live_brain',
+          severity: 'critical',
+          type: 'brain_rollback',
+          title: `Brain v${activeBrain.version_number} Rolled Back`,
+          message: reason || 'Manual rollback triggered',
+          metadata: {
+            rolled_back_version: activeBrain.version_number,
+            new_active_version: newActiveBrain?.version_number || null,
+          },
+        });
+
+      console.log(`[promote-brain] Rolled back v${activeBrain.version_number}, now active: v${newActiveBrain?.version_number || 'none'}`);
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          rolled_back: activeBrain,
+          new_active: newActiveBrain,
+          reason,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // =========================================================================
+    // ACTION: check-rollback - Check if rollback triggers are breached
+    // =========================================================================
+    if (action === 'check-rollback') {
+      const { dailyLoss, drawdown, consecutiveLossDays } = await req.json().catch(() => ({}));
+      
+      // Rollback thresholds (configurable via system_config later)
+      const ROLLBACK_THRESHOLDS = {
+        max_daily_loss_pct: 0.05,      // 5% daily loss triggers rollback
+        max_drawdown_pct: 0.10,         // 10% drawdown triggers rollback
+        max_consecutive_loss_days: 5,   // 5 consecutive losing days triggers rollback
+      };
+
+      const breaches: string[] = [];
+
+      if (dailyLoss !== undefined && dailyLoss > ROLLBACK_THRESHOLDS.max_daily_loss_pct) {
+        breaches.push(`daily_loss:${(dailyLoss * 100).toFixed(1)}%>${(ROLLBACK_THRESHOLDS.max_daily_loss_pct * 100)}%`);
+      }
+      if (drawdown !== undefined && drawdown > ROLLBACK_THRESHOLDS.max_drawdown_pct) {
+        breaches.push(`drawdown:${(drawdown * 100).toFixed(1)}%>${(ROLLBACK_THRESHOLDS.max_drawdown_pct * 100)}%`);
+      }
+      if (consecutiveLossDays !== undefined && consecutiveLossDays >= ROLLBACK_THRESHOLDS.max_consecutive_loss_days) {
+        breaches.push(`consecutive_loss_days:${consecutiveLossDays}>=${ROLLBACK_THRESHOLDS.max_consecutive_loss_days}`);
+      }
+
+      const shouldRollback = breaches.length > 0;
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          should_rollback: shouldRollback,
+          breaches,
+          thresholds: ROLLBACK_THRESHOLDS,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // =========================================================================
     // ACTION: list - List all snapshots
     // =========================================================================
     if (action === 'list') {

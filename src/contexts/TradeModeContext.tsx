@@ -90,7 +90,22 @@ export function useTradeModeContext() {
 }
 
 // Convenience hook for components that just need to know the mode
+// DEFENSIVE: Returns safe paper/locked defaults if context is missing (e.g., HMR glitch)
 export function useCurrentTradeMode() {
-  const { mode, isPaper, isLive, isLiveArmed, isLoading } = useTradeModeContext();
+  const ctx = useContext(TradeModeContext);
+
+  if (!ctx) {
+    // Fail-safe: never allow live execution when context is missing
+    console.warn('[TradeMode] Context missing — returning safe paper defaults');
+    return {
+      mode: 'paper' as TradeMode,
+      isPaper: true,
+      isLive: false,
+      isLiveArmed: false,
+      isLoading: false,
+    };
+  }
+
+  const { mode, isPaper, isLive, isLiveArmed, isLoading } = ctx;
   return { mode, isPaper, isLive, isLiveArmed, isLoading };
 }

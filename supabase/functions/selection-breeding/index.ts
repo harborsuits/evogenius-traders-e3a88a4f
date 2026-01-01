@@ -405,6 +405,47 @@ Deno.serve(async (req) => {
       },
     });
 
+    // 12b. AUTO-CREATE CANDIDATE SNAPSHOT after rollover
+    // This triggers the brain snapshot system to create a candidate for the new generation
+    console.log('[selection-breeding] Creating candidate brain snapshot...');
+    try {
+      const promoteBrainUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/promote-brain`;
+      const response = await fetch(promoteBrainUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+        },
+        body: JSON.stringify({
+          action: 'create-candidate',
+          generationId: ended_generation_id, // Use ended generation for snapshot
+          topN: 10,
+        }),
+      });
+      
+      const result = await response.json();
+      if (result.ok) {
+        console.log(`[selection-breeding] Created candidate snapshot v${result.snapshot?.version_number} - gates: ${result.gate_results?.all_passed ? 'PASSED' : 'FAILED'}`);
+        
+        // Log the candidate creation
+        await supabase.from('control_events').insert({
+          action: 'auto_candidate_created',
+          metadata: {
+            triggered_by: 'selection_breeding',
+            ended_generation_id,
+            snapshot_version: result.snapshot?.version_number,
+            gates_passed: result.gate_results?.all_passed,
+            qualified_agents: result.gate_results?.agent_gates?.passed,
+          },
+        });
+      } else {
+        console.log(`[selection-breeding] Candidate creation skipped: ${result.error}`);
+      }
+    } catch (err) {
+      console.error('[selection-breeding] Failed to create candidate snapshot:', err);
+      // Non-fatal - rollover still succeeded
+    }
+
     // 13. GUARDRAIL: Enforce max cohort size by pruning extras
     const TARGET_COHORT_SIZE = 100;
     const { count: currentCount } = await supabase

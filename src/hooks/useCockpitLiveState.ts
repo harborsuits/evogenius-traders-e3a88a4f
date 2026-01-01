@@ -119,10 +119,41 @@ export function useCockpitLiveState(): CockpitLiveState {
   const queryClient = useQueryClient();
 
   // ============================================
-  // ACCOUNT SNAPSHOT (polling - external truth)
+  // SYSTEM STATE - Check trade mode first
   // ============================================
-  const accountQuery = useQuery({
-    queryKey: ['cockpit-account'],
+  const systemQuery = useQuery({
+    queryKey: ['cockpit-system'],
+    queryFn: async (): Promise<SystemHealthState | null> => {
+      const { data } = await supabase
+        .from('system_state')
+        .select('status, trade_mode, live_armed_until, updated_at')
+        .limit(1)
+        .maybeSingle();
+
+      if (!data) return null;
+
+      return {
+        status: data.status as SystemHealthState['status'],
+        tradeMode: data.trade_mode as 'paper' | 'live',
+        liveArmedUntil: data.live_armed_until,
+        lastUpdated: data.updated_at,
+      };
+    },
+    refetchInterval: 10000,
+    staleTime: 5000,
+  });
+
+  // Determine if we're in paper mode (for enabling paper data queries)
+  const isPaper = systemQuery.data?.tradeMode !== 'live';
+  const isLive = systemQuery.data?.tradeMode === 'live';
+  const isLiveArmed = isLive && systemQuery.data?.liveArmedUntil && 
+    new Date(systemQuery.data.liveArmedUntil) > new Date();
+
+  // ============================================
+  // PAPER ACCOUNT SNAPSHOT (only in paper mode)
+  // ============================================
+  const paperAccountQuery = useQuery({
+    queryKey: ['cockpit-account-paper'],
     queryFn: async (): Promise<AccountSnapshot | null> => {
       const { data: account, error: accountError } = await supabase
         .from('paper_accounts')
@@ -176,9 +207,66 @@ export function useCockpitLiveState(): CockpitLiveState {
         lastUpdated: account.updated_at,
       };
     },
-    refetchInterval: 15000, // Poll every 15s
+    enabled: isPaper, // ONLY fetch paper data in paper mode
+    refetchInterval: 15000,
     staleTime: 10000,
   });
+
+  // ============================================
+  // LIVE COINBASE ACCOUNT SNAPSHOT (only in live mode when armed)
+  // ============================================
+  const liveAccountQuery = useQuery({
+    queryKey: ['cockpit-account-live'],
+    queryFn: async (): Promise<AccountSnapshot | null> => {
+      const { data, error } = await supabase.functions.invoke('coinbase-balances');
+      if (error) throw error;
+      if (!data?.accounts) return null;
+
+      const accounts = data.accounts as Array<{
+        currency: string;
+        available: number;
+        hold: number;
+        balance: number;
+      }>;
+      
+      const usdAccount = accounts.find(a => a.currency === 'USD');
+      const cash = usdAccount?.available ?? 0;
+      
+      // Convert other balances to positions
+      const positionSnapshots: PositionSnapshot[] = accounts
+        .filter(a => a.currency !== 'USD' && a.balance > 0)
+        .map(a => ({
+          symbol: `${a.currency}-USD`,
+          qty: a.balance,
+          avgEntryPrice: 0, // Coinbase doesn't provide this
+          currentPrice: 0, // Would need price lookup
+          unrealizedPnl: 0,
+          realizedPnl: 0,
+        }));
+
+      // For live mode, we show Coinbase balances
+      // Equity = cash + sum of all balances (simplified)
+      const equity = cash;
+
+      return {
+        id: 'coinbase-live',
+        cash,
+        startingCash: 0, // Not tracked in live
+        equity,
+        pnl: 0, // Not tracked
+        pnlPct: 0,
+        peakEquity: 0,
+        positions: positionSnapshots,
+        lastUpdated: new Date().toISOString(),
+      };
+    },
+    enabled: isLiveArmed, // ONLY fetch Coinbase data when live AND armed
+    refetchInterval: 15000,
+    staleTime: 10000,
+  });
+
+  // Unified account data based on mode
+  const accountQuery = isPaper ? paperAccountQuery : liveAccountQuery;
 
   // ============================================
   // GENERATION STATE
@@ -423,30 +511,7 @@ export function useCockpitLiveState(): CockpitLiveState {
     staleTime: 15000,
   });
 
-  // ============================================
-  // SYSTEM HEALTH STATE
-  // ============================================
-  const systemQuery = useQuery({
-    queryKey: ['cockpit-system'],
-    queryFn: async (): Promise<SystemHealthState | null> => {
-      const { data } = await supabase
-        .from('system_state')
-        .select('status, trade_mode, live_armed_until, updated_at')
-        .limit(1)
-        .maybeSingle();
-
-      if (!data) return null;
-
-      return {
-        status: data.status as SystemHealthState['status'],
-        tradeMode: data.trade_mode as 'paper' | 'live',
-        liveArmedUntil: data.live_armed_until,
-        lastUpdated: data.updated_at,
-      };
-    },
-    refetchInterval: 10000,
-    staleTime: 5000,
-  });
+  // NOTE: systemQuery is defined at the top of the hook for mode detection
 
   // ============================================
   // REALTIME SUBSCRIPTIONS
@@ -454,12 +519,12 @@ export function useCockpitLiveState(): CockpitLiveState {
   useEffect(() => {
     const channel = supabase
       .channel('cockpit-realtime')
-      // Paper accounts/positions for capital
+      // Paper accounts/positions for capital (only matters in paper mode)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'paper_accounts' }, () => {
-        queryClient.invalidateQueries({ queryKey: ['cockpit-account'] });
+        queryClient.invalidateQueries({ queryKey: ['cockpit-account-paper'] });
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'paper_positions' }, () => {
-        queryClient.invalidateQueries({ queryKey: ['cockpit-account'] });
+        queryClient.invalidateQueries({ queryKey: ['cockpit-account-paper'] });
       })
       // Shadow trades
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shadow_trades' }, () => {
@@ -483,10 +548,10 @@ export function useCockpitLiveState(): CockpitLiveState {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'agents' }, () => {
         queryClient.invalidateQueries({ queryKey: ['cockpit-agents'] });
       })
-      // Paper orders (affects agent activity)
+      // Paper orders (affects agent activity, only in paper mode)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'paper_orders' }, () => {
         queryClient.invalidateQueries({ queryKey: ['cockpit-agents'] });
-        queryClient.invalidateQueries({ queryKey: ['cockpit-account'] });
+        queryClient.invalidateQueries({ queryKey: ['cockpit-account-paper'] });
       })
       .subscribe();
 
@@ -499,8 +564,6 @@ export function useCockpitLiveState(): CockpitLiveState {
   // STALENESS CALCULATION
   // ============================================
   const staleness = useMemo((): StalenessInfo => {
-    const now = Date.now();
-    
     const calcStale = (timestamp: string | null, threshold: number) => {
       const age = calculateAge(timestamp);
       return { stale: age > threshold, ageSeconds: age };
@@ -527,7 +590,8 @@ export function useCockpitLiveState(): CockpitLiveState {
   // REFETCH ALL
   // ============================================
   const refetchAll = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['cockpit-account'] });
+    queryClient.invalidateQueries({ queryKey: ['cockpit-account-paper'] });
+    queryClient.invalidateQueries({ queryKey: ['cockpit-account-live'] });
     queryClient.invalidateQueries({ queryKey: ['cockpit-generation'] });
     queryClient.invalidateQueries({ queryKey: ['cockpit-agents'] });
     queryClient.invalidateQueries({ queryKey: ['cockpit-shadow'] });
@@ -536,9 +600,9 @@ export function useCockpitLiveState(): CockpitLiveState {
   }, [queryClient]);
 
   const isLoading = 
-    accountQuery.isLoading || 
-    generationQuery.isLoading || 
-    systemQuery.isLoading;
+    systemQuery.isLoading || 
+    (isPaper ? paperAccountQuery.isLoading : (isLiveArmed ? liveAccountQuery.isLoading : false)) || 
+    generationQuery.isLoading;
 
   return {
     account: accountQuery.data ?? null,

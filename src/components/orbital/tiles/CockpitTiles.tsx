@@ -2498,3 +2498,20 @@ export function RiskStateTile({ compact }: { compact?: boolean }) {
 
 // Live Proof Tile - Shows execution state proof (Mode/Armed/Broker)
 export { LiveProofTile } from '@/components/dashboard/LiveProofTile';
+
+// Live Orders & Fills Tile Wrapper - Gets isArmed from context
+import { LiveOrdersFillsTile as LiveOrdersFillsBase } from '@/components/dashboard/LiveOrdersFillsTile';
+import { LiveRiskGuardrailsTile as LiveRiskGuardrailsBase } from '@/components/dashboard/LiveRiskGuardrailsTile';
+
+export function LiveOrdersFillsTile({ compact }: { compact?: boolean }) {
+  const { status } = useLiveSafety();
+  return <LiveOrdersFillsBase isArmed={status.isArmed} />;
+}
+
+export function LiveRiskGuardrailsTile({ compact }: { compact?: boolean }) {
+  const { status } = useLiveSafety();
+  return <LiveRiskGuardrailsBase isArmed={status.isArmed} />;
+}
+
+// Enhanced Live Positions - exported from component
+export { LivePositionsCard } from '@/components/dashboard/LivePositionsCard';

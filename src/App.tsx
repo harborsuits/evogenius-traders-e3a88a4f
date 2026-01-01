@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { TradeModeProvider } from "@/contexts/TradeModeContext";
+import { SystemSnapshotProvider } from "@/contexts/SystemSnapshotContext";
 import { useAlertNotifications } from "@/hooks/useAlertNotifications";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
@@ -31,29 +32,31 @@ function AlertNotificationsRoot() {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TradeModeProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <AlertNotificationsRoot />
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/portfolio" element={<PortfolioPage />} />
-            <Route path="/positions" element={<PositionsPage />} />
-            <Route path="/orders" element={<OrdersPage />} />
-            <Route path="/fills" element={<FillsPage />} />
-            <Route path="/trades" element={<TradesPage />} />
-            <Route path="/agents" element={<AgentsPage />} />
-            <Route path="/agents/compare" element={<AgentComparePage />} />
-            <Route path="/agents/:agentId" element={<AgentDetailPage />} />
-            <Route path="/generations" element={<GenerationsPage />} />
-            <Route path="/generations/:genId" element={<GenerationDetailPage />} />
-            <Route path="/alerts" element={<AlertsPage />} />
-            <Route path="/decisions" element={<DecisionLogPage />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </TooltipProvider>
+      <SystemSnapshotProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <AlertNotificationsRoot />
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/portfolio" element={<PortfolioPage />} />
+              <Route path="/positions" element={<PositionsPage />} />
+              <Route path="/orders" element={<OrdersPage />} />
+              <Route path="/fills" element={<FillsPage />} />
+              <Route path="/trades" element={<TradesPage />} />
+              <Route path="/agents" element={<AgentsPage />} />
+              <Route path="/agents/compare" element={<AgentComparePage />} />
+              <Route path="/agents/:agentId" element={<AgentDetailPage />} />
+              <Route path="/generations" element={<GenerationsPage />} />
+              <Route path="/generations/:genId" element={<GenerationDetailPage />} />
+              <Route path="/alerts" element={<AlertsPage />} />
+              <Route path="/decisions" element={<DecisionLogPage />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </BrowserRouter>
+        </TooltipProvider>
+      </SystemSnapshotProvider>
     </TradeModeProvider>
   </QueryClientProvider>
 );

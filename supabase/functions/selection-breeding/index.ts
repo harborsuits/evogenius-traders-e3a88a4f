@@ -420,22 +420,25 @@ Deno.serve(async (req) => {
           action: 'create-candidate',
           generationId: ended_generation_id, // Use ended generation for snapshot
           topN: 10,
+          autoActivate: true, // Auto-activate if gates pass
         }),
       });
       
       const result = await response.json();
       if (result.ok) {
-        console.log(`[selection-breeding] Created candidate snapshot v${result.snapshot?.version_number} - gates: ${result.gate_results?.all_passed ? 'PASSED' : 'FAILED'}`);
+        const wasActivated = result.status === 'active';
+        console.log(`[selection-breeding] Created ${wasActivated ? 'ACTIVE' : 'candidate'} snapshot v${result.snapshot?.version_number} - gates: ${result.gate_results?.all_passed ? 'PASSED' : 'FAILED'}`);
         
-        // Log the candidate creation
+        // Log the candidate/activation
         await supabase.from('control_events').insert({
-          action: 'auto_candidate_created',
+          action: wasActivated ? 'auto_brain_activated' : 'auto_candidate_created',
           metadata: {
             triggered_by: 'selection_breeding',
             ended_generation_id,
             snapshot_version: result.snapshot?.version_number,
             gates_passed: result.gate_results?.all_passed,
             qualified_agents: result.gate_results?.agent_gates?.passed,
+            auto_activated: wasActivated,
           },
         });
       } else {

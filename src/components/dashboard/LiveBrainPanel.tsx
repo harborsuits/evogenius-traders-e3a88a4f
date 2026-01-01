@@ -18,7 +18,11 @@ import {
   Users,
   Zap,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Play,
+  FileCheck,
+  XCircle,
+  Shield
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -33,15 +37,33 @@ interface AgentSnapshot {
   sharpe_ratio: number;
   is_elite: boolean;
   role: string;
+  gates_passed?: boolean;
+  gate_failures?: string[];
 }
 
 interface PerformanceSummary {
   agent_count: number;
+  qualified_count?: number;
   avg_fitness: number;
   total_pnl: number;
   avg_trades: number;
   max_drawdown: number;
   strategy_breakdown: Record<string, number>;
+}
+
+interface GateResults {
+  agent_gates: {
+    total_evaluated: number;
+    passed: number;
+    failed: number;
+    failures_by_gate: Record<string, number>;
+  };
+  snapshot_gates: {
+    min_qualified_agents: { required: number; actual: number; passed: boolean };
+    max_aggregate_drawdown: { threshold: number; actual: number; passed: boolean };
+    min_strategy_diversity: { required: number; actual: number; passed: boolean };
+  };
+  all_passed: boolean;
 }
 
 interface BrainSnapshot {
@@ -52,15 +74,21 @@ interface BrainSnapshot {
   agent_snapshots: AgentSnapshot[];
   performance_summary: PerformanceSummary;
   is_active: boolean;
+  status: 'candidate' | 'active' | 'inactive';
   notes: string | null;
+  gates_passed?: GateResults;
+  gates_validated_at?: string;
 }
 
 export function LiveBrainPanel() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [isPromoting, setIsPromoting] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isActivating, setIsActivating] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showCandidates, setShowCandidates] = useState(false);
   const [expandedAgents, setExpandedAgents] = useState(false);
+  const [expandedGates, setExpandedGates] = useState(false);
 
   // Fetch active snapshot
   const { data: activeSnapshot, isLoading } = useQuery({
@@ -73,6 +101,19 @@ export function LiveBrainPanel() {
       return data.snapshot as BrainSnapshot | null;
     },
     refetchInterval: 30000,
+  });
+
+  // Fetch candidates
+  const { data: candidatesData } = useQuery({
+    queryKey: ['live-brain-candidates'],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke('promote-brain', {
+        body: { action: 'get-candidates' },
+      });
+      if (error) throw error;
+      return data.candidates as Partial<BrainSnapshot>[];
+    },
+    enabled: showCandidates,
   });
 
   // Fetch snapshot history
@@ -88,39 +129,80 @@ export function LiveBrainPanel() {
     enabled: showHistory,
   });
 
-  const handlePromote = async () => {
-    setIsPromoting(true);
+  const handleCreateCandidate = async () => {
+    setIsCreating(true);
     try {
       const { data, error } = await supabase.functions.invoke('promote-brain', {
-        body: { action: 'promote', minTrades: 3, topN: 10 },
+        body: { action: 'create-candidate', topN: 10 },
       });
       
       if (error) throw error;
       
       if (!data.ok) {
         toast({
-          title: 'Cannot Promote',
-          description: data.error || 'Not enough qualified agents',
+          title: 'Cannot Create Candidate',
+          description: data.error || 'Failed to create candidate',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const gatesPassed = data.gate_results?.all_passed;
+      toast({
+        title: gatesPassed ? 'Candidate Ready' : 'Candidate Created (Gates Failed)',
+        description: `Created v${data.snapshot.version_number} - ${data.summary.qualified_count || 0}/${data.summary.agent_count} qualified`,
+        variant: gatesPassed ? 'default' : 'destructive',
+      });
+      
+      queryClient.invalidateQueries({ queryKey: ['live-brain-active'] });
+      queryClient.invalidateQueries({ queryKey: ['live-brain-candidates'] });
+      queryClient.invalidateQueries({ queryKey: ['live-brain-history'] });
+      setShowCandidates(true);
+    } catch (err) {
+      toast({
+        title: 'Creation Failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleActivate = async (snapshotId: string, version: number) => {
+    setIsActivating(snapshotId);
+    try {
+      const { data, error } = await supabase.functions.invoke('promote-brain', {
+        body: { action: 'activate', snapshotId },
+      });
+      
+      if (error) throw error;
+      
+      if (!data.ok) {
+        toast({
+          title: 'Cannot Activate',
+          description: data.error || 'Gates not passed',
           variant: 'destructive',
         });
         return;
       }
 
       toast({
-        title: 'Brain Promoted',
-        description: `Created v${data.snapshot.version_number} with ${data.summary.agent_count} agents`,
+        title: 'Brain Activated',
+        description: `v${version} is now the live brain`,
       });
       
       queryClient.invalidateQueries({ queryKey: ['live-brain-active'] });
+      queryClient.invalidateQueries({ queryKey: ['live-brain-candidates'] });
       queryClient.invalidateQueries({ queryKey: ['live-brain-history'] });
     } catch (err) {
       toast({
-        title: 'Promotion Failed',
+        title: 'Activation Failed',
         description: err instanceof Error ? err.message : 'Unknown error',
         variant: 'destructive',
       });
     } finally {
-      setIsPromoting(false);
+      setIsActivating(null);
     }
   };
 
@@ -138,6 +220,7 @@ export function LiveBrainPanel() {
       });
       
       queryClient.invalidateQueries({ queryKey: ['live-brain-active'] });
+      queryClient.invalidateQueries({ queryKey: ['live-brain-candidates'] });
       queryClient.invalidateQueries({ queryKey: ['live-brain-history'] });
     } catch (err) {
       toast({
@@ -155,6 +238,38 @@ export function LiveBrainPanel() {
       case 'breakout': return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
       default: return 'bg-muted text-muted-foreground';
     }
+  };
+
+  const getStatusBadge = (status: string, gatesPassed?: boolean) => {
+    if (status === 'active') {
+      return (
+        <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
+          <CheckCircle2 className="h-3 w-3 mr-1" />
+          ACTIVE
+        </Badge>
+      );
+    }
+    if (status === 'candidate') {
+      if (gatesPassed) {
+        return (
+          <Badge variant="outline" className="bg-blue-500/10 text-blue-400 border-blue-500/30">
+            <FileCheck className="h-3 w-3 mr-1" />
+            READY
+          </Badge>
+        );
+      }
+      return (
+        <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/30">
+          <AlertTriangle className="h-3 w-3 mr-1" />
+          BLOCKED
+        </Badge>
+      );
+    }
+    return (
+      <Badge variant="outline" className="bg-muted text-muted-foreground">
+        INACTIVE
+      </Badge>
+    );
   };
 
   if (isLoading) {
@@ -192,7 +307,7 @@ export function LiveBrainPanel() {
           ) : (
             <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/30">
               <AlertTriangle className="h-3 w-3 mr-1" />
-              No Snapshot
+              No Brain
             </Badge>
           )}
         </div>
@@ -233,6 +348,49 @@ export function LiveBrainPanel() {
               ))}
             </div>
 
+            {/* Gate Results (if available) */}
+            {activeSnapshot.gates_passed && (
+              <div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-between text-xs"
+                  onClick={() => setExpandedGates(!expandedGates)}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Shield className="h-3 w-3" />
+                    Gate Validation
+                    {activeSnapshot.gates_passed.all_passed ? (
+                      <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+                    ) : (
+                      <XCircle className="h-3 w-3 text-red-400" />
+                    )}
+                  </span>
+                  {expandedGates ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                </Button>
+                
+                {expandedGates && (
+                  <div className="mt-2 p-2 rounded bg-muted/30 text-xs space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Agents Passed:</span>
+                      <span>{activeSnapshot.gates_passed.agent_gates.passed}/{activeSnapshot.gates_passed.agent_gates.total_evaluated}</span>
+                    </div>
+                    {Object.entries(activeSnapshot.gates_passed.snapshot_gates).map(([gate, result]) => (
+                      <div key={gate} className="flex justify-between">
+                        <span className="text-muted-foreground">{gate.replace(/_/g, ' ')}:</span>
+                        <span className={result.passed ? 'text-emerald-400' : 'text-red-400'}>
+                          {typeof result.actual === 'number' && result.actual < 1 
+                            ? `${(result.actual * 100).toFixed(1)}%` 
+                            : result.actual}
+                          {result.passed ? ' ✓' : ' ✗'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Expandable agent list */}
             <div>
               <Button
@@ -258,6 +416,9 @@ export function LiveBrainPanel() {
                           <code className="text-[10px] text-muted-foreground">
                             {agent.agent_id.slice(0, 8)}
                           </code>
+                          {agent.gates_passed === false && (
+                            <XCircle className="h-3 w-3 text-red-400" />
+                          )}
                         </div>
                         <div className="flex items-center gap-2">
                           <span className={agent.net_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
@@ -278,7 +439,7 @@ export function LiveBrainPanel() {
           <div className="text-center py-4 text-muted-foreground text-sm">
             <Brain className="h-8 w-8 mx-auto mb-2 opacity-50" />
             <p>No live brain snapshot active</p>
-            <p className="text-xs mt-1">Promote elites to create a frozen brain for live trading</p>
+            <p className="text-xs mt-1">Create a candidate and activate when gates pass</p>
           </div>
         )}
 
@@ -289,20 +450,85 @@ export function LiveBrainPanel() {
           <Button
             size="sm"
             className="flex-1"
-            onClick={handlePromote}
-            disabled={isPromoting}
+            onClick={handleCreateCandidate}
+            disabled={isCreating}
           >
             <Upload className="h-3.5 w-3.5 mr-1.5" />
-            {isPromoting ? 'Promoting...' : 'Promote Elites'}
+            {isCreating ? 'Creating...' : 'Create Candidate'}
           </Button>
           <Button
             size="sm"
-            variant="outline"
-            onClick={() => setShowHistory(!showHistory)}
+            variant={showCandidates ? 'default' : 'outline'}
+            onClick={() => { setShowCandidates(!showCandidates); setShowHistory(false); }}
+          >
+            <FileCheck className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant={showHistory ? 'default' : 'outline'}
+            onClick={() => { setShowHistory(!showHistory); setShowCandidates(false); }}
           >
             <RotateCcw className="h-3.5 w-3.5" />
           </Button>
         </div>
+
+        {/* Candidates */}
+        {showCandidates && candidatesData && candidatesData.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground font-medium flex items-center gap-1.5">
+              <FileCheck className="h-3 w-3" />
+              Pending Candidates
+            </p>
+            <ScrollArea className="h-40">
+              <div className="space-y-2 pr-3">
+                {candidatesData.map((candidate) => {
+                  const gatesPassed = (candidate.gates_passed as GateResults)?.all_passed;
+                  return (
+                    <div 
+                      key={candidate.id} 
+                      className={`p-2 rounded border ${
+                        gatesPassed 
+                          ? 'bg-emerald-500/5 border-emerald-500/20' 
+                          : 'bg-amber-500/5 border-amber-500/20'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-xs mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-medium">v{candidate.version_number}</span>
+                          {getStatusBadge('candidate', gatesPassed)}
+                        </div>
+                        <span className="text-muted-foreground">
+                          {formatDistanceToNow(new Date(candidate.promoted_at!), { addSuffix: true })}
+                        </span>
+                      </div>
+                      
+                      <div className="text-xs text-muted-foreground mb-2">
+                        {(candidate.performance_summary as PerformanceSummary)?.qualified_count || 0}/
+                        {(candidate.performance_summary as PerformanceSummary)?.agent_count} qualified
+                      </div>
+                      
+                      <Button
+                        size="sm"
+                        className="w-full h-7"
+                        disabled={!gatesPassed || isActivating === candidate.id}
+                        onClick={() => handleActivate(candidate.id!, candidate.version_number!)}
+                      >
+                        <Play className="h-3 w-3 mr-1" />
+                        {isActivating === candidate.id ? 'Activating...' : gatesPassed ? 'Activate' : 'Gates Failed'}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+          </div>
+        )}
+
+        {showCandidates && (!candidatesData || candidatesData.length === 0) && (
+          <p className="text-xs text-muted-foreground text-center py-2">
+            No pending candidates
+          </p>
+        )}
 
         {/* History / Rollback */}
         {showHistory && historyData && historyData.length > 0 && (
@@ -314,24 +540,20 @@ export function LiveBrainPanel() {
                   <div 
                     key={snapshot.id} 
                     className={`flex items-center justify-between text-xs p-2 rounded border ${
-                      snapshot.is_active 
+                      snapshot.status === 'active'
                         ? 'bg-primary/10 border-primary/30' 
                         : 'bg-muted/20 border-transparent hover:border-border/50'
                     }`}
                   >
                     <div className="flex items-center gap-2">
                       <span className="font-mono">v{snapshot.version_number}</span>
-                      {snapshot.is_active && (
-                        <Badge variant="outline" className="text-[10px] px-1 bg-primary/20">
-                          ACTIVE
-                        </Badge>
-                      )}
+                      {getStatusBadge(snapshot.status!, (snapshot.gates_passed as GateResults)?.all_passed)}
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-muted-foreground">
                         {formatDistanceToNow(new Date(snapshot.promoted_at!), { addSuffix: true })}
                       </span>
-                      {!snapshot.is_active && (
+                      {snapshot.status !== 'active' && snapshot.status !== 'candidate' && (
                         <Button
                           size="sm"
                           variant="ghost"

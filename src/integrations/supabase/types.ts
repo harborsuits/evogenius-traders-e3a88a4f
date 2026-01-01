@@ -251,6 +251,8 @@ export type Database = {
         Row: {
           agent_snapshots: Json
           created_at: string
+          gates_passed: Json | null
+          gates_validated_at: string | null
           id: string
           is_active: boolean
           notes: string | null
@@ -258,11 +260,14 @@ export type Database = {
           promoted_at: string
           promoted_by: string | null
           source_generation_id: string | null
+          status: string
           version_number: number
         }
         Insert: {
           agent_snapshots?: Json
           created_at?: string
+          gates_passed?: Json | null
+          gates_validated_at?: string | null
           id?: string
           is_active?: boolean
           notes?: string | null
@@ -270,11 +275,14 @@ export type Database = {
           promoted_at?: string
           promoted_by?: string | null
           source_generation_id?: string | null
+          status?: string
           version_number: number
         }
         Update: {
           agent_snapshots?: Json
           created_at?: string
+          gates_passed?: Json | null
+          gates_validated_at?: string | null
           id?: string
           is_active?: boolean
           notes?: string | null
@@ -282,6 +290,7 @@ export type Database = {
           promoted_at?: string
           promoted_by?: string | null
           source_generation_id?: string | null
+          status?: string
           version_number?: number
         }
         Relationships: [

@@ -16,7 +16,9 @@ import { useDroughtState } from '@/hooks/useDroughtState';
 import { useShadowTradingStats } from '@/hooks/useShadowTradingStats';
 import { useCockpitLiveState } from '@/hooks/useCockpitLiveState';
 import { useLiveSafety } from '@/hooks/useLiveSafety';
-import { TileHeader, LiveBadge } from '@/components/dashboard/StalenessIndicator';
+import { TileHeader, LiveBadge, SnapshotTileHeader } from '@/components/dashboard/StalenessIndicator';
+import { ModeBadge, GenerationBadge, DataSourceFooter } from '@/components/dashboard/SnapshotBadges';
+import { useSystemSnapshot } from '@/contexts/SystemSnapshotContext';
 import { SystemStatus } from '@/types/evotrader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { MetricCard } from '@/components/dashboard/MetricCard';
@@ -417,11 +419,15 @@ export function CapitalOverviewTile({ compact }: { compact?: boolean }) {
   
   return (
     <div className="space-y-3">
-      <TileHeader 
+      <SnapshotTileHeader 
         icon={<FlaskConical className="h-4 w-4 text-primary" />}
         title={isLive ? "Live Capital" : "Paper Portfolio"}
-        ageSeconds={staleness.account.ageSeconds}
-        stale={isStale}
+        badges={
+          <div className="flex items-center gap-1">
+            <ModeBadge compact />
+            <GenerationBadge compact />
+          </div>
+        }
         onRefresh={refetchAll}
       />
       

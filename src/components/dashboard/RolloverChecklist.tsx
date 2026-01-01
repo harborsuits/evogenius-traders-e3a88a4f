@@ -13,9 +13,12 @@ import {
   Download,
   RefreshCw,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  ClipboardCheck
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { CardHeaderBadges, DataSourceFooter } from '@/components/dashboard/SnapshotBadges';
+import { useSystemSnapshot } from '@/contexts/SystemSnapshotContext';
 
 interface SnapshotData {
   timestamp: string;
@@ -260,10 +263,14 @@ export function RolloverChecklist() {
     <Card className="bg-card/50 backdrop-blur border-border/50">
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
-          <CardTitle className="font-mono text-sm text-muted-foreground uppercase tracking-wider">
-            Rollover Postmortem Checklist
-          </CardTitle>
+          <div className="flex items-center gap-2">
+            <ClipboardCheck className="h-4 w-4 text-primary" />
+            <CardTitle className="font-mono text-sm text-muted-foreground uppercase tracking-wider">
+              Rollover Checklist
+            </CardTitle>
+          </div>
           <div className="flex items-center gap-1">
+            <CardHeaderBadges compact showMode showGeneration showBrain={false} />
             <Button variant="ghost" size="sm" onClick={() => refetch()} className="h-6 px-2">
               <RefreshCw className="h-3 w-3" />
             </Button>

@@ -149,3 +149,34 @@ export function TileHeader({ icon, title, ageSeconds, stale = false, onRefresh }
     </div>
   );
 }
+
+// Enhanced tile header with snapshot badges
+interface SnapshotTileHeaderProps {
+  icon: React.ReactNode;
+  title: string;
+  badges?: React.ReactNode;
+  onRefresh?: () => void;
+}
+
+export function SnapshotTileHeader({ icon, title, badges, onRefresh }: SnapshotTileHeaderProps) {
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <div className="flex items-center gap-2 font-mono text-muted-foreground uppercase tracking-wider">
+        {icon}
+        {title}
+      </div>
+      <div className="ml-auto flex items-center gap-1.5">
+        {badges}
+        {onRefresh && (
+          <button 
+            onClick={onRefresh}
+            className="p-0.5 hover:bg-muted/50 rounded transition-colors"
+            title="Refresh"
+          >
+            <RefreshCw className="h-3 w-3 hover:text-foreground" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}

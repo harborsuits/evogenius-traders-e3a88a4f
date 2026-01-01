@@ -1106,6 +1106,131 @@ Deno.serve(async (req) => {
       },
     });
 
+    // =========================================================================
+    // LIVE BRAIN ROLLBACK CHECK
+    // =========================================================================
+    // After fitness calc, check if active brain should be rolled back
+    // based on risk metrics (daily loss, drawdown, consecutive loss days)
+    // =========================================================================
+    let rollbackOutcome: { checked: boolean; rolled_back?: boolean; reason?: string } = { checked: false };
+    
+    try {
+      // 1. Find active brain
+      const { data: activeBrain } = await supabase
+        .from('live_brain_snapshots')
+        .select('id, version_number, promoted_at, performance_summary')
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (activeBrain) {
+        const snapshotCapital = (activeBrain.performance_summary as any)?.snapshot_capital ?? 1000;
+        
+        // 2. Compute daily PnL from paper_orders/fills (last 30 days)
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        
+        const { data: recentOrders } = await supabase
+          .from('paper_orders')
+          .select('id, side, filled_price, filled_qty, filled_at')
+          .eq('status', 'filled')
+          .gte('filled_at', thirtyDaysAgo)
+          .order('filled_at', { ascending: true });
+
+        // Get fees for these orders
+        const orderIds = (recentOrders ?? []).map(o => o.id);
+        const { data: fills } = orderIds.length > 0
+          ? await supabase.from('paper_fills').select('order_id, fee').in('order_id', orderIds)
+          : { data: [] };
+        
+        const feeByOrder = new Map<string, number>();
+        for (const f of fills ?? []) {
+          feeByOrder.set(f.order_id, (feeByOrder.get(f.order_id) ?? 0) + f.fee);
+        }
+
+        // Group by day
+        const dailyPnL = new Map<string, number>();
+        for (const order of recentOrders ?? []) {
+          const date = order.filled_at?.slice(0, 10) ?? '';
+          if (!date) continue;
+          
+          const value = (order.filled_price ?? 0) * (order.filled_qty ?? 0);
+          const fee = feeByOrder.get(order.id) ?? 0;
+          const flow = order.side === 'sell' ? value - fee : -(value + fee);
+          
+          dailyPnL.set(date, (dailyPnL.get(date) ?? 0) + flow);
+        }
+
+        const sortedDays = Array.from(dailyPnL.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+        
+        // 3. Compute metrics
+        const todayISO = new Date().toISOString().slice(0, 10);
+        const todayPnl = dailyPnL.get(todayISO) ?? 0;
+        const dailyLoss = todayPnl < 0 ? Math.abs(todayPnl) / snapshotCapital : 0;
+
+        // Equity curve for drawdown
+        let equity = snapshotCapital;
+        let peak = snapshotCapital;
+        let maxDD = 0;
+        for (const [, pnl] of sortedDays) {
+          equity += pnl;
+          if (equity > peak) peak = equity;
+          const dd = peak > 0 ? (peak - equity) / peak : 0;
+          if (dd > maxDD) maxDD = dd;
+        }
+
+        // Consecutive losing days (from most recent backwards)
+        let consecutiveLossDays = 0;
+        for (let i = sortedDays.length - 1; i >= 0; i--) {
+          if (sortedDays[i][1] < 0) consecutiveLossDays++;
+          else break;
+        }
+
+        console.log(`[fitness-calc] Brain risk metrics: dailyLoss=${(dailyLoss * 100).toFixed(2)}%, drawdown=${(maxDD * 100).toFixed(2)}%, consecutiveLossDays=${consecutiveLossDays}`);
+
+        // 4. Check if rollback needed
+        const checkRes = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/promote-brain`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+          },
+          body: JSON.stringify({
+            action: 'check-rollback',
+            dailyLoss,
+            drawdown: maxDD,
+            consecutiveLossDays,
+          }),
+        }).then(r => r.json());
+
+        rollbackOutcome.checked = true;
+
+        if (checkRes?.should_rollback) {
+          const reason = `auto:${(checkRes.breaches ?? []).join('|')}`;
+          console.log(`[fitness-calc] ROLLBACK TRIGGERED: ${reason}`);
+          
+          const rbRes = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/promote-brain`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+            },
+            body: JSON.stringify({
+              action: 'rollback',
+              reason,
+              activatePrevious: true,
+            }),
+          }).then(r => r.json());
+
+          rollbackOutcome.rolled_back = true;
+          rollbackOutcome.reason = reason;
+          console.log(`[fitness-calc] Rollback result:`, rbRes);
+        } else {
+          console.log(`[fitness-calc] Brain health OK, no rollback needed`);
+        }
+      }
+    } catch (rollbackError) {
+      console.error('[fitness-calc] Rollback check error:', rollbackError);
+    }
+
     console.log(`[fitness-calc] Completed in ${Date.now() - startTime}ms`);
 
     return new Response(
@@ -1120,6 +1245,7 @@ Deno.serve(async (req) => {
         generation_ended: endCheck.should_end,
         end_reason: endCheck.reason,
         new_generation_id: newGenerationId,
+        rollback_check: rollbackOutcome,
         duration_ms: Date.now() - startTime,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

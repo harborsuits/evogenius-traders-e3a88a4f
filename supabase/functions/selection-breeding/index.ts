@@ -324,35 +324,27 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 10. Register ONLY offspring to new generation
-    // Survivors are already registered by start_new_generation() which pre-registers all existing agents
-    // We only need to add the newly created offspring
-    if (insertedOffspringIds.length > 0) {
-      const offspringRecords = insertedOffspringIds.map(agentId => ({
+    // 10. COHORT REGISTRATION: Explicitly register the curated cohort to new generation
+    // Since start_new_generation() no longer pre-registers all agents, we must add:
+    // - Survivors (elites + parents)
+    // - Newly created offspring
+    // This prevents the 100 -> 178 drift issue
+    
+    const cohortIds = [...survivorIds, ...insertedOffspringIds];
+    console.log(`[selection-breeding] Registering cohort of ${cohortIds.length} agents to new generation (${survivorIds.length} survivors + ${insertedOffspringIds.length} offspring)`);
+
+    if (cohortIds.length > 0) {
+      const cohortRecords = cohortIds.map(agentId => ({
         generation_id: new_generation_id,
         agent_id: agentId,
       }));
 
       const { error: regError } = await supabase
         .from('generation_agents')
-        .insert(offspringRecords);
+        .insert(cohortRecords);
 
       if (regError) {
-        console.error('[selection-breeding] Failed to register offspring to new generation:', regError);
-      }
-    }
-    
-    // 10b. Remove deleted agents from new generation's cohort
-    // (start_new_generation registered them before we knew who would be culled)
-    if (removedIds.length > 0) {
-      const { error: removeError } = await supabase
-        .from('generation_agents')
-        .delete()
-        .eq('generation_id', new_generation_id)
-        .in('agent_id', removedIds);
-
-      if (removeError) {
-        console.error('[selection-breeding] Failed to remove culled agents from new generation:', removeError);
+        console.error('[selection-breeding] Failed to register cohort to new generation:', regError);
       }
     }
 
@@ -460,21 +452,31 @@ Deno.serve(async (req) => {
       const excessCount = currentCount - TARGET_COHORT_SIZE;
       console.log(`[selection-breeding] GUARDRAIL: Pruning ${excessCount} excess agents to enforce ${TARGET_COHORT_SIZE} cap`);
 
-      // Get excess agents (lowest fitness, non-elite first)
-      const { data: excessAgents } = await supabase
+      // Get all agents in cohort with their fitness (simpler query)
+      const { data: cohortMembers } = await supabase
         .from('generation_agents')
-        .select(`
-          agent_id,
-          agents!inner(is_elite),
-          performance(fitness_score)
-        `)
-        .eq('generation_id', new_generation_id)
-        .order('agents(is_elite)', { ascending: true })
-        .limit(excessCount);
+        .select('agent_id')
+        .eq('generation_id', new_generation_id);
 
-      if (excessAgents && excessAgents.length > 0) {
-        const excessIds = excessAgents.map((a: any) => a.agent_id);
+      if (cohortMembers && cohortMembers.length > TARGET_COHORT_SIZE) {
+        const agentIds = cohortMembers.map(m => m.agent_id);
         
+        // Get performance for these agents
+        const { data: performances } = await supabase
+          .from('performance')
+          .select('agent_id, fitness_score')
+          .eq('generation_id', new_generation_id)
+          .in('agent_id', agentIds);
+
+        const fitnessMap = new Map((performances ?? []).map(p => [p.agent_id, p.fitness_score ?? 0]));
+        
+        // Sort by fitness ascending (worst first) and take excess
+        const sortedByFitness = agentIds
+          .map(id => ({ id, fitness: fitnessMap.get(id) ?? 0 }))
+          .sort((a, b) => a.fitness - b.fitness);
+        
+        const excessIds = sortedByFitness.slice(0, excessCount).map(a => a.id);
+
         // Remove from generation_agents
         await supabase
           .from('generation_agents')
@@ -482,7 +484,7 @@ Deno.serve(async (req) => {
           .in('agent_id', excessIds)
           .eq('generation_id', new_generation_id);
 
-        console.log(`[selection-breeding] Pruned ${excessIds.length} excess agents: ${excessIds.slice(0, 3).join(', ')}...`);
+        console.log(`[selection-breeding] Pruned ${excessIds.length} excess agents`);
       }
     }
 

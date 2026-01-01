@@ -390,6 +390,12 @@ export function SystemSnapshotProvider({ children }: { children: ReactNode }) {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'control_events' }, () => {
         queryClient.invalidateQueries({ queryKey: ['snapshot-pipeline'] });
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'market_poll_runs' }, () => {
+        queryClient.invalidateQueries({ queryKey: ['snapshot-pipeline'] });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shadow_trades' }, () => {
+        queryClient.invalidateQueries({ queryKey: ['snapshot-pipeline'] });
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'performance_alerts' }, () => {
         queryClient.invalidateQueries({ queryKey: ['snapshot-risk'] });
       })

@@ -2112,10 +2112,47 @@ export { LiveBrainPanel as LiveBrainTile } from '@/components/dashboard/LiveBrai
 
 // ============================================
 // PIPELINE HEALTH TILE - Snapshot-native
-// Shows trade-cycle, fitness, market-poll, shadow status
+// Shows trade-cycle, fitness, market-poll, shadow status with drill-down
 // ============================================
 export function PipelineHealthTile({ compact }: { compact?: boolean }) {
   const { pipeline, staleness, refetchAll } = useSystemSnapshot();
+  const [selectedPipeline, setSelectedPipeline] = React.useState<string | null>(null);
+
+  // Fetch recent events for drill-down
+  const { data: pipelineEvents } = useQuery({
+    queryKey: ['pipeline-events', selectedPipeline],
+    queryFn: async () => {
+      if (!selectedPipeline) return [];
+      
+      let actionFilter: string[] = [];
+      if (selectedPipeline === 'trade') actionFilter = ['trade_decision', 'trade_execution'];
+      else if (selectedPipeline === 'fitness') actionFilter = ['fitness_calculated'];
+      else if (selectedPipeline === 'shadow') actionFilter = ['shadow_outcome_calc'];
+      else if (selectedPipeline === 'market') {
+        // For market, use market_poll_runs table instead
+        const { data } = await supabase
+          .from('market_poll_runs')
+          .select('*')
+          .order('ran_at', { ascending: false })
+          .limit(15);
+        return (data ?? []).map(r => ({
+          id: r.id,
+          triggered_at: r.ran_at,
+          action: 'market_poll',
+          metadata: { status: r.status, updated_count: r.updated_count, duration_ms: r.duration_ms, error: r.error_message }
+        }));
+      }
+      
+      const { data } = await supabase
+        .from('control_events')
+        .select('*')
+        .in('action', actionFilter)
+        .order('triggered_at', { ascending: false })
+        .limit(15);
+      return data ?? [];
+    },
+    enabled: !!selectedPipeline,
+  });
 
   const tradeStale = pipeline?.tradeCycle.isStale ?? true;
   const fitnessStale = pipeline?.fitnessCycle.isStale ?? true;
@@ -2134,6 +2171,35 @@ export function PipelineHealthTile({ compact }: { compact?: boolean }) {
     )} />
   );
 
+  const PipelineRow = ({ 
+    id, stale, label, status, time, extra 
+  }: { 
+    id: string; stale: boolean; label: string; status: string; time: string; extra?: string 
+  }) => (
+    <button
+      onClick={() => setSelectedPipeline(id)}
+      className="w-full text-left bg-muted/30 rounded-lg p-2 space-y-1 hover:bg-muted/50 transition-colors"
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+          <StatusDot stale={stale} />
+          {label}
+        </div>
+        <Eye className="h-3 w-3 text-muted-foreground/50" />
+      </div>
+      <div className={cn(
+        "font-mono text-sm",
+        stale ? "text-amber-500" : "text-emerald-500"
+      )}>
+        {status}
+      </div>
+      <div className="text-[9px] text-muted-foreground">
+        {time}
+        {extra && ` · ${extra}`}
+      </div>
+    </button>
+  );
+
   return (
     <div className="space-y-3">
       <SnapshotTileHeader 
@@ -2148,80 +2214,36 @@ export function PipelineHealthTile({ compact }: { compact?: boolean }) {
       />
 
       <div className="grid grid-cols-2 gap-2">
-        {/* Trade Cycle */}
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <StatusDot stale={tradeStale} />
-            Trade Cycle
-          </div>
-          <div className={cn(
-            "font-mono text-sm",
-            tradeStale ? "text-amber-500" : "text-emerald-500"
-          )}>
-            {tradeStale ? "STALE" : "OK"}
-          </div>
-          <div className="text-[9px] text-muted-foreground">
-            {formatTime(pipeline?.tradeCycle.lastRun ?? null)}
-          </div>
-          {pipeline?.tradeCycle.lastDecision && (
-            <div className="text-[8px] font-mono text-muted-foreground/70">
-              → {pipeline.tradeCycle.lastDecision}
-            </div>
-          )}
-        </div>
-
-        {/* Market Poll */}
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <StatusDot stale={marketStale} />
-            Market Poll
-          </div>
-          <div className={cn(
-            "font-mono text-sm",
-            marketStale ? "text-amber-500" : "text-emerald-500"
-          )}>
-            {marketStale ? "STALE" : "OK"}
-          </div>
-          <div className="text-[9px] text-muted-foreground">
-            {formatTime(pipeline?.marketPoll.lastRun ?? null)}
-            {pipeline?.marketPoll.symbolsUpdated ? ` · ${pipeline.marketPoll.symbolsUpdated} sym` : ''}
-          </div>
-        </div>
-
-        {/* Fitness Cycle */}
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <StatusDot stale={fitnessStale} />
-            Fitness Calc
-          </div>
-          <div className={cn(
-            "font-mono text-sm",
-            fitnessStale ? "text-amber-500" : "text-emerald-500"
-          )}>
-            {fitnessStale ? "STALE" : "OK"}
-          </div>
-          <div className="text-[9px] text-muted-foreground">
-            {formatTime(pipeline?.fitnessCycle.lastRun ?? null)}
-          </div>
-        </div>
-
-        {/* Shadow Outcomes */}
-        <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <StatusDot stale={pendingShadow > 10} />
-            Shadow Outcomes
-          </div>
-          <div className={cn(
-            "font-mono text-sm",
-            pendingShadow > 10 ? "text-amber-500" : 
-            pendingShadow > 0 ? "text-primary" : "text-emerald-500"
-          )}>
-            {pendingShadow > 0 ? `${pendingShadow} pending` : "clear"}
-          </div>
-          <div className="text-[9px] text-muted-foreground">
-            {formatTime(pipeline?.shadowOutcome.lastRun ?? null)}
-          </div>
-        </div>
+        <PipelineRow 
+          id="trade"
+          stale={tradeStale}
+          label="Trade Cycle"
+          status={tradeStale ? "STALE" : "OK"}
+          time={formatTime(pipeline?.tradeCycle.lastRun ?? null)}
+          extra={pipeline?.tradeCycle.lastDecision ?? undefined}
+        />
+        <PipelineRow 
+          id="market"
+          stale={marketStale}
+          label="Market Poll"
+          status={marketStale ? "STALE" : "OK"}
+          time={formatTime(pipeline?.marketPoll.lastRun ?? null)}
+          extra={pipeline?.marketPoll.symbolsUpdated ? `${pipeline.marketPoll.symbolsUpdated} sym` : undefined}
+        />
+        <PipelineRow 
+          id="fitness"
+          stale={fitnessStale}
+          label="Fitness Calc"
+          status={fitnessStale ? "STALE" : "OK"}
+          time={formatTime(pipeline?.fitnessCycle.lastRun ?? null)}
+        />
+        <PipelineRow 
+          id="shadow"
+          stale={pendingShadow > 10}
+          label="Shadow Outcomes"
+          status={pendingShadow > 0 ? `${pendingShadow} pending` : "clear"}
+          time={formatTime(pipeline?.shadowOutcome.lastRun ?? null)}
+        />
       </div>
 
       {/* Overall staleness warning */}
@@ -2231,16 +2253,80 @@ export function PipelineHealthTile({ compact }: { compact?: boolean }) {
           Pipeline stale for {Math.floor(staleness.pipeline.ageSeconds / 60)}m
         </div>
       )}
+
+      {/* Drill-down drawer */}
+      {selectedPipeline && (
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm" onClick={() => setSelectedPipeline(null)}>
+          <div 
+            className="fixed right-0 top-0 h-full w-96 bg-card border-l border-border shadow-xl overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="font-semibold text-sm flex items-center gap-2">
+                <Activity className="h-4 w-4 text-primary" />
+                {selectedPipeline === 'trade' ? 'Trade Cycle' : 
+                 selectedPipeline === 'market' ? 'Market Poll' :
+                 selectedPipeline === 'fitness' ? 'Fitness Calc' : 'Shadow Outcomes'} Logs
+              </h3>
+              <button 
+                onClick={() => setSelectedPipeline(null)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <XCircle className="h-5 w-5" />
+              </button>
+            </div>
+            <ScrollArea className="h-[calc(100%-60px)]">
+              <div className="p-4 space-y-2">
+                {pipelineEvents?.length === 0 && (
+                  <div className="text-sm text-muted-foreground text-center py-8">
+                    No recent events found
+                  </div>
+                )}
+                {pipelineEvents?.map((event: any) => (
+                  <div key={event.id} className="bg-muted/30 rounded-lg p-3 space-y-1 text-xs">
+                    <div className="flex items-center justify-between">
+                      <Badge variant="secondary" className="text-[9px]">{event.action}</Badge>
+                      <span className="text-[9px] text-muted-foreground">
+                        {formatDistanceToNow(new Date(event.triggered_at), { addSuffix: true })}
+                      </span>
+                    </div>
+                    {event.metadata && (
+                      <pre className="text-[9px] font-mono text-muted-foreground bg-background/50 rounded p-2 overflow-x-auto max-h-32">
+                        {JSON.stringify(event.metadata, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ============================================
 // RISK STATE TILE - Snapshot-native
-// Shows rollback thresholds and breach status
+// Shows rollback thresholds, breach status, and history
 // ============================================
 export function RiskStateTile({ compact }: { compact?: boolean }) {
   const { risk, refetchAll } = useSystemSnapshot();
+
+  // Fetch recent risk alerts for history
+  const { data: recentAlerts } = useQuery({
+    queryKey: ['risk-alerts-history'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('performance_alerts')
+        .select('*')
+        .in('type', ['rollback_triggered', 'rollback_check', 'risk_breach', 'brain_rollback'])
+        .order('created_at', { ascending: false })
+        .limit(10);
+      return data ?? [];
+    },
+    refetchInterval: 60000,
+  });
 
   const daily = risk?.dailyLossPct ?? 0;
   const dd = risk?.drawdownPct ?? 0;
@@ -2289,6 +2375,18 @@ export function RiskStateTile({ compact }: { compact?: boolean }) {
         </div>
       </div>
     );
+  };
+
+  const getAlertIcon = (type: string) => {
+    if (type === 'rollback_triggered' || type === 'brain_rollback') return <AlertTriangle className="h-3 w-3 text-destructive" />;
+    if (type === 'risk_breach') return <AlertCircle className="h-3 w-3 text-amber-500" />;
+    return <HelpCircle className="h-3 w-3 text-muted-foreground" />;
+  };
+
+  const getAlertBadgeVariant = (type: string): "destructive" | "secondary" | "outline" => {
+    if (type === 'rollback_triggered' || type === 'brain_rollback') return 'destructive';
+    if (type === 'risk_breach') return 'secondary';
+    return 'outline';
   };
 
   return (
@@ -2346,6 +2444,49 @@ export function RiskStateTile({ compact }: { compact?: boolean }) {
           format={(v) => `${v} days`}
         />
       </div>
+
+      {/* Breach History */}
+      {recentAlerts && recentAlerts.length > 0 && (
+        <div className="border-t border-border/30 pt-2 space-y-2">
+          <div className="text-[10px] text-muted-foreground font-medium">Recent Alerts</div>
+          <div className="space-y-1 max-h-32 overflow-y-auto">
+            {recentAlerts.slice(0, 5).map((alert: any) => {
+              const meta = alert.metadata as Record<string, any> | null;
+              const reason = meta?.breaches?.join(', ') || meta?.reason || alert.message?.slice(0, 50);
+              
+              return (
+                <div 
+                  key={alert.id} 
+                  className={cn(
+                    "flex items-start gap-2 text-[10px] p-1.5 rounded",
+                    alert.type === 'rollback_triggered' ? "bg-destructive/10" : "bg-muted/30"
+                  )}
+                >
+                  {getAlertIcon(alert.type)}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1">
+                      <Badge variant={getAlertBadgeVariant(alert.type)} className="text-[8px] px-1 py-0">
+                        {alert.type.replace(/_/g, ' ')}
+                      </Badge>
+                      <span className="text-muted-foreground">
+                        {formatDistanceToNow(new Date(alert.created_at), { addSuffix: true })}
+                      </span>
+                    </div>
+                    {reason && (
+                      <div className="text-[9px] text-muted-foreground truncate mt-0.5">
+                        {reason}
+                      </div>
+                    )}
+                  </div>
+                  {alert.is_ack && (
+                    <CheckCircle className="h-3 w-3 text-emerald-500 shrink-0" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Thresholds info */}
       <div className="text-[9px] text-muted-foreground border-t border-border/30 pt-2">

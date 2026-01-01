@@ -405,7 +405,44 @@ Deno.serve(async (req) => {
       },
     });
 
-    // 12. Verify final agent count
+    // 13. GUARDRAIL: Enforce max cohort size by pruning extras
+    const TARGET_COHORT_SIZE = 100;
+    const { count: currentCount } = await supabase
+      .from('generation_agents')
+      .select('*', { count: 'exact', head: true })
+      .eq('generation_id', new_generation_id);
+
+    if (currentCount && currentCount > TARGET_COHORT_SIZE) {
+      const excessCount = currentCount - TARGET_COHORT_SIZE;
+      console.log(`[selection-breeding] GUARDRAIL: Pruning ${excessCount} excess agents to enforce ${TARGET_COHORT_SIZE} cap`);
+
+      // Get excess agents (lowest fitness, non-elite first)
+      const { data: excessAgents } = await supabase
+        .from('generation_agents')
+        .select(`
+          agent_id,
+          agents!inner(is_elite),
+          performance(fitness_score)
+        `)
+        .eq('generation_id', new_generation_id)
+        .order('agents(is_elite)', { ascending: true })
+        .limit(excessCount);
+
+      if (excessAgents && excessAgents.length > 0) {
+        const excessIds = excessAgents.map((a: any) => a.agent_id);
+        
+        // Remove from generation_agents
+        await supabase
+          .from('generation_agents')
+          .delete()
+          .in('agent_id', excessIds)
+          .eq('generation_id', new_generation_id);
+
+        console.log(`[selection-breeding] Pruned ${excessIds.length} excess agents: ${excessIds.slice(0, 3).join(', ')}...`);
+      }
+    }
+
+    // 14. Verify final agent count
     const { count: finalCount } = await supabase
       .from('generation_agents')
       .select('*', { count: 'exact', head: true })

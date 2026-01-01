@@ -61,6 +61,42 @@ export type Database = {
           },
         ]
       }
+      arm_sessions: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          max_live_orders: number
+          metadata: Json | null
+          mode: string
+          orders_executed: number
+          spent_at: string | null
+          spent_by_request_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          id?: string
+          max_live_orders?: number
+          metadata?: Json | null
+          mode?: string
+          orders_executed?: number
+          spent_at?: string | null
+          spent_by_request_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          max_live_orders?: number
+          metadata?: Json | null
+          mode?: string
+          orders_executed?: number
+          spent_at?: string | null
+          spent_by_request_id?: string | null
+        }
+        Relationships: []
+      }
       control_events: {
         Row: {
           action: string
@@ -873,6 +909,15 @@ export type Database = {
       end_generation: {
         Args: { gen_id: string; reason: string }
         Returns: undefined
+      }
+      spend_arm_session: {
+        Args: { request_id: string; session_id: string }
+        Returns: {
+          orders_remaining: number
+          reason: string
+          session_mode: string
+          success: boolean
+        }[]
       }
       start_new_generation: { Args: never; Returns: string }
     }

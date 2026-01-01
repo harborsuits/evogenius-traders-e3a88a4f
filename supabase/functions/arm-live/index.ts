@@ -23,6 +23,26 @@ Deno.serve(async (req) => {
       // Set live_armed_until to 60 seconds from now
       const armedUntil = new Date(Date.now() + 60 * 1000).toISOString();
 
+      // Create an arm_session record for atomic spending (canary hard-lock)
+      const { data: sessionData, error: sessionError } = await supabase
+        .from('arm_sessions')
+        .insert({
+          mode: 'live',
+          expires_at: armedUntil,
+          max_live_orders: 1, // Canary mode: exactly one order allowed
+        })
+        .select('id')
+        .single();
+
+      if (sessionError) {
+        console.error('[arm-live] Failed to create arm session:', sessionError);
+        throw sessionError;
+      }
+
+      const sessionId = sessionData.id;
+      console.log(`[arm-live] Created arm session: ${sessionId}`);
+
+      // Update system_state with armed timestamp
       const { error } = await supabase
         .from('system_state')
         .update({ live_armed_until: armedUntil })
@@ -33,13 +53,23 @@ Deno.serve(async (req) => {
       // Log the arm event
       await supabase.from('control_events').insert({
         action: 'live_armed',
-        metadata: { armed_until: armedUntil, duration_seconds: 60 }
+        metadata: { 
+          armed_until: armedUntil, 
+          duration_seconds: 60,
+          session_id: sessionId,
+          max_orders: 1,
+        }
       });
 
-      console.log(`[arm-live] Armed until ${armedUntil}`);
+      console.log(`[arm-live] Armed until ${armedUntil} (session: ${sessionId})`);
 
       return new Response(
-        JSON.stringify({ success: true, armed_until: armedUntil }),
+        JSON.stringify({ 
+          success: true, 
+          armed_until: armedUntil,
+          session_id: sessionId,
+          max_orders: 1,
+        }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -60,7 +90,7 @@ Deno.serve(async (req) => {
       console.log('[arm-live] Disarmed');
 
       return new Response(
-        JSON.stringify({ success: true, armed_until: null }),
+        JSON.stringify({ success: true, armed_until: null, session_id: null }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

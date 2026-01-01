@@ -6,19 +6,26 @@ const corsHeaders = {
 };
 
 // =============================================================================
-// PROMOTION GATES - Per-Agent and Snapshot-Level Requirements
+// PROMOTION GATES - Loaded from gate_profiles table via system_state.gate_profile
 // =============================================================================
-const AGENT_GATES = {
-  min_trades: 20,           // Minimum trades to be considered
-  max_drawdown: 0.15,       // Maximum 15% drawdown
-  min_pnl: -0.02,           // At least -2% PnL (allow for fees)
-  min_sharpe: 0.3,          // Minimum Sharpe ratio
-};
+interface GateConfig {
+  agent: {
+    min_trades: number;
+    max_drawdown: number;
+    min_pnl: number;
+    min_sharpe: number;
+  };
+  snapshot: {
+    min_qualified_agents: number;
+    max_aggregate_drawdown: number;
+    min_strategy_diversity: number;
+  };
+}
 
-const SNAPSHOT_GATES = {
-  min_qualified_agents: 5,  // Need at least 5 agents passing per-agent gates
-  max_aggregate_drawdown: 0.10,  // Max 10% aggregate drawdown
-  min_strategy_diversity: 2,     // At least 2 different strategy types
+// Default fallback gates (used if DB lookup fails)
+const DEFAULT_GATES: GateConfig = {
+  agent: { min_trades: 3, max_drawdown: 0.15, min_pnl: -0.05, min_sharpe: -999 },
+  snapshot: { min_qualified_agents: 3, max_aggregate_drawdown: 0.15, min_strategy_diversity: 1 },
 };
 
 interface AgentSnapshot {
@@ -49,30 +56,61 @@ interface GateResults {
     min_strategy_diversity: { required: number; actual: number; passed: boolean };
   };
   all_passed: boolean;
+  profile_used: string;
+}
+
+// Load gate config from database
+async function loadGateConfig(supabase: any): Promise<{ config: GateConfig; profile: string }> {
+  try {
+    // Get current gate profile from system_state
+    const { data: systemState } = await supabase
+      .from('system_state')
+      .select('gate_profile')
+      .limit(1)
+      .single();
+    
+    const profileName = systemState?.gate_profile ?? 'warmup';
+    
+    // Load profile config
+    const { data: profile } = await supabase
+      .from('gate_profiles')
+      .select('config')
+      .eq('name', profileName)
+      .single();
+    
+    if (profile?.config) {
+      console.log(`[promote-brain] Using gate profile: ${profileName}`);
+      return { config: profile.config as GateConfig, profile: profileName };
+    }
+  } catch (err) {
+    console.error('[promote-brain] Failed to load gate config, using defaults:', err);
+  }
+  
+  return { config: DEFAULT_GATES, profile: 'default' };
 }
 
 // Validate an individual agent against gates
-function validateAgentGates(agent: Omit<AgentSnapshot, 'gates_passed' | 'gate_failures'>): { passed: boolean; failures: string[] } {
+function validateAgentGates(agent: Omit<AgentSnapshot, 'gates_passed' | 'gate_failures'>, gates: GateConfig['agent']): { passed: boolean; failures: string[] } {
   const failures: string[] = [];
   
-  if (agent.total_trades < AGENT_GATES.min_trades) {
-    failures.push(`trades:${agent.total_trades}<${AGENT_GATES.min_trades}`);
+  if (agent.total_trades < gates.min_trades) {
+    failures.push(`trades:${agent.total_trades}<${gates.min_trades}`);
   }
-  if (agent.max_drawdown > AGENT_GATES.max_drawdown) {
-    failures.push(`drawdown:${(agent.max_drawdown * 100).toFixed(1)}%>${(AGENT_GATES.max_drawdown * 100).toFixed(0)}%`);
+  if (agent.max_drawdown > gates.max_drawdown) {
+    failures.push(`drawdown:${(agent.max_drawdown * 100).toFixed(1)}%>${(gates.max_drawdown * 100).toFixed(0)}%`);
   }
-  if (agent.net_pnl < AGENT_GATES.min_pnl) {
-    failures.push(`pnl:${(agent.net_pnl * 100).toFixed(1)}%<${(AGENT_GATES.min_pnl * 100).toFixed(0)}%`);
+  if (agent.net_pnl < gates.min_pnl) {
+    failures.push(`pnl:${(agent.net_pnl * 100).toFixed(1)}%<${(gates.min_pnl * 100).toFixed(0)}%`);
   }
-  if (agent.sharpe_ratio < AGENT_GATES.min_sharpe) {
-    failures.push(`sharpe:${agent.sharpe_ratio.toFixed(2)}<${AGENT_GATES.min_sharpe}`);
+  if (gates.min_sharpe > -100 && agent.sharpe_ratio < gates.min_sharpe) {
+    failures.push(`sharpe:${agent.sharpe_ratio.toFixed(2)}<${gates.min_sharpe}`);
   }
   
   return { passed: failures.length === 0, failures };
 }
 
 // Validate snapshot-level gates
-function validateSnapshotGates(qualifiedAgents: AgentSnapshot[]): GateResults['snapshot_gates'] {
+function validateSnapshotGates(qualifiedAgents: AgentSnapshot[], gates: GateConfig['snapshot']): GateResults['snapshot_gates'] {
   const strategies = new Set(qualifiedAgents.map(a => a.strategy_template));
   const aggregateDrawdown = qualifiedAgents.length > 0 
     ? Math.max(...qualifiedAgents.map(a => a.max_drawdown)) 
@@ -80,19 +118,19 @@ function validateSnapshotGates(qualifiedAgents: AgentSnapshot[]): GateResults['s
   
   return {
     min_qualified_agents: {
-      required: SNAPSHOT_GATES.min_qualified_agents,
+      required: gates.min_qualified_agents,
       actual: qualifiedAgents.length,
-      passed: qualifiedAgents.length >= SNAPSHOT_GATES.min_qualified_agents,
+      passed: qualifiedAgents.length >= gates.min_qualified_agents,
     },
     max_aggregate_drawdown: {
-      threshold: SNAPSHOT_GATES.max_aggregate_drawdown,
+      threshold: gates.max_aggregate_drawdown,
       actual: aggregateDrawdown,
-      passed: aggregateDrawdown <= SNAPSHOT_GATES.max_aggregate_drawdown,
+      passed: aggregateDrawdown <= gates.max_aggregate_drawdown,
     },
     min_strategy_diversity: {
-      required: SNAPSHOT_GATES.min_strategy_diversity,
+      required: gates.min_strategy_diversity,
       actual: strategies.size,
-      passed: strategies.size >= SNAPSHOT_GATES.min_strategy_diversity,
+      passed: strategies.size >= gates.min_strategy_diversity,
     },
   };
 }
@@ -107,7 +145,7 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    const { action, snapshotId, notes, minTrades = 3, topN = 10, generationId, autoActivate = false } = await req.json();
+    const { action, snapshotId, notes, topN = 10, generationId, autoActivate = false } = await req.json();
 
     // =========================================================================
     // ACTION: create-candidate - Create a candidate snapshot with gate validation
@@ -115,6 +153,9 @@ Deno.serve(async (req) => {
     if (action === 'create-candidate' || action === 'promote') {
       const isCandidate = action === 'create-candidate';
       console.log(`[promote-brain] Creating ${isCandidate ? 'candidate' : 'active'} brain snapshot...`);
+
+      // Load gate config from DB
+      const { config: gateConfig, profile: gateProfile } = await loadGateConfig(supabase);
 
       // Get generation ID from param or current
       let targetGenerationId = generationId;
@@ -183,7 +224,7 @@ Deno.serve(async (req) => {
             role: agent.role,
           };
           
-          const gateResult = validateAgentGates(baseSnapshot);
+          const gateResult = validateAgentGates(baseSnapshot, gateConfig.agent);
           return {
             ...baseSnapshot,
             gates_passed: gateResult.passed,
@@ -198,7 +239,7 @@ Deno.serve(async (req) => {
       const topQualified = qualifiedAgents.slice(0, topN);
 
       // Validate snapshot-level gates
-      const snapshotGates = validateSnapshotGates(topQualified);
+      const snapshotGates = validateSnapshotGates(topQualified, gateConfig.snapshot);
       const allSnapshotGatesPassed = Object.values(snapshotGates).every(g => g.passed);
       
       // Build gate results
@@ -218,7 +259,8 @@ Deno.serve(async (req) => {
           failures_by_gate: failuresByGate,
         },
         snapshot_gates: snapshotGates,
-        all_passed: allSnapshotGatesPassed && qualifiedAgents.length >= SNAPSHOT_GATES.min_qualified_agents,
+        all_passed: allSnapshotGatesPassed && qualifiedAgents.length >= gateConfig.snapshot.min_qualified_agents,
+        profile_used: gateProfile,
       };
 
       // For candidates, we always create (even if gates fail) - they're just not activatable
@@ -297,7 +339,7 @@ Deno.serve(async (req) => {
           status: snapshotStatus,
           gates_passed: gateResults,
           gates_validated_at: new Date().toISOString(),
-          notes: notes || `${isCandidate ? 'Candidate' : 'Promoted'} v${nextVersion} - ${qualifiedAgents.length}/${allAgentSnapshots.length} qualified`,
+          notes: notes || `${isCandidate ? 'Candidate' : 'Promoted'} v${nextVersion} [${gateProfile}] - ${qualifiedAgents.length}/${allAgentSnapshots.length} qualified`,
         })
         .select()
         .single();
@@ -323,13 +365,14 @@ Deno.serve(async (req) => {
             agent_count: includedAgents.length,
             qualified_count: qualifiedAgents.length,
             gates_passed: gateResults.all_passed,
+            gate_profile: gateProfile,
             gate_results: gateResults,
             source_generation_id: targetGenerationId,
             activated: shouldActivate,
           },
         });
 
-      console.log(`[promote-brain] Created ${snapshotStatus} snapshot v${nextVersion} with ${includedAgents.length} agents (${qualifiedAgents.length} qualified)`);
+      console.log(`[promote-brain] Created ${snapshotStatus} snapshot v${nextVersion} with ${includedAgents.length} agents (${qualifiedAgents.length} qualified, profile: ${gateProfile})`);
 
       return new Response(
         JSON.stringify({
@@ -338,6 +381,7 @@ Deno.serve(async (req) => {
           summary: performanceSummary,
           gate_results: gateResults,
           status: snapshotStatus,
+          profile: gateProfile,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );

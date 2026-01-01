@@ -160,6 +160,24 @@ export type Database = {
         }
         Relationships: []
       }
+      gate_profiles: {
+        Row: {
+          config: Json
+          created_at: string
+          name: string
+        }
+        Insert: {
+          config: Json
+          created_at?: string
+          name: string
+        }
+        Update: {
+          config?: Json
+          created_at?: string
+          name?: string
+        }
+        Relationships: []
+      }
       generation_agents: {
         Row: {
           agent_id: string
@@ -852,6 +870,7 @@ export type Database = {
           active_brain_version_id: string | null
           active_pool: number
           current_generation_id: string | null
+          gate_profile: string
           id: string
           live_armed_until: string | null
           reserve: number
@@ -866,6 +885,7 @@ export type Database = {
           active_brain_version_id?: string | null
           active_pool?: number
           current_generation_id?: string | null
+          gate_profile?: string
           id?: string
           live_armed_until?: string | null
           reserve?: number
@@ -880,6 +900,7 @@ export type Database = {
           active_brain_version_id?: string | null
           active_pool?: number
           current_generation_id?: string | null
+          gate_profile?: string
           id?: string
           live_armed_until?: string | null
           reserve?: number

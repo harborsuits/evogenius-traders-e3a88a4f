@@ -4,6 +4,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
 import { cn } from '@/lib/utils';
 import { 
   Globe, 
@@ -18,19 +19,27 @@ import {
 
 export function MarketConditionsTile({ compact }: { compact?: boolean }) {
   const [isExpanded, setIsExpanded] = React.useState(false);
+  const { mode, isLive } = useCurrentTradeMode();
   
-  // Combined query for regime + cost data
+  // Combined query for regime + cost data - filtered by mode
   const { data, isLoading } = useQuery({
-    queryKey: ['market-conditions-combined'],
+    queryKey: ['market-conditions-combined', mode],
     queryFn: async () => {
       const { data: events } = await supabase
         .from('control_events')
         .select('triggered_at, metadata')
         .eq('action', 'trade_decision')
         .order('triggered_at', { ascending: false })
-        .limit(50);
+        .limit(100);
       
-      if (!events?.length) return null;
+      // Filter by current mode
+      const modeFilteredEvents = (events || []).filter(e => {
+        const meta = e.metadata as Record<string, unknown>;
+        const eventMode = meta?.mode as string;
+        return eventMode === mode;
+      }).slice(0, 50);
+      
+      if (!modeFilteredEvents?.length) return null;
       
       // Regime extraction
       const regimesBySymbol: Record<string, {
@@ -49,7 +58,7 @@ export function MarketConditionsTile({ compact }: { compact?: boolean }) {
         net_edge: number;
       }> = [];
       
-      for (const e of events) {
+      for (const e of modeFilteredEvents) {
         const meta = e.metadata as Record<string, unknown>;
         const decision = (meta?.decision as string)?.toLowerCase();
         
@@ -200,7 +209,12 @@ export function MarketConditionsTile({ compact }: { compact?: boolean }) {
       <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
         <Globe className="h-4 w-4 text-primary" />
         Market Conditions
-        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-auto">LIVE</Badge>
+        <Badge 
+          variant={isLive ? 'glow' : 'outline'} 
+          className={cn("text-[8px] px-1 py-0 ml-auto", isLive && "bg-amber-500/20 text-amber-400 border-amber-500/50")}
+        >
+          {isLive ? 'LIVE' : 'PAPER'}
+        </Badge>
       </div>
       
       {isLoading ? (

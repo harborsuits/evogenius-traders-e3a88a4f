@@ -148,9 +148,38 @@ export function LiveBrainPanel() {
       }
 
       const gatesPassed = data.gate_results?.all_passed;
+      
+      // Build description with failed gates if any
+      let description = `Created v${data.snapshot.version_number} - ${data.summary.qualified_count || 0}/${data.summary.agent_count} qualified`;
+      if (!gatesPassed && data.gate_results) {
+        const failedGates: string[] = [];
+        // Check snapshot gates
+        const sg = data.gate_results.snapshot_gates;
+        if (sg?.min_qualified_agents && !sg.min_qualified_agents.passed) {
+          failedGates.push(`agents: ${sg.min_qualified_agents.actual}/${sg.min_qualified_agents.required}`);
+        }
+        if (sg?.max_aggregate_drawdown && !sg.max_aggregate_drawdown.passed) {
+          failedGates.push(`drawdown: ${(sg.max_aggregate_drawdown.actual * 100).toFixed(0)}%>${(sg.max_aggregate_drawdown.threshold * 100).toFixed(0)}%`);
+        }
+        if (sg?.min_strategy_diversity && !sg.min_strategy_diversity.passed) {
+          failedGates.push(`diversity: ${sg.min_strategy_diversity.actual}/${sg.min_strategy_diversity.required}`);
+        }
+        // Add agent gate summary
+        const ag = data.gate_results.agent_gates;
+        if (ag?.failures_by_gate) {
+          const topFailure = Object.entries(ag.failures_by_gate).sort((a, b) => (b[1] as number) - (a[1] as number))[0];
+          if (topFailure) {
+            failedGates.push(`${topFailure[0]}: ${topFailure[1]} agents`);
+          }
+        }
+        if (failedGates.length > 0) {
+          description += ` | Failed: ${failedGates.join(', ')}`;
+        }
+      }
+      
       toast({
         title: gatesPassed ? 'Candidate Ready' : 'Candidate Created (Gates Failed)',
-        description: `Created v${data.snapshot.version_number} - ${data.summary.qualified_count || 0}/${data.summary.agent_count} qualified`,
+        description,
         variant: gatesPassed ? 'default' : 'destructive',
       });
       

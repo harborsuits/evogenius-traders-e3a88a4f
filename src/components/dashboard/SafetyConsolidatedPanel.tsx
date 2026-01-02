@@ -14,13 +14,14 @@ import {
   Activity,
   Ban,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  SlidersHorizontal
 } from 'lucide-react';
 import { useLossReaction, LossReactionState } from '@/hooks/useLossReaction';
 import { useSystemSnapshot } from '@/contexts/SystemSnapshotContext';
 import { cn } from '@/lib/utils';
 
-type TabType = 'brakes' | 'risk' | 'thresholds';
+type TabType = 'brakes' | 'risk' | 'thresholds' | 'tuning';
 
 export function SafetyConsolidatedPanel({ compact }: { compact?: boolean }) {
   const [activeTab, setActiveTab] = useState<TabType>('brakes');
@@ -104,6 +105,7 @@ export function SafetyConsolidatedPanel({ compact }: { compact?: boolean }) {
           { id: 'brakes' as TabType, label: 'Brakes', icon: <StopCircle className="h-3 w-3" /> },
           { id: 'risk' as TabType, label: 'Risk', icon: <AlertTriangle className="h-3 w-3" /> },
           { id: 'thresholds' as TabType, label: 'Limits', icon: <Activity className="h-3 w-3" /> },
+          { id: 'tuning' as TabType, label: 'Tuning', icon: <SlidersHorizontal className="h-3 w-3" /> },
         ].map(tab => (
           <button
             key={tab.id}
@@ -130,6 +132,9 @@ export function SafetyConsolidatedPanel({ compact }: { compact?: boolean }) {
       )}
       {activeTab === 'thresholds' && (
         <ThresholdsTab state={state} />
+      )}
+      {activeTab === 'tuning' && (
+        <StrategyThresholdsEditor />
       )}
     </div>
   );
@@ -419,5 +424,6 @@ function ThresholdsTab({ state }: { state: LossReactionState }) {
   );
 }
 
-// Import useSystemConfig
+// Imports
 import { useSystemConfig } from '@/hooks/useSystemConfig';
+import { StrategyThresholdsEditor } from './StrategyThresholdsEditor';

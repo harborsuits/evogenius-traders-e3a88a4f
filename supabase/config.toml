@@ -63,3 +63,6 @@ verify_jwt = false
 
 [functions.promote-brain]
 verify_jwt = false
+
+[functions.loss-reaction]
+verify_jwt = false

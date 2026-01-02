@@ -35,6 +35,27 @@ export interface AdaptiveTuningConfig {
   max_single_gate_pct?: number;
 }
 
+export interface LossReactionConfig {
+  enabled?: boolean;
+  // Cooldown: minutes to wait after a loss before next trade
+  cooldown_minutes_after_loss?: number;
+  // Consecutive losses: stop trading for day after N consecutive losses
+  max_consecutive_losses?: number;
+  // Drawdown size reduction: halve size when day drawdown exceeds this %
+  halve_size_drawdown_pct?: number;
+  // Day stop: stop trading for day when day PnL drops below this %
+  day_stop_pct?: number;
+  // Session state (updated by backend)
+  session?: {
+    consecutive_losses?: number;
+    last_loss_at?: string | null;
+    cooldown_until?: string | null;
+    size_multiplier?: number;
+    day_stopped?: boolean;
+    day_stopped_reason?: string | null;
+  };
+}
+
 export interface SystemConfig {
   capital?: {
     active_pool_pct?: number;
@@ -70,6 +91,8 @@ export interface SystemConfig {
   drought_cooldown_until?: string;
   adaptive_tuning?: AdaptiveTuningConfig;
   shadow_trading?: ShadowTradingConfig;
+  loss_reaction?: LossReactionConfig;
+  live_cap_usd?: number;
 }
 
 export function useSystemConfig() {

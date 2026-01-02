@@ -182,19 +182,19 @@ const BASELINE_THRESHOLDS = {
   rsi_threshold: 0.6,          // 0.6% move in 24h
   vol_contraction: 1.3,        // ATR ratio < 1.3
   vol_expansion_exit: 1.2,
-  min_confidence: 0.5,
+  min_confidence: 0.45,        // Lowered from 0.5 to allow more signals
   max_confidence: 0.85,
 };
 
 // DROUGHT MODE THRESHOLDS - Relaxed to generate trades for learning
 // Only ONE gate is relaxed at a time to maintain quality
 const DROUGHT_THRESHOLDS = {
-  trend_threshold: 0.0035,     // 30% looser
-  pullback_pct: 3.0,           // 40% looser  
-  rsi_threshold: 0.4,          // 33% looser
-  vol_contraction: 1.4,        // 8% looser
-  vol_expansion_exit: 1.3,
-  min_confidence: 0.5,
+  trend_threshold: 0.002,      // 60% looser (was 0.0035) - allow flatter trends
+  pullback_pct: 8.0,           // Allow up to 8% moves as "pullbacks" (was 3.0)
+  rsi_threshold: 0.3,          // 50% looser (was 0.4)
+  vol_contraction: 1.6,        // 23% looser (was 1.4)
+  vol_expansion_exit: 1.5,
+  min_confidence: 0.40,        // Lowered from 0.5
   max_confidence: 0.85,
 };
 
@@ -212,7 +212,7 @@ const DROUGHT_SAFETY = {
 const EXPLORER_CONSTRAINTS = {
   size_multiplier: 0.25,       // 25% normal size (half of drought)
   max_trades_per_hour: 1,      // Stricter cap
-  min_confidence: 0.55,        // Higher quality floor
+  min_confidence: 0.45,        // Lowered from 0.55 to allow more explorer signals
 };
 
 // SHADOW TRADING CONFIGURATION (defaults - overridden by system_config.shadow_trading)

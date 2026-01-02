@@ -26,7 +26,10 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { LivePositionsCard } from './LivePositionsCard';
 import { LossReactionPanel } from './LossReactionPanel';
+import { ControlPanel } from './ControlPanel';
 import { useQueryClient } from '@tanstack/react-query';
+import { useSystemState } from '@/hooks/useEvoTraderData';
+import { SystemStatus } from '@/types/evotrader';
 
 interface ChecklistItem {
   label: string;
@@ -55,6 +58,11 @@ export function LiveLockedWorkspace() {
   } = useArmLive();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  
+  // Get system state for Control Panel
+  const { data: systemState } = useSystemState();
+  const status = (systemState?.status ?? 'stopped') as SystemStatus;
+  const currentGenId = systemState?.current_generation_id;
   
   const [secondsRemaining, setSecondsRemaining] = useState(0);
   const [isTestingOrder, setIsTestingOrder] = useState(false);
@@ -593,6 +601,12 @@ export function LiveLockedWorkspace() {
           </div>
         </CardContent>
       </Card>
+
+      {/* System Control - Start/Stop Trading Session */}
+      <ControlPanel 
+        status={status} 
+        generationId={currentGenId}
+      />
 
       {/* Live Positions Card - Shows LOCKED or Coinbase data */}
       <LivePositionsCard isArmed={liveSafety.isArmed} />

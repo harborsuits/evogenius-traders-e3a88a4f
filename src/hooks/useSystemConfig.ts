@@ -56,6 +56,22 @@ export interface LossReactionConfig {
   };
 }
 
+export interface StrategyThresholdsConfig {
+  use_config_thresholds?: boolean;
+  baseline?: {
+    trend_threshold?: number;
+    pullback_pct?: number;
+    min_confidence?: number;
+    vol_contraction?: number;
+  };
+  drought?: {
+    trend_threshold?: number;
+    pullback_pct?: number;
+    min_confidence?: number;
+    vol_contraction?: number;
+  };
+}
+
 export interface SystemConfig {
   capital?: {
     active_pool_pct?: number;
@@ -93,6 +109,7 @@ export interface SystemConfig {
   shadow_trading?: ShadowTradingConfig;
   loss_reaction?: LossReactionConfig;
   live_cap_usd?: number;
+  strategy_thresholds?: StrategyThresholdsConfig;
 }
 
 export function useSystemConfig() {

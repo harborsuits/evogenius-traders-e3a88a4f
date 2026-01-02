@@ -1750,15 +1750,31 @@ Deno.serve(async (req) => {
       default_trailing_pct: shadowConfig?.default_trailing_pct ?? SHADOW_TRADING_DEFAULTS.default_trailing_pct,
     };
     
+    // Load UI-configured strategy thresholds if enabled
+    const strategyThresholds = systemConfig.strategy_thresholds as {
+      use_config_thresholds?: boolean;
+      baseline?: Partial<typeof BASELINE_THRESHOLDS>;
+      drought?: Partial<typeof DROUGHT_THRESHOLDS>;
+    } | undefined;
+    
+    // Merge config thresholds with defaults if use_config_thresholds is true
+    const configBaseline = strategyThresholds?.use_config_thresholds && strategyThresholds.baseline
+      ? { ...BASELINE_THRESHOLDS, ...strategyThresholds.baseline }
+      : BASELINE_THRESHOLDS;
+    
+    const configDrought = strategyThresholds?.use_config_thresholds && strategyThresholds.drought
+      ? { ...DROUGHT_THRESHOLDS, ...strategyThresholds.drought }
+      : DROUGHT_THRESHOLDS;
+    
     // Calculate effective thresholds with adaptive tuning
-    const baselineThresholds = testMode ? TEST_MODE_THRESHOLDS : (droughtModeActive ? DROUGHT_THRESHOLDS : BASELINE_THRESHOLDS);
+    const baselineThresholds = testMode ? TEST_MODE_THRESHOLDS : (droughtModeActive ? configDrought : configBaseline);
     const effectiveThresholds = tuning?.enabled ? applyAdaptiveOffsets(baselineThresholds, offsets) : baselineThresholds;
     
     const thresholdsUsed = testMode 
       ? 'test_mode' 
       : droughtModeActive 
-        ? 'drought_mode' 
-        : 'baseline';
+        ? (strategyThresholds?.use_config_thresholds ? 'drought_mode_config' : 'drought_mode')
+        : (strategyThresholds?.use_config_thresholds ? 'baseline_config' : 'baseline');
     
     console.log(`[trade-cycle] Mode: ${thresholdsUsed} | Adaptive: ${tuning?.enabled ? 'ON' : 'OFF'} | Offsets: ${JSON.stringify(offsets)}`);
     

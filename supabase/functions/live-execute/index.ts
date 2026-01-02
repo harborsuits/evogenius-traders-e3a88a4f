@@ -385,7 +385,7 @@ Deno.serve(async (req) => {
 
     console.log('[live-execute] ✅ ARM session spent successfully. Proceeding with order...');
 
-    // ============= GATE 3: Get live cap from config =============
+    // ============= GATE 3: Get live cap + canary limits from config =============
     const { data: configData } = await supabase
       .from('system_config')
       .select('config')
@@ -394,7 +394,49 @@ Deno.serve(async (req) => {
 
     const config = configData?.config as Record<string, unknown> | null;
     const liveCapUsd = (config?.live_cap_usd as number) ?? DEFAULT_LIVE_CAP_USD;
-    console.log(`[live-execute] Live cap: $${liveCapUsd}`);
+    
+    // Canary limits
+    const canaryLimits = (config?.canary_limits as Record<string, unknown>) ?? {};
+    const maxUsdPerTrade = (canaryLimits.max_usd_per_trade as number) ?? 5;
+    const autoDisarmAfterTrade = (canaryLimits.auto_disarm_after_trade as boolean) ?? true;
+    const maxTradesPerDay = (canaryLimits.max_trades_per_day as number) ?? 3;
+    
+    console.log(`[live-execute] Live cap: $${liveCapUsd}, Max per trade: $${maxUsdPerTrade}, Auto-disarm: ${autoDisarmAfterTrade}`);
+
+    // ============= GATE 3b: Daily trade limit check =============
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    
+    const { count: todayTradeCount } = await supabase
+      .from('control_events')
+      .select('*', { count: 'exact', head: true })
+      .eq('action', 'live_trade_executed')
+      .gte('triggered_at', todayStart.toISOString());
+    
+    if ((todayTradeCount ?? 0) >= maxTradesPerDay) {
+      const reason = 'BLOCKED_DAILY_LIMIT';
+      console.log(`[live-execute] ${reason}: ${todayTradeCount}/${maxTradesPerDay} trades today`);
+      
+      await logLiveEvent(supabase, 'live_trade_blocked', {
+        symbol: body.symbol,
+        side: body.side,
+        qty: body.qty,
+        block_reason: reason,
+        trades_today: todayTradeCount,
+        daily_limit: maxTradesPerDay,
+        request_id: requestId,
+      });
+
+      return new Response(
+        JSON.stringify({ 
+          ok: false, 
+          blocked: true, 
+          reason,
+          error: `Daily limit reached. ${todayTradeCount}/${maxTradesPerDay} trades executed today.`,
+        }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // NEW: If quote_usd is provided, use it directly (for BUY canary orders)
     const useQuoteUsd = body.side === 'buy' && body.quote_usd && body.quote_usd > 0;
@@ -494,10 +536,13 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Calculate truly available cash (minus holds and cap)
+    // Calculate truly available cash (minus holds, cap, AND per-trade limit)
     const maxAllowedByBalance = availableCash - holdCash;
     const maxAllowedByCap = liveCapUsd;
-    const maxAllowed = Math.min(maxAllowedByBalance, maxAllowedByCap);
+    const maxAllowedByCanary = maxUsdPerTrade;
+    const maxAllowed = Math.min(maxAllowedByBalance, maxAllowedByCap, maxAllowedByCanary);
+    
+    console.log(`[live-execute] Max allowed: balance=$${maxAllowedByBalance.toFixed(2)}, cap=$${maxAllowedByCap}, canary=$${maxAllowedByCanary}, final=$${maxAllowed.toFixed(2)}`);
 
     // Calculate order cost with slippage buffer
     // NEW: If quote_usd is provided, use it directly instead of qty * price
@@ -506,13 +551,18 @@ Deno.serve(async (req) => {
     let finalQuoteSize: number;
 
     if (useQuoteUsd && body.quote_usd) {
-      // Clamp quote_usd to maxAllowed
+      // Clamp quote_usd to maxAllowed (respects canary limit)
       finalQuoteSize = Math.min(body.quote_usd, maxAllowed);
       orderCost = finalQuoteSize;
-      console.log(`[live-execute] Quote USD mode: requested=$${body.quote_usd}, clamped=$${finalQuoteSize}`);
+      console.log(`[live-execute] Quote USD mode: requested=$${body.quote_usd}, clamped to canary limit=$${finalQuoteSize}`);
     } else if (body.side === 'buy') {
       const estimatedPrice = currentPrice * slippageBuffer;
       orderCost = body.qty * estimatedPrice;
+      // Also clamp to canary limit
+      if (orderCost > maxAllowed) {
+        console.log(`[live-execute] Order cost $${orderCost.toFixed(2)} exceeds canary limit $${maxAllowed.toFixed(2)}, clamping...`);
+        orderCost = maxAllowed;
+      }
       finalQuoteSize = orderCost;
     } else {
       orderCost = 0; // Sells don't require cash
@@ -712,6 +762,26 @@ Deno.serve(async (req) => {
       console.error('[live-execute] Failed to notify loss-reaction:', lrErr);
     }
 
+    // ============= AUTO-DISARM after successful trade =============
+    if (autoDisarmAfterTrade) {
+      console.log('[live-execute] Auto-disarm enabled. Disarming system...');
+      try {
+        await supabase
+          .from('system_state')
+          .update({ live_armed_until: null })
+          .eq('id', (await supabase.from('system_state').select('id').single()).data?.id);
+        
+        await logLiveEvent(supabase, 'live_auto_disarmed', {
+          reason: 'trade_completed',
+          order_id: orderId,
+          arm_session_id: body.arm_session_id,
+        });
+        console.log('[live-execute] System auto-disarmed after trade');
+      } catch (disarmErr) {
+        console.error('[live-execute] Failed to auto-disarm:', disarmErr);
+      }
+    }
+
     console.log(`[live-execute] ✅ Live order placed successfully: ${orderId}`);
 
     return new Response(
@@ -726,6 +796,9 @@ Deno.serve(async (req) => {
         coinbase_response: orderData,
         arm_session_id: body.arm_session_id,
         request_id: requestId,
+        auto_disarmed: autoDisarmAfterTrade,
+        trades_today: (todayTradeCount ?? 0) + 1,
+        daily_limit: maxTradesPerDay,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

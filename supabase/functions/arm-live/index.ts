@@ -17,11 +17,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    const { action } = await req.json();
+    const { action, duration_minutes } = await req.json();
 
     if (action === 'arm') {
-      // Set live_armed_until to 60 seconds from now
-      const armedUntil = new Date(Date.now() + 60 * 1000).toISOString();
+      // Default to 30 minutes, max 60 minutes for canary mode
+      const durationMins = Math.min(Math.max(duration_minutes || 30, 1), 60);
+      const armedUntil = new Date(Date.now() + durationMins * 60 * 1000).toISOString();
 
       // Create an arm_session record for atomic spending (canary hard-lock)
       const { data: sessionData, error: sessionError } = await supabase
@@ -55,7 +56,7 @@ Deno.serve(async (req) => {
         action: 'live_armed',
         metadata: { 
           armed_until: armedUntil, 
-          duration_seconds: 60,
+          duration_minutes: durationMins,
           session_id: sessionId,
           max_orders: 1,
         }

@@ -311,7 +311,7 @@ export function LiveSafetyPanel() {
               <Button
                 variant="destructive"
                 className="flex-1"
-                onClick={() => arm()}
+                onClick={() => arm(30)}
                 disabled={isArming || !coinbaseConnected}
               >
                 {isArming ? (
@@ -319,7 +319,7 @@ export function LiveSafetyPanel() {
                 ) : (
                   <Shield className="h-4 w-4 mr-2" />
                 )}
-                ARM Live (60s)
+                ARM Live (30m)
               </Button>
             )}
             <Button

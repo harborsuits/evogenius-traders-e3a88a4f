@@ -315,7 +315,7 @@ export function CapitalOverview() {
                 variant="destructive"
                 size="sm"
                 className="flex-1"
-                onClick={() => arm()}
+                onClick={() => arm(30)}
                 disabled={isArming || !status.coinbaseConnected}
               >
                 {isArming ? (
@@ -323,7 +323,7 @@ export function CapitalOverview() {
                 ) : (
                   <Shield className="h-3 w-3 mr-2" />
                 )}
-                ARM Live (60s)
+                ARM Live (30m)
               </Button>
             )}
           </div>

@@ -65,7 +65,7 @@ export function LiveLockedWorkspace() {
     setIsRearming(true);
     try {
       await disarmAsync();
-      await armAsync();
+      await armAsync(30);
     } catch (err) {
       toast({
         title: 'Re-ARM Failed',
@@ -500,7 +500,7 @@ export function LiveLockedWorkspace() {
               variant="destructive"
               className="w-full justify-center h-12 text-base"
               disabled={isArming || liveSafety.isArmed || !preArmReady}
-              onClick={() => arm()}
+              onClick={() => arm(30)}
             >
               {isArming ? (
                 <>

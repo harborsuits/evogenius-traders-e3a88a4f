@@ -50,20 +50,21 @@ export function useArmLive() {
   });
 
   const armMutation = useMutation({
-    mutationFn: async (): Promise<ArmResponse> => {
+    mutationFn: async (durationMinutes: number = 30): Promise<ArmResponse & { durationMinutes: number }> => {
       const { data, error } = await supabase.functions.invoke('arm-live', {
-        body: { action: 'arm' },
+        body: { action: 'arm', duration_minutes: durationMinutes },
       });
 
       if (error) throw error;
-      return data as ArmResponse;
+      return { ...(data as ArmResponse), durationMinutes };
     },
     onSuccess: (data) => {
       setCurrentSessionId(data.session_id);
       queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'system-state' });
+      const mins = data.durationMinutes;
       toast({
         title: 'Live Mode Armed',
-        description: `You have 60 seconds. Session: ${data.session_id?.slice(0, 8)}... (1 order max)`,
+        description: `You have ${mins} minute${mins > 1 ? 's' : ''}. Session: ${data.session_id?.slice(0, 8)}... (1 order max)`,
         variant: 'destructive',
       });
     },

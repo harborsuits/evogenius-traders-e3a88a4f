@@ -3,13 +3,15 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { useSystemState } from '@/hooks/useEvoTraderData';
 import { useAgentActivityDiagnostic, type AgentActivity } from '@/hooks/useAgentActivityDiagnostic';
+import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
 import { cn } from '@/lib/utils';
-import { Users, Activity, AlertTriangle, TrendingUp } from 'lucide-react';
+import { Users, Activity, AlertTriangle, TrendingUp, Lock } from 'lucide-react';
 
 export function AgentActivityDiagnostic() {
   const { data: systemState } = useSystemState();
   const generationId = systemState?.current_generation_id || null;
   const { data: diagnostic, isLoading } = useAgentActivityDiagnostic(generationId);
+  const { isLive, isLiveArmed } = useCurrentTradeMode();
 
   if (isLoading || !diagnostic) {
     return (
@@ -35,11 +37,24 @@ export function AgentActivityDiagnostic() {
         <div className="flex items-center justify-between">
           <CardTitle className="font-mono text-sm text-muted-foreground uppercase tracking-wider flex items-center gap-2">
             <Activity className="h-4 w-4" />
-            Agent Activity Diagnostic
+            Agent Activity
           </CardTitle>
-          <Badge variant={isHealthy ? 'default' : 'destructive'} className="text-xs">
-            {activityRate}% ACTIVE
-          </Badge>
+          <div className="flex items-center gap-2">
+            {isLive && !isLiveArmed && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 text-amber-500 border-amber-500/50">
+                <Lock className="h-3 w-3" />
+                LOCKED
+              </Badge>
+            )}
+            {isLive && isLiveArmed && (
+              <Badge variant="glow" className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-400 border-amber-500/50">
+                LIVE
+              </Badge>
+            )}
+            <Badge variant={isHealthy ? 'default' : 'destructive'} className="text-xs">
+              Gen {systemState?.current_generation_id?.substring(0, 4) || '—'} ({diagnostic?.total_agents || 0})
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">

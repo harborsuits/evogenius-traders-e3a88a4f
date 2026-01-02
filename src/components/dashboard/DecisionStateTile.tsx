@@ -5,6 +5,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useSystemState } from '@/hooks/useEvoTraderData';
 import { useDroughtState } from '@/hooks/useDroughtState';
+import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
@@ -72,24 +73,33 @@ export function DecisionStateTile({ compact }: { compact?: boolean }) {
   const [isExpanded, setIsExpanded] = React.useState(false);
   const { data: systemState } = useSystemState();
   const { data: droughtState, isLoading: droughtLoading } = useDroughtState();
+  const { mode, isLive } = useCurrentTradeMode();
   
-  // Fetch recent decisions
+  // Fetch recent decisions - filtered by current mode
   const { data: decisionData, isLoading: decisionsLoading } = useQuery({
-    queryKey: ['decision-state', systemState?.current_generation_id],
+    queryKey: ['decision-state', systemState?.current_generation_id, mode],
     queryFn: async () => {
       const { data: events } = await supabase
         .from('control_events')
         .select('triggered_at, metadata')
         .eq('action', 'trade_decision')
         .order('triggered_at', { ascending: false })
-        .limit(100);
+        .limit(200); // Fetch more to filter by mode
       
-      if (!events?.length) return { 
+      // Filter events by current mode
+      const modeFilteredEvents = (events || []).filter(e => {
+        const meta = e.metadata as Record<string, unknown>;
+        const eventMode = meta?.mode as string;
+        return eventMode === mode;
+      }).slice(0, 100);
+      
+      if (!modeFilteredEvents?.length) return { 
         buy: 0, sell: 0, hold: 0, blocked: 0, 
         latestDecision: null, 
         topReasons: [], 
         recentTrades: [],
-        latestEvaluations: []
+        latestEvaluations: [],
+        noData: true
       };
       
       let buy = 0, sell = 0, hold = 0, blocked = 0;
@@ -104,8 +114,8 @@ export function DecisionStateTile({ compact }: { compact?: boolean }) {
         triggered_at: string;
       }> = [];
       
-      for (let i = 0; i < events.length; i++) {
-        const e = events[i];
+      for (let i = 0; i < modeFilteredEvents.length; i++) {
+        const e = modeFilteredEvents[i];
         const meta = e.metadata as TradeDecisionMeta;
         const decision = meta?.decision?.toLowerCase();
         
@@ -169,10 +179,11 @@ export function DecisionStateTile({ compact }: { compact?: boolean }) {
         topReasons, 
         recentTrades,
         latestEvaluations,
-        total: events.length,
+        total: modeFilteredEvents.length,
         dominantRegime,
         agentPreference,
         regimeBlocked,
+        noData: false
       };
     },
     refetchInterval: 15000,
@@ -252,7 +263,12 @@ export function DecisionStateTile({ compact }: { compact?: boolean }) {
       <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
         <Activity className="h-4 w-4 text-primary" />
         Decision State
-        <Badge variant="glow" className="text-[8px] px-1 py-0 ml-auto">HERO</Badge>
+        <Badge 
+          variant={isLive ? 'glow' : 'outline'} 
+          className={cn("text-[8px] px-1 py-0 ml-auto", isLive && "bg-amber-500/20 text-amber-400 border-amber-500/50")}
+        >
+          {isLive ? 'LIVE' : 'PAPER'}
+        </Badge>
       </div>
       
       {isLoading ? (

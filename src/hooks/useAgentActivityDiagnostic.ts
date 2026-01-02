@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
 
 export interface AgentActivity {
   agent_id: string;
@@ -38,8 +39,10 @@ export interface ActivitySummary {
 }
 
 export function useAgentActivityDiagnostic(generationId: string | null) {
+  const { mode } = useCurrentTradeMode();
+  
   return useQuery({
-    queryKey: ['agent-activity-diagnostic', generationId],
+    queryKey: ['agent-activity-diagnostic', generationId, mode],
     queryFn: async (): Promise<ActivitySummary> => {
       if (!generationId) {
         return getEmptySummary();
@@ -64,31 +67,31 @@ export function useAgentActivityDiagnostic(generationId: string | null) {
         return getEmptySummary();
       }
 
-      // Get trade counts per agent for this generation
-      const { data: orderCounts } = await supabase
-        .from('paper_orders')
-        .select('agent_id')
-        .eq('generation_id', generationId)
-        .eq('status', 'filled')
-        .not('tags->>test_mode', 'eq', 'true');
-
-      // Count trades per agent
+      // Get trade counts per agent - from control_events filtered by mode
+      const { data: decisionEvents } = await supabase
+        .from('control_events')
+        .select('metadata')
+        .eq('action', 'trade_decision')
+        .order('triggered_at', { ascending: false })
+        .limit(500);
+      
+      // Filter by mode and count trades per agent
       const tradesByAgent: Record<string, number> = {};
-      (orderCounts || []).forEach(o => {
-        if (o.agent_id) {
-          tradesByAgent[o.agent_id] = (tradesByAgent[o.agent_id] || 0) + 1;
+      const modeFilteredEvents = (decisionEvents || []).filter(e => {
+        const meta = e.metadata as Record<string, unknown>;
+        return meta?.mode === mode;
+      });
+      
+      modeFilteredEvents.forEach(e => {
+        const meta = e.metadata as Record<string, unknown>;
+        const decision = (meta?.decision as string)?.toLowerCase();
+        const agentId = meta?.agent_id as string;
+        if ((decision === 'buy' || decision === 'sell') && agentId) {
+          tradesByAgent[agentId] = (tradesByAgent[agentId] || 0) + 1;
         }
       });
 
-      // Get recent decision logs to understand "why not trading"
-      const { data: recentDecisions } = await supabase
-        .from('control_events')
-        .select('metadata')
-        .eq('action', 'trade_cycle')
-        .order('triggered_at', { ascending: false })
-        .limit(100);
-
-      // Analyze hold reasons from decision logs
+      // Analyze hold reasons from decision logs (mode-filtered)
       const holdReasons: ActivitySummary['reasons'] = {
         no_signal: 0,
         confidence_too_low: 0,
@@ -98,7 +101,7 @@ export function useAgentActivityDiagnostic(generationId: string | null) {
         unknown: 0,
       };
 
-      (recentDecisions || []).forEach(d => {
+      modeFilteredEvents.forEach(d => {
         const meta = d.metadata as any;
         if (meta?.top_hold_reasons) {
           (meta.top_hold_reasons as string[]).forEach(reason => {
@@ -106,7 +109,7 @@ export function useAgentActivityDiagnostic(generationId: string | null) {
             else if (reason.includes('confidence')) holdReasons.confidence_too_low++;
             else if (reason.includes('rotation') || reason.includes('symbol')) holdReasons.symbol_rotation++;
             else if (reason.includes('rate') || reason.includes('limit')) holdReasons.rate_limited++;
-            else if (reason.includes('block') || reason.includes('gate')) holdReasons.blocked_gates++;
+            else if (reason.includes('block') || reason.includes('gate') || reason.includes('regime')) holdReasons.blocked_gates++;
             else holdReasons.unknown++;
           });
         }

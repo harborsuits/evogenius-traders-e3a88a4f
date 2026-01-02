@@ -35,13 +35,38 @@ type BlockReason =
   | 'BLOCKED_LIVE_NOT_ARMED'
   | 'BLOCKED_INVALID_QTY'
   | 'BLOCKED_AGENT_RATE_LIMIT'
-  | 'BLOCKED_SYMBOL_RATE_LIMIT';
+  | 'BLOCKED_SYMBOL_RATE_LIMIT'
+  | 'BLOCKED_LOSS_COOLDOWN'
+  | 'BLOCKED_CONSECUTIVE_LOSSES'
+  | 'BLOCKED_DAY_STOPPED';
 
 // Dynamic universe: any symbol in market_data is allowed (market-poll establishes the valid set)
 // This replaces the hardcoded ALLOWED_SYMBOLS list
 const MAX_MARKET_AGE_SECONDS = 120;
 const MAX_TRADES_PER_AGENT_PER_DAY = 5;
 const MAX_TRADES_PER_SYMBOL_PER_DAY = 50;
+
+// ============= LOSS REACTION DEFAULTS =============
+const DEFAULT_COOLDOWN_MINUTES_AFTER_LOSS = 15;
+const DEFAULT_MAX_CONSECUTIVE_LOSSES = 3;
+const DEFAULT_HALVE_SIZE_DRAWDOWN_PCT = 2;
+const DEFAULT_DAY_STOP_PCT = 5;
+
+interface LossReactionConfig {
+  enabled?: boolean;
+  cooldown_minutes_after_loss?: number;
+  max_consecutive_losses?: number;
+  halve_size_drawdown_pct?: number;
+  day_stop_pct?: number;
+  session?: {
+    consecutive_losses?: number;
+    last_loss_at?: string | null;
+    cooldown_until?: string | null;
+    size_multiplier?: number;
+    day_stopped?: boolean;
+    day_stopped_reason?: string | null;
+  };
+}
 
 // deno-lint-ignore no-explicit-any
 async function logDecision(
@@ -308,7 +333,126 @@ Deno.serve(async (req) => {
       }
     }
 
-// === GATE 6: Live mode requires explicit arm (timestamp-based) ===
+    // === GATE 6: LOSS REACTION GATES (Critical Safety) ===
+    // These prevent spiral losses: cooldown after loss, stop after consecutive losses, day-stop
+    if (!body.bypassGates) {
+      // Fetch loss_reaction config
+      const { data: configData } = await supabase
+        .from('system_config')
+        .select('config')
+        .limit(1)
+        .maybeSingle();
+
+      const config = configData?.config as Record<string, unknown> | null;
+      const lossReaction = config?.loss_reaction as LossReactionConfig | undefined;
+      
+      if (lossReaction?.enabled !== false) {
+        const session = lossReaction?.session || {};
+        const cooldownMinutes = lossReaction?.cooldown_minutes_after_loss ?? DEFAULT_COOLDOWN_MINUTES_AFTER_LOSS;
+        const maxConsecutive = lossReaction?.max_consecutive_losses ?? DEFAULT_MAX_CONSECUTIVE_LOSSES;
+        
+        console.log('[trade-execute] Loss reaction state:', session);
+
+        // Check 1: Day stopped (hard stop for the day)
+        if (session.day_stopped) {
+          const reason: BlockReason = 'BLOCKED_DAY_STOPPED';
+          console.log(`[trade-execute] ${reason}: ${session.day_stopped_reason || 'Unknown'}`);
+          
+          await logDecision(supabase, 'trade_blocked', {
+            symbol: body.symbol,
+            side: body.side,
+            qty: body.qty,
+            block_reason: reason,
+            day_stopped_reason: session.day_stopped_reason,
+            agent_id: body.agentId,
+            generation_id: body.generationId,
+            mode: tradeMode,
+          });
+
+          return new Response(
+            JSON.stringify({ 
+              ok: false, 
+              blocked: true, 
+              reason,
+              error: `Trading stopped for today: ${session.day_stopped_reason || 'Loss limit reached'}`
+            }),
+            { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        // Check 2: Cooldown after loss
+        if (session.cooldown_until) {
+          const cooldownEnd = new Date(session.cooldown_until);
+          if (cooldownEnd > new Date()) {
+            const reason: BlockReason = 'BLOCKED_LOSS_COOLDOWN';
+            const remainingMs = cooldownEnd.getTime() - Date.now();
+            const remainingMins = Math.ceil(remainingMs / 60000);
+            console.log(`[trade-execute] ${reason}: ${remainingMins} minutes remaining`);
+            
+            await logDecision(supabase, 'trade_blocked', {
+              symbol: body.symbol,
+              side: body.side,
+              qty: body.qty,
+              block_reason: reason,
+              cooldown_until: session.cooldown_until,
+              remaining_minutes: remainingMins,
+              agent_id: body.agentId,
+              generation_id: body.generationId,
+              mode: tradeMode,
+            });
+
+            return new Response(
+              JSON.stringify({ 
+                ok: false, 
+                blocked: true, 
+                reason,
+                error: `Loss cooldown active. ${remainingMins} minutes remaining.`,
+                cooldown_until: session.cooldown_until,
+              }),
+              { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        }
+
+        // Check 3: Consecutive losses limit
+        const consecutiveLosses = session.consecutive_losses ?? 0;
+        if (consecutiveLosses >= maxConsecutive) {
+          const reason: BlockReason = 'BLOCKED_CONSECUTIVE_LOSSES';
+          console.log(`[trade-execute] ${reason}: ${consecutiveLosses} consecutive losses`);
+          
+          await logDecision(supabase, 'trade_blocked', {
+            symbol: body.symbol,
+            side: body.side,
+            qty: body.qty,
+            block_reason: reason,
+            consecutive_losses: consecutiveLosses,
+            max_allowed: maxConsecutive,
+            agent_id: body.agentId,
+            generation_id: body.generationId,
+            mode: tradeMode,
+          });
+
+          return new Response(
+            JSON.stringify({ 
+              ok: false, 
+              blocked: true, 
+              reason,
+              error: `Trading paused: ${consecutiveLosses} consecutive losses reached limit of ${maxConsecutive}`
+            }),
+            { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        // Apply size multiplier if drawdown threshold exceeded
+        const sizeMultiplier = session.size_multiplier ?? 1;
+        if (sizeMultiplier < 1) {
+          console.log(`[trade-execute] Applying size reduction: ${sizeMultiplier}x`);
+          body.qty = body.qty * sizeMultiplier;
+        }
+      }
+    }
+
+// === GATE 7: Live mode requires explicit arm (timestamp-based) ===
     if (tradeMode === 'live') {
       const isArmed = liveArmedUntil && new Date(liveArmedUntil) > new Date();
       

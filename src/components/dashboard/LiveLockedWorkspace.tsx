@@ -25,6 +25,7 @@ import { useArmLive } from '@/hooks/useArmLive';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { LivePositionsCard } from './LivePositionsCard';
+import { LossReactionPanel } from './LossReactionPanel';
 import { useQueryClient } from '@tanstack/react-query';
 
 interface ChecklistItem {
@@ -595,6 +596,9 @@ export function LiveLockedWorkspace() {
 
       {/* Live Positions Card - Shows LOCKED or Coinbase data */}
       <LivePositionsCard isArmed={liveSafety.isArmed} />
+
+      {/* Loss Reaction Panel - Critical safety brakes */}
+      <LossReactionPanel />
 
       {/* Info Panel - Updated to explain canary mode */}
       <Card className="bg-muted/30">

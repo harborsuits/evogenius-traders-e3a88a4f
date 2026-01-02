@@ -20,6 +20,41 @@ Deno.serve(async (req) => {
     const { action, duration_minutes } = await req.json();
 
     if (action === 'arm') {
+      // Fetch canary limits from system_config
+      const { data: configData } = await supabase
+        .from('system_config')
+        .select('config')
+        .limit(1)
+        .maybeSingle();
+      
+      const config = configData?.config as Record<string, unknown> | null;
+      const canaryLimits = (config?.canary_limits as Record<string, unknown>) ?? {};
+      const maxTradesPerSession = (canaryLimits.max_trades_per_session as number) ?? 1;
+      const maxTradesPerDay = (canaryLimits.max_trades_per_day as number) ?? 3;
+      
+      // Check daily trade count BEFORE creating a new session
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      
+      const { count: todayTradeCount } = await supabase
+        .from('control_events')
+        .select('*', { count: 'exact', head: true })
+        .eq('action', 'live_trade_executed')
+        .gte('triggered_at', todayStart.toISOString());
+      
+      if ((todayTradeCount ?? 0) >= maxTradesPerDay) {
+        console.log(`[arm-live] Daily limit reached: ${todayTradeCount}/${maxTradesPerDay} trades today`);
+        return new Response(
+          JSON.stringify({ 
+            success: false, 
+            error: `Daily limit reached. ${todayTradeCount}/${maxTradesPerDay} trades executed today.`,
+            daily_limit: maxTradesPerDay,
+            trades_today: todayTradeCount,
+          }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
       // Default to 30 minutes, max 60 minutes for canary mode
       const durationMins = Math.min(Math.max(duration_minutes || 30, 1), 60);
       const armedUntil = new Date(Date.now() + durationMins * 60 * 1000).toISOString();
@@ -30,7 +65,7 @@ Deno.serve(async (req) => {
         .insert({
           mode: 'live',
           expires_at: armedUntil,
-          max_live_orders: 1, // Canary mode: exactly one order allowed
+          max_live_orders: maxTradesPerSession,
         })
         .select('id')
         .single();
@@ -58,18 +93,23 @@ Deno.serve(async (req) => {
           armed_until: armedUntil, 
           duration_minutes: durationMins,
           session_id: sessionId,
-          max_orders: 1,
+          max_orders: maxTradesPerSession,
+          daily_limit: maxTradesPerDay,
+          trades_today: todayTradeCount ?? 0,
         }
       });
 
-      console.log(`[arm-live] Armed until ${armedUntil} (session: ${sessionId})`);
+      console.log(`[arm-live] Armed until ${armedUntil} (session: ${sessionId}, max_orders: ${maxTradesPerSession})`);
 
       return new Response(
         JSON.stringify({ 
           success: true, 
           armed_until: armedUntil,
           session_id: sessionId,
-          max_orders: 1,
+          max_orders: maxTradesPerSession,
+          daily_limit: maxTradesPerDay,
+          trades_today: todayTradeCount ?? 0,
+          trades_remaining: maxTradesPerDay - (todayTradeCount ?? 0),
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );

@@ -31,13 +31,12 @@ export function SafetyConsolidatedPanel({ compact }: { compact?: boolean }) {
   const [cooldownDisplay, setCooldownDisplay] = useState('');
   
   useEffect(() => {
-    if (!state.isInCooldown) {
-      setCooldownDisplay('');
-      return;
-    }
+    // Fix: compute remaining time from cooldown_until directly, not from cached state
+    const cooldownUntil = state.session.cooldown_until ? new Date(state.session.cooldown_until).getTime() : 0;
     
     const updateCooldown = () => {
-      const remaining = state.cooldownRemainingMs;
+      const now = Date.now();
+      const remaining = cooldownUntil - now;
       if (remaining <= 0) {
         setCooldownDisplay('');
         return;
@@ -47,10 +46,15 @@ export function SafetyConsolidatedPanel({ compact }: { compact?: boolean }) {
       setCooldownDisplay(`${mins}:${secs.toString().padStart(2, '0')}`);
     };
     
+    if (!cooldownUntil || cooldownUntil <= Date.now()) {
+      setCooldownDisplay('');
+      return;
+    }
+    
     updateCooldown();
     const interval = setInterval(updateCooldown, 1000);
     return () => clearInterval(interval);
-  }, [state.isInCooldown, state.cooldownRemainingMs]);
+  }, [state.session.cooldown_until]);
 
   // Risk state from snapshot
   const daily = risk?.dailyLossPct ?? 0;
@@ -347,29 +351,73 @@ function RiskTab({
   );
 }
 
-// Thresholds Tab - Current configured limits
+// Thresholds Tab - Current configured limits + Canary limits
 function ThresholdsTab({ state }: { state: LossReactionState }) {
-  const limits = [
+  const { data: systemConfig } = useSystemConfig();
+  
+  // Get canary limits from config (with safe defaults)
+  const configAny = systemConfig as Record<string, unknown> | undefined;
+  const canaryLimits = (configAny?.canary_limits as Record<string, unknown>) ?? {
+    max_trades_per_day: 3,
+    max_usd_per_trade: 5,
+    auto_disarm_after_trade: true,
+    max_trades_per_session: 1,
+  };
+
+  const lossLimits = [
     { label: 'Cooldown after loss', value: `${state.config.cooldown_minutes_after_loss} min`, icon: <Timer className="h-3 w-3" /> },
     { label: 'Max consecutive losses', value: state.config.max_consecutive_losses.toString(), icon: <TrendingDown className="h-3 w-3" /> },
-    { label: 'Halve size at drawdown', value: `${state.config.halve_size_drawdown_pct}%`, icon: <Pause className="h-3 w-3" /> },
-    { label: 'Day stop at drawdown', value: `${state.config.day_stop_pct}%`, icon: <StopCircle className="h-3 w-3" /> },
+    { label: 'Halve size at DD', value: `${state.config.halve_size_drawdown_pct}%`, icon: <Pause className="h-3 w-3" /> },
+    { label: 'Day stop at DD', value: `${state.config.day_stop_pct}%`, icon: <StopCircle className="h-3 w-3" /> },
+  ];
+
+  const canaryLimitItems = [
+    { label: 'Max trades/day', value: (canaryLimits.max_trades_per_day as number)?.toString() ?? '3', icon: <Activity className="h-3 w-3" /> },
+    { label: 'Max $/trade', value: `$${canaryLimits.max_usd_per_trade ?? 5}`, icon: <Ban className="h-3 w-3" /> },
+    { label: 'Auto-disarm', value: (canaryLimits.auto_disarm_after_trade as boolean) ? 'Yes' : 'No', icon: <Shield className="h-3 w-3" /> },
+    { label: 'Trades/session', value: (canaryLimits.max_trades_per_session as number)?.toString() ?? '1', icon: <CheckCircle className="h-3 w-3" /> },
   ];
 
   return (
-    <div className="space-y-2">
-      {limits.map((limit, i) => (
-        <div key={i} className="flex items-center justify-between p-2 bg-muted/20 rounded-lg">
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-            {limit.icon}
-            {limit.label}
-          </div>
-          <span className="text-[11px] font-mono font-medium">{limit.value}</span>
+    <div className="space-y-3">
+      {/* Canary Limits Section */}
+      <div className="space-y-1">
+        <div className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider flex items-center gap-1">
+          <Shield className="h-3 w-3 text-amber-500" />
+          Canary Limits
         </div>
-      ))}
-      <div className="text-[9px] text-muted-foreground text-center pt-2">
-        Configure in system_config.loss_reaction
+        <div className="grid grid-cols-2 gap-1.5">
+          {canaryLimitItems.map((limit, i) => (
+            <div key={i} className="flex items-center justify-between p-1.5 bg-amber-500/10 border border-amber-500/20 rounded">
+              <div className="flex items-center gap-1 text-[9px] text-muted-foreground">
+                {limit.icon}
+                {limit.label}
+              </div>
+              <span className="text-[10px] font-mono font-medium text-amber-500">{limit.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Loss Reaction Limits Section */}
+      <div className="space-y-1">
+        <div className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider flex items-center gap-1">
+          <StopCircle className="h-3 w-3" />
+          Loss Reaction
+        </div>
+        {lossLimits.map((limit, i) => (
+          <div key={i} className="flex items-center justify-between p-1.5 bg-muted/20 rounded">
+            <div className="flex items-center gap-1 text-[9px] text-muted-foreground">
+              {limit.icon}
+              {limit.label}
+            </div>
+            <span className="text-[10px] font-mono font-medium">{limit.value}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
+
+// Import useSystemConfig
+import { useSystemConfig } from '@/hooks/useSystemConfig';

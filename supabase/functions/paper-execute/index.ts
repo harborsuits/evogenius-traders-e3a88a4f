@@ -453,8 +453,11 @@ Deno.serve(async (req) => {
         .eq('id', account.id);
     }
 
+    // Calculate realized PnL for sells
+    const tradePnl = side === 'sell' ? (fillPrice - (existingPosition?.avg_entry_price ?? fillPrice)) * qty - fee : 0;
+
     // Also insert into trades table for unified logging (marked as paper)
-    await supabase.from('trades').insert({
+    const { data: tradeRecord } = await supabase.from('trades').insert({
       agent_id: agentId,
       generation_id: generationId,
       symbol,
@@ -464,8 +467,25 @@ Deno.serve(async (req) => {
       fill_size: qty,
       fees: fee,
       outcome: 'success',
-      pnl: side === 'sell' ? (fillPrice - (existingPosition?.avg_entry_price ?? fillPrice)) * qty - fee : 0,
-    });
+      pnl: tradePnl,
+    }).select('id').single();
+
+    // Auto-track loss/win for loss-reaction logic (only for closing trades with realized PnL)
+    if (side === 'sell' && tradePnl !== 0) {
+      try {
+        await supabase.functions.invoke('loss-reaction', {
+          body: {
+            action: 'trade_completed',
+            pnl: tradePnl,
+            symbol,
+            trade_id: tradeRecord?.id || order.id,
+          },
+        });
+        console.log(`[paper-execute] Loss-reaction updated: PnL=${tradePnl.toFixed(2)}`);
+      } catch (lrErr) {
+        console.error('[paper-execute] Failed to update loss-reaction:', lrErr);
+      }
+    }
 
     console.log('[paper-execute] Order filled successfully:', order.id);
 

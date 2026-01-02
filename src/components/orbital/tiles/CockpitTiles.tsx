@@ -2515,3 +2515,6 @@ export function LiveRiskGuardrailsTile({ compact }: { compact?: boolean }) {
 
 // Enhanced Live Positions - exported from component
 export { LivePositionsCard } from '@/components/dashboard/LivePositionsCard';
+
+// Consolidated Safety Panel - combines Loss Reaction, Risk State, Live Risk Guardrails
+export { SafetyConsolidatedPanel as SafetyPanelTile } from '@/components/dashboard/SafetyConsolidatedPanel';

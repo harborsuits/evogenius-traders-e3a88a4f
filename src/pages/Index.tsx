@@ -34,10 +34,9 @@ import {
   ShadowTradingTile,
   LiveBrainTile,
   PipelineHealthTile,
-  RiskStateTile,
   LiveProofTile,
   LiveOrdersFillsTile,
-  LiveRiskGuardrailsTile,
+  SafetyPanelTile,
 } from '@/components/orbital/tiles/CockpitTiles';
 // Drillable cards
 import { PositionsCardContent, ActivityCardContent, AgentsCardContent, GenerationsCardContent, AlertsCardContent } from '@/components/orbital/tiles/DrillableCards';
@@ -60,9 +59,8 @@ const staticCards: CommandCard[] = [
   { id: 'control', title: 'System Control', type: 'cockpit', component: SystemControlTile },
   { id: 'live-brain', title: 'Live Brain', type: 'cockpit', component: LiveBrainTile },
   { id: 'live-orders-fills', title: 'Live Orders & Fills', type: 'cockpit', component: LiveOrdersFillsTile },
-  { id: 'live-risk-guardrails', title: 'Live Risk Guardrails', type: 'cockpit', component: LiveRiskGuardrailsTile },
+  { id: 'safety-panel', title: 'Safety Panel', type: 'cockpit', component: SafetyPanelTile },
   { id: 'pipeline-health', title: 'Pipeline Health', type: 'cockpit', component: PipelineHealthTile },
-  { id: 'risk-state', title: 'Risk State', type: 'cockpit', component: RiskStateTile },
   { id: 'polling', title: 'Polling Health', type: 'cockpit', component: PollingHealthTile },
   { id: 'vitals', title: 'System Vitals', type: 'cockpit', component: SystemVitalsTile },
   { id: 'shadow-trading', title: 'Shadow Trading', type: 'cockpit', component: ShadowTradingTile },

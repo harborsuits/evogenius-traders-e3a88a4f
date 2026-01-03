@@ -27,6 +27,7 @@ import { useToast } from '@/hooks/use-toast';
 import { LivePositionsCard } from './LivePositionsCard';
 import { LossReactionPanel } from './LossReactionPanel';
 import { ControlPanel } from './ControlPanel';
+import { ArmSessionHistory } from './ArmSessionHistory';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSystemState } from '@/hooks/useEvoTraderData';
 import { SystemStatus } from '@/types/evotrader';
@@ -613,6 +614,9 @@ export function LiveLockedWorkspace() {
 
       {/* Loss Reaction Panel - Critical safety brakes */}
       <LossReactionPanel />
+
+      {/* ARM Session History - Shows past sessions with outcomes */}
+      <ArmSessionHistory />
 
       {/* Info Panel - Updated to explain canary mode */}
       <Card className="bg-muted/30">

@@ -85,6 +85,7 @@ export interface RangeStrategyConfig {
   min_atr_ratio?: number;
   cooldown_minutes?: number;
   paper_cooldown_minutes?: number;
+  force_entry_for_test?: boolean; // Force entry on any move > 0.5% (paper only, for testing plumbing)
 }
 
 export interface TradeFlowWatchdogConfig {

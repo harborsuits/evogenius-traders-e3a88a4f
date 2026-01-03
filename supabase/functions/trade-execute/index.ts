@@ -169,41 +169,47 @@ Deno.serve(async (req) => {
     const generationId = systemState?.current_generation_id;
     console.log('[trade-execute] System state:', { tradeMode, systemStatus, generationId, liveArmedUntil });
 
-    // === GATE 3: System must be running (skip for manual trades) ===
-    if (!body.bypassGates) {
+    // === PAPER MODE: Run continuously with minimal gates ===
+    // Paper trading only checks: valid symbol (Gate 1), valid qty (Gate 2), market data freshness (Gate 4)
+    // Skips: system stopped/paused, rate limits, loss reaction — these only apply to live
+    const isPaperMode = tradeMode === 'paper';
+    const skipRestrictiveGates = isPaperMode && !body.bypassGates;
+
+    // === GATE 3: System must be running (skip for paper mode - paper runs always) ===
+    if (!body.bypassGates && !skipRestrictiveGates) {
       if (systemStatus === 'stopped') {
         const reason: BlockReason = 'BLOCKED_SYSTEM_STOPPED';
         console.log(`[trade-execute] ${reason}`);
         
-      await logDecision(supabase, 'trade_blocked', {
-        symbol: body.symbol,
-        side: body.side,
-        qty: body.qty,
-        block_reason: reason,
-        agent_id: body.agentId,
-        generation_id: body.generationId,
-        mode: 'paper',
-      });
+        await logDecision(supabase, 'trade_blocked', {
+          symbol: body.symbol,
+          side: body.side,
+          qty: body.qty,
+          block_reason: reason,
+          agent_id: body.agentId,
+          generation_id: body.generationId,
+          mode: tradeMode,
+        });
 
-      return new Response(
-        JSON.stringify({ ok: false, blocked: true, reason }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+        return new Response(
+          JSON.stringify({ ok: false, blocked: true, reason }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
 
-    if (systemStatus === 'paused') {
-      const reason: BlockReason = 'BLOCKED_SYSTEM_PAUSED';
-      console.log(`[trade-execute] ${reason}`);
-      
-      await logDecision(supabase, 'trade_blocked', {
-        symbol: body.symbol,
-        side: body.side,
-        qty: body.qty,
-        block_reason: reason,
-        agent_id: body.agentId,
-        generation_id: body.generationId,
-        mode: 'paper',
-      });
+      if (systemStatus === 'paused') {
+        const reason: BlockReason = 'BLOCKED_SYSTEM_PAUSED';
+        console.log(`[trade-execute] ${reason}`);
+        
+        await logDecision(supabase, 'trade_blocked', {
+          symbol: body.symbol,
+          side: body.side,
+          qty: body.qty,
+          block_reason: reason,
+          agent_id: body.agentId,
+          generation_id: body.generationId,
+          mode: tradeMode,
+        });
 
         return new Response(
           JSON.stringify({ ok: false, blocked: true, reason }),
@@ -212,7 +218,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // === GATE 4: Market data must be fresh (skip for manual trades) ===
+    // === GATE 4: Market data must be fresh (applies to both paper and live) ===
     if (!body.bypassGates) {
       const { data: marketData, error: marketError } = await supabase
         .from('market_data')
@@ -265,8 +271,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // === GATE 5: Rate limits (per-agent and per-symbol) ===
-    if (!body.bypassGates) {
+    // === GATE 5: Rate limits (skip for paper mode - paper runs freely) ===
+    if (!body.bypassGates && !skipRestrictiveGates) {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
@@ -333,9 +339,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // === GATE 6: LOSS REACTION GATES (Critical Safety) ===
-    // These prevent spiral losses: cooldown after loss, stop after consecutive losses, day-stop
-    if (!body.bypassGates) {
+    // === GATE 6: LOSS REACTION GATES (skip for paper mode - paper learns from all trades) ===
+    // These prevent spiral losses in live mode: cooldown after loss, stop after consecutive losses, day-stop
+    if (!body.bypassGates && !skipRestrictiveGates) {
       // Fetch loss_reaction config
       const { data: configData } = await supabase
         .from('system_config')

@@ -2547,7 +2547,9 @@ Deno.serve(async (req) => {
       }
       
       // Explorer agent: enforce stricter confidence floor
-      if (confidence < EXPLORER_CONSTRAINTS.min_confidence) {
+      // BYPASS: If force_entry_for_test is enabled (for testing plumbing), skip confidence gate
+      const forceEntryBypass = RANGE_STRATEGY.force_entry_for_test === true && isPaperMode;
+      if (confidence < EXPLORER_CONSTRAINTS.min_confidence && !forceEntryBypass) {
         console.log(`[trade-cycle] Explorer confidence ${confidence.toFixed(2)} < ${EXPLORER_CONSTRAINTS.min_confidence}, skipping`);
         await supabase.from('control_events').insert({
           action: 'trade_decision',
@@ -2564,6 +2566,10 @@ Deno.serve(async (req) => {
           JSON.stringify({ ok: true, decision: 'hold', reason: 'explorer_low_confidence' }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
+      }
+      
+      if (forceEntryBypass) {
+        console.log(`[trade-cycle] FORCE ENTRY BYPASS: Skipping confidence check (${confidence.toFixed(2)} < ${EXPLORER_CONSTRAINTS.min_confidence})`);
       }
     }
     

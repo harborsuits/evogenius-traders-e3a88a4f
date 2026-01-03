@@ -48,15 +48,15 @@ export const DEFAULT_RANGE_STRATEGY: RangeStrategyConfig = {
   enabled: true,
   paper_enabled: true,
   live_enabled: false,  // Conservative: off for live by default
-  rsi_buy_threshold: 35,
-  rsi_sell_threshold: 65,
+  rsi_buy_threshold: 45,   // More permissive: triggers on -1.5% drop
+  rsi_sell_threshold: 55,  // More permissive: triggers on +1.5% rise
   bb_period: 20,
   bb_stddev: 2.0,
-  max_ema_slope: 0.0015,
-  max_atr_ratio: 1.5,
-  min_atr_ratio: 0.5,
+  max_ema_slope: 0.005,    // More permissive: allow 0.5% slope
+  max_atr_ratio: 1.8,      // More permissive
+  min_atr_ratio: 0.3,      // More permissive
   cooldown_minutes: 15,
-  paper_cooldown_minutes: 30,
+  paper_cooldown_minutes: 5,  // Faster for testing
 };
 
 // Trade Flow Watchdog Interface
@@ -124,6 +124,7 @@ export function RangeStrategyPanel() {
   const { data: systemConfig, refetch } = useSystemConfig();
   const { data: starvation } = useStarvationStatus();
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [dirty, setDirty] = useState(false);
   
   // Cast to get range_strategy config
@@ -184,6 +185,23 @@ export function RangeStrategyPanel() {
     setConfig({ ...DEFAULT_RANGE_STRATEGY });
     setWatchdog({ ...DEFAULT_WATCHDOG });
     setDirty(true);
+  };
+  
+  const handleTestCycle = async () => {
+    setTesting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('trade-cycle');
+      if (error) throw error;
+      toast({ 
+        title: 'Trade cycle triggered', 
+        description: `Decision: ${data?.decision ?? 'unknown'}. Check logs for range strategy evaluation.` 
+      });
+    } catch (err) {
+      console.error('Test cycle failed:', err);
+      toast({ title: 'Test failed', description: String(err), variant: 'destructive' });
+    } finally {
+      setTesting(false);
+    }
   };
   
   const updateConfig = <K extends keyof RangeStrategyConfig>(key: K, value: RangeStrategyConfig[K]) => {
@@ -444,11 +462,21 @@ export function RangeStrategyPanel() {
         <Button
           variant="outline"
           size="sm"
-          className="flex-1 text-[10px] h-8"
+          className="text-[10px] h-8"
           onClick={handleReset}
         >
           <RotateCcw className="h-3 w-3 mr-1" />
           Reset
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          className="text-[10px] h-8"
+          disabled={testing}
+          onClick={handleTestCycle}
+        >
+          {testing ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Zap className="h-3 w-3 mr-1" />}
+          Test Cycle
         </Button>
         <Button
           size="sm"

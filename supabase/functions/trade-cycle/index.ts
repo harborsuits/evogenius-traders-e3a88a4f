@@ -256,15 +256,15 @@ const DEFAULT_RANGE_STRATEGY: RangeStrategyConfig = {
   enabled: true,
   paper_enabled: true,
   live_enabled: false,
-  rsi_buy_threshold: 35,
-  rsi_sell_threshold: 65,
+  rsi_buy_threshold: 45,   // More permissive: triggers on -1.5% drop (was 35 = -3.5%)
+  rsi_sell_threshold: 55,  // More permissive: triggers on +1.5% rise (was 65 = +6.5%)
   bb_period: 20,
   bb_stddev: 2.0,
-  max_ema_slope: 0.0015,
-  max_atr_ratio: 1.5,
-  min_atr_ratio: 0.5,
+  max_ema_slope: 0.005,    // More permissive: allow 0.5% slope (was 0.0015)
+  max_atr_ratio: 1.8,      // More permissive: allow higher vol (was 1.5)
+  min_atr_ratio: 0.3,      // More permissive: allow quieter markets (was 0.5)
   cooldown_minutes: 15,
-  paper_cooldown_minutes: 30,
+  paper_cooldown_minutes: 5, // Faster for testing (was 30)
 };
 
 // TRADE FLOW WATCHDOG CONFIGURATION
@@ -1561,10 +1561,17 @@ function makeRangeDecision(
   // For now, using change_24h as a proxy for price relative to bands
   const change = market.change_24h;
   
-  // RSI proxy: larger negative change = more oversold
-  // BUY when price dropped significantly (oversold) in a range market
-  const isOversold = change < -(config.rsi_buy_threshold / 10); // Scale: -3.5% for threshold 35
-  const isOverbought = change > (config.rsi_sell_threshold / 10); // Scale: +6.5% for threshold 65
+  // RSI proxy using more intuitive scaling:
+  // rsi_buy_threshold: 45 -> requires change < -1.5% to trigger BUY (45-50)/33 = -0.15 * 10 = -1.5%
+  // rsi_sell_threshold: 55 -> requires change > +1.5% to trigger SELL (55-50)/33 = +0.15 * 10 = +1.5%
+  // More extreme thresholds (35/65) require larger moves (-4.5%/+4.5%)
+  const buyTriggerPct = (config.rsi_buy_threshold - 50) / 3.33; // 45 -> -1.5%, 35 -> -4.5%
+  const sellTriggerPct = (config.rsi_sell_threshold - 50) / 3.33; // 55 -> +1.5%, 65 -> +4.5%
+  
+  const isOversold = change < buyTriggerPct;
+  const isOverbought = change > sellTriggerPct;
+  
+  console.log(`[range-decision] ${market.symbol}: change=${change.toFixed(2)}%, buyTrigger=${buyTriggerPct.toFixed(2)}%, sellTrigger=${sellTriggerPct.toFixed(2)}%, isFlat=${isFlat}, volOk=${volOk}, oversold=${isOversold}, overbought=${isOverbought}`);
   
   if (isOversold && !hasPosition) {
     reasons.push('bollinger_oversold', 'range_market');

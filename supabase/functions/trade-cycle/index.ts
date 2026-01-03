@@ -250,6 +250,7 @@ interface RangeStrategyConfig {
   min_atr_ratio: number;
   cooldown_minutes: number;
   paper_cooldown_minutes: number;
+  force_entry_for_test?: boolean; // Force entry on any move > 0.5% (paper only, for testing plumbing)
 }
 
 const DEFAULT_RANGE_STRATEGY: RangeStrategyConfig = {
@@ -265,6 +266,7 @@ const DEFAULT_RANGE_STRATEGY: RangeStrategyConfig = {
   min_atr_ratio: 0.3,      // More permissive: allow quieter markets (was 0.5)
   cooldown_minutes: 15,
   paper_cooldown_minutes: 5, // Faster for testing (was 30)
+  force_entry_for_test: false,
 };
 
 // TRADE FLOW WATCHDOG CONFIGURATION
@@ -1571,7 +1573,27 @@ function makeRangeDecision(
   const isOversold = change < buyTriggerPct;
   const isOverbought = change > sellTriggerPct;
   
-  console.log(`[range-decision] ${market.symbol}: change=${change.toFixed(2)}%, buyTrigger=${buyTriggerPct.toFixed(2)}%, sellTrigger=${sellTriggerPct.toFixed(2)}%, isFlat=${isFlat}, volOk=${volOk}, oversold=${isOversold}, overbought=${isOverbought}`);
+  // Force entry mode: if enabled, any market move > threshold triggers entry (for testing plumbing)
+  const forceEntryEnabled = config.force_entry_for_test === true;
+  const forceEntryTriggered = forceEntryEnabled && Math.abs(change) > 0.5 && !hasPosition;
+  
+  console.log(`[range-decision] ${market.symbol}: change=${change.toFixed(2)}%, buyTrigger=${buyTriggerPct.toFixed(2)}%, sellTrigger=${sellTriggerPct.toFixed(2)}%, isFlat=${isFlat}, volOk=${volOk}, oversold=${isOversold}, overbought=${isOverbought}, forceEntry=${forceEntryTriggered}`);
+  
+  // Force entry for testing (paper only) - enables proving full execution chain works
+  if (forceEntryTriggered) {
+    const direction: Decision = change > 0 ? 'sell' : 'buy';
+    // In force mode with no position, we BUY to open a position (can't sell what we don't have)
+    reasons.push('force_test_entry', 'range_market');
+    const rawConfidence = 0.55;
+    confidenceComponents = calibrateConfidence(rawConfidence, agentTradeCount);
+    console.log(`[range-decision] FORCE ENTRY: ${market.symbol} -> BUY (test mode)`);
+    return {
+      decision: 'buy',
+      reasons,
+      confidence: confidenceComponents.final_confidence,
+      confidence_components: confidenceComponents,
+    };
+  }
   
   if (isOversold && !hasPosition) {
     reasons.push('bollinger_oversold', 'range_market');

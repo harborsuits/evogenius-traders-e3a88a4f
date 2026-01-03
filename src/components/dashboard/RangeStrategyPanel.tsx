@@ -42,6 +42,7 @@ export interface RangeStrategyConfig {
   // Cooldowns
   cooldown_minutes: number;   // Default: 15 per symbol
   paper_cooldown_minutes: number; // Default: 30 per symbol for paper
+  force_entry_for_test?: boolean; // Force entry on any move > 0.5% (paper only)
 }
 
 export const DEFAULT_RANGE_STRATEGY: RangeStrategyConfig = {
@@ -75,6 +76,56 @@ export const DEFAULT_WATCHDOG: TradeFlowWatchdogConfig = {
   auto_enable_drought: true,
   auto_enable_range_strategy: true,
 };
+
+// Threshold slider component - extracted to avoid ref warning
+interface ThresholdSliderProps {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+  icon: React.ReactNode;
+  description?: string;
+}
+
+function ThresholdSlider({ 
+  label, 
+  value, 
+  onChange, 
+  min, 
+  max, 
+  step, 
+  unit,
+  icon,
+  description,
+}: ThresholdSliderProps) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          {icon}
+          <span className="text-[10px] text-muted-foreground">{label}</span>
+        </div>
+        <span className="text-xs font-mono font-medium">
+          {value.toFixed(unit === '%' || unit === '' ? (value < 1 ? 4 : 0) : 1)}{unit}
+        </span>
+      </div>
+      <Slider
+        value={[value]}
+        onValueChange={([v]) => onChange(v)}
+        min={min}
+        max={max}
+        step={step}
+        className="h-1.5"
+      />
+      {description && (
+        <p className="text-[9px] text-muted-foreground/60">{description}</p>
+      )}
+    </div>
+  );
+}
 
 // Hook to check starvation status
 function useStarvationStatus() {
@@ -214,50 +265,7 @@ export function RangeStrategyPanel() {
     setDirty(true);
   };
 
-  const ThresholdSlider = ({ 
-    label, 
-    value, 
-    onChange, 
-    min, 
-    max, 
-    step, 
-    unit,
-    icon,
-    description,
-  }: {
-    label: string;
-    value: number;
-    onChange: (v: number) => void;
-    min: number;
-    max: number;
-    step: number;
-    unit: string;
-    icon: React.ReactNode;
-    description?: string;
-  }) => (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          {icon}
-          <span className="text-[10px] text-muted-foreground">{label}</span>
-        </div>
-        <span className="text-xs font-mono font-medium">
-          {value.toFixed(unit === '%' || unit === '' ? (value < 1 ? 4 : 0) : 1)}{unit}
-        </span>
-      </div>
-      <Slider
-        value={[value]}
-        onValueChange={([v]) => onChange(v)}
-        min={min}
-        max={max}
-        step={step}
-        className="h-1.5"
-      />
-      {description && (
-        <p className="text-[9px] text-muted-foreground/60">{description}</p>
-      )}
-    </div>
-  );
+  // Note: ThresholdSlider moved outside component to fix ref warning
 
   return (
     <div className="space-y-4">
@@ -345,6 +353,25 @@ export function RangeStrategyPanel() {
             disabled={!config.enabled}
           />
         </div>
+      </div>
+      
+      {/* Force Entry Toggle for Testing */}
+      <div className={cn(
+        "flex items-center justify-between p-2 rounded-lg border",
+        config.force_entry_for_test ? "bg-amber-500/20 border-amber-500/50" : "bg-muted/20 border-muted/30"
+      )}>
+        <div className="flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 text-amber-500" />
+          <div>
+            <div className="text-xs font-medium">Force Test Entry</div>
+            <div className="text-[9px] text-muted-foreground">Paper only: Force BUY on any 0.5%+ move (proves plumbing works)</div>
+          </div>
+        </div>
+        <Switch
+          checked={config.force_entry_for_test ?? false}
+          onCheckedChange={(v) => updateConfig('force_entry_for_test', v)}
+          disabled={!config.enabled || !config.paper_enabled}
+        />
       </div>
       
       {/* Strategy Parameters */}

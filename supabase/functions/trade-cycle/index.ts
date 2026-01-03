@@ -7,7 +7,7 @@ const corsHeaders = {
 
 // Strategy decision types
 type Decision = 'buy' | 'sell' | 'hold';
-type StrategyTemplate = 'trend_pullback' | 'mean_reversion' | 'breakout';
+type StrategyTemplate = 'trend_pullback' | 'mean_reversion' | 'breakout' | 'bollinger_range';
 
 interface MarketData {
   symbol: string;
@@ -235,6 +235,54 @@ interface ShadowTradingConfig {
   default_stop_pct: number;
   default_trailing_pct: number;
 }
+
+// RANGE STRATEGY CONFIGURATION (for Bollinger Mean Reversion)
+interface RangeStrategyConfig {
+  enabled: boolean;
+  paper_enabled: boolean;
+  live_enabled: boolean;
+  rsi_buy_threshold: number;
+  rsi_sell_threshold: number;
+  bb_period: number;
+  bb_stddev: number;
+  max_ema_slope: number;
+  max_atr_ratio: number;
+  min_atr_ratio: number;
+  cooldown_minutes: number;
+  paper_cooldown_minutes: number;
+}
+
+const DEFAULT_RANGE_STRATEGY: RangeStrategyConfig = {
+  enabled: true,
+  paper_enabled: true,
+  live_enabled: false,
+  rsi_buy_threshold: 35,
+  rsi_sell_threshold: 65,
+  bb_period: 20,
+  bb_stddev: 2.0,
+  max_ema_slope: 0.0015,
+  max_atr_ratio: 1.5,
+  min_atr_ratio: 0.5,
+  cooldown_minutes: 15,
+  paper_cooldown_minutes: 30,
+};
+
+// TRADE FLOW WATCHDOG CONFIGURATION
+interface TradeFlowWatchdogConfig {
+  enabled: boolean;
+  shadow_threshold_6h: number;
+  paper_zero_window_hours: number;
+  auto_enable_drought: boolean;
+  auto_enable_range_strategy: boolean;
+}
+
+const DEFAULT_WATCHDOG: TradeFlowWatchdogConfig = {
+  enabled: true,
+  shadow_threshold_6h: 500,
+  paper_zero_window_hours: 24,
+  auto_enable_drought: true,
+  auto_enable_range_strategy: true,
+};
 
 // TEST MODE THRESHOLDS - VERY loose for pipeline validation only
 // These must be MORE permissive than baseline to force trades
@@ -1472,6 +1520,185 @@ function makeDecision(
   return { decision: 'hold', reasons, confidence: 0.5, confidence_components: holdConfidence, gateFailures, nearestPass };
 }
 
+// ===========================================================================
+// BOLLINGER RANGE STRATEGY - Fires in sideways/chop markets
+// This is evaluated SEPARATELY from agent strategies to ensure coverage
+// ===========================================================================
+interface RangeDecisionResult {
+  decision: Decision;
+  reasons: string[];
+  confidence: number;
+  confidence_components: ConfidenceComponents;
+  exitReason?: string;
+}
+
+function makeRangeDecision(
+  market: MarketData,
+  hasPosition: boolean,
+  positionQty: number,
+  config: RangeStrategyConfig,
+  agentTradeCount: number = 0
+): RangeDecisionResult {
+  const reasons: string[] = ['range_strategy'];
+  let confidenceComponents: ConfidenceComponents;
+  
+  // Check regime gates - only trade in flat/chop markets
+  const slopeAbs = Math.abs(market.ema_50_slope);
+  const isFlat = slopeAbs < config.max_ema_slope;
+  const volOk = market.atr_ratio <= config.max_atr_ratio && market.atr_ratio >= config.min_atr_ratio;
+  
+  if (!isFlat || !volOk) {
+    return {
+      decision: 'hold',
+      reasons: ['range_regime_fail'],
+      confidence: 0.3,
+      confidence_components: { signal_confidence: 0.3, maturity_multiplier: 1, final_confidence: 0.3 },
+    };
+  }
+  
+  // Bollinger Band simulation using 24h change as oversold/overbought proxy
+  // In real implementation, we'd use actual BB calculations
+  // For now, using change_24h as a proxy for price relative to bands
+  const change = market.change_24h;
+  
+  // RSI proxy: larger negative change = more oversold
+  // BUY when price dropped significantly (oversold) in a range market
+  const isOversold = change < -(config.rsi_buy_threshold / 10); // Scale: -3.5% for threshold 35
+  const isOverbought = change > (config.rsi_sell_threshold / 10); // Scale: +6.5% for threshold 65
+  
+  if (isOversold && !hasPosition) {
+    reasons.push('bollinger_oversold', 'range_market');
+    // Confidence: deeper oversold = higher confidence
+    const depth = Math.abs(change) / 10; // Normalize
+    const rawConfidence = 0.55 + Math.min(0.25, depth * 0.5);
+    confidenceComponents = calibrateConfidence(rawConfidence, agentTradeCount);
+    return {
+      decision: 'buy',
+      reasons,
+      confidence: confidenceComponents.final_confidence,
+      confidence_components: confidenceComponents,
+    };
+  }
+  
+  if (isOverbought && hasPosition) {
+    reasons.push('bollinger_overbought', 'take_profit');
+    const rawConfidence = 0.6;
+    confidenceComponents = calibrateConfidence(rawConfidence, agentTradeCount);
+    return {
+      decision: 'sell',
+      reasons,
+      confidence: confidenceComponents.final_confidence,
+      confidence_components: confidenceComponents,
+      exitReason: 'range_take_profit',
+    };
+  }
+  
+  return {
+    decision: 'hold',
+    reasons: ['range_no_signal'],
+    confidence: 0.4,
+    confidence_components: { signal_confidence: 0.4, maturity_multiplier: 1, final_confidence: 0.4 },
+  };
+}
+
+// ===========================================================================
+// TRADE FLOW WATCHDOG - Detect and auto-fix signal starvation
+// ===========================================================================
+interface WatchdogResult {
+  is_starved: boolean;
+  shadow_trades_6h: number;
+  paper_orders_24h: number;
+  auto_actions: string[];
+}
+
+async function checkTradeFlowWatchdog(
+  supabase: any,
+  config: TradeFlowWatchdogConfig,
+  currentConfig: Record<string, unknown>,
+  configId: string
+): Promise<WatchdogResult> {
+  if (!config.enabled) {
+    return { is_starved: false, shadow_trades_6h: 0, paper_orders_24h: 0, auto_actions: [] };
+  }
+  
+  const now = new Date();
+  const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+  const paperWindowStart = new Date(now.getTime() - config.paper_zero_window_hours * 60 * 60 * 1000);
+  
+  // Count shadow trades in 6h
+  const { count: shadowCount } = await supabase
+    .from('shadow_trades')
+    .select('*', { count: 'exact', head: true })
+    .gte('created_at', sixHoursAgo.toISOString());
+  
+  // Count paper orders in window
+  const { count: paperCount } = await supabase
+    .from('paper_orders')
+    .select('*', { count: 'exact', head: true })
+    .gte('created_at', paperWindowStart.toISOString())
+    .eq('status', 'filled');
+  
+  const shadowTrades = shadowCount ?? 0;
+  const paperOrders = paperCount ?? 0;
+  const isStarved = shadowTrades >= config.shadow_threshold_6h && paperOrders === 0;
+  
+  const autoActions: string[] = [];
+  
+  if (isStarved) {
+    let needsUpdate = false;
+    const updatedConfig = { ...currentConfig };
+    
+    // Auto-enable drought mode
+    if (config.auto_enable_drought && currentConfig.drought_override !== 'force_on') {
+      updatedConfig.drought_override = 'force_on';
+      autoActions.push('enabled_drought_mode');
+      needsUpdate = true;
+    }
+    
+    // Auto-enable range strategy
+    if (config.auto_enable_range_strategy) {
+      const rangeConfig = (currentConfig.range_strategy ?? {}) as RangeStrategyConfig;
+      if (!rangeConfig.enabled || !rangeConfig.paper_enabled) {
+        updatedConfig.range_strategy = {
+          ...DEFAULT_RANGE_STRATEGY,
+          ...rangeConfig,
+          enabled: true,
+          paper_enabled: true,
+        };
+        autoActions.push('enabled_range_strategy');
+        needsUpdate = true;
+      }
+    }
+    
+    if (needsUpdate) {
+      await supabase.from('system_config').update({
+        config: updatedConfig,
+        updated_at: now.toISOString(),
+      }).eq('id', configId);
+      
+      // Log starvation event
+      await supabase.from('control_events').insert({
+        action: 'signal_starvation',
+        metadata: {
+          shadow_trades_6h: shadowTrades,
+          paper_orders_24h: paperOrders,
+          threshold: config.shadow_threshold_6h,
+          auto_actions: autoActions,
+        },
+      });
+      
+      console.log(`[trade-cycle] SIGNAL STARVATION: ${shadowTrades} shadow trades, ${paperOrders} paper orders. Auto-actions: ${autoActions.join(', ')}`);
+    }
+  }
+  
+  return {
+    is_starved: isStarved,
+    shadow_trades_6h: shadowTrades,
+    paper_orders_24h: paperOrders,
+    auto_actions: autoActions,
+  };
+}
+
 // Generate pattern ID from decision context
 function generatePatternId(
   strategy: string,
@@ -1750,6 +1977,36 @@ Deno.serve(async (req) => {
       default_trailing_pct: shadowConfig?.default_trailing_pct ?? SHADOW_TRADING_DEFAULTS.default_trailing_pct,
     };
     
+    // Load range strategy config
+    const rangeStrategyConfig = systemConfig.range_strategy as Partial<RangeStrategyConfig> | undefined;
+    const RANGE_STRATEGY: RangeStrategyConfig = {
+      ...DEFAULT_RANGE_STRATEGY,
+      ...rangeStrategyConfig,
+    };
+    const rangeEnabled = RANGE_STRATEGY.enabled && (isPaperMode ? RANGE_STRATEGY.paper_enabled : RANGE_STRATEGY.live_enabled);
+    
+    // Load trade flow watchdog config
+    const watchdogConfig = systemConfig.trade_flow_watchdog as Partial<TradeFlowWatchdogConfig> | undefined;
+    const WATCHDOG: TradeFlowWatchdogConfig = {
+      ...DEFAULT_WATCHDOG,
+      ...watchdogConfig,
+    };
+    
+    // Check trade flow watchdog (auto-enables drought/range if starved)
+    const { data: configRow } = await supabase
+      .from('system_config')
+      .select('id')
+      .limit(1)
+      .single();
+    const configId = configRow?.id;
+    
+    if (configId) {
+      const watchdogResult = await checkTradeFlowWatchdog(supabase, WATCHDOG, systemConfig, configId);
+      if (watchdogResult.is_starved) {
+        console.log(`[trade-cycle] WATCHDOG: Starvation detected (${watchdogResult.shadow_trades_6h} shadows, ${watchdogResult.paper_orders_24h} papers)`);
+      }
+    }
+    
     // Load UI-configured strategy thresholds if enabled
     const strategyThresholds = systemConfig.strategy_thresholds as {
       use_config_thresholds?: boolean;
@@ -1881,6 +2138,78 @@ Deno.serve(async (req) => {
       });
       
       console.log(`[trade-cycle] ${sym}: ${result.decision} (signal=${result.confidence_components.signal_confidence.toFixed(2)}, maturity=${result.confidence_components.maturity_multiplier.toFixed(2)}, final=${result.confidence.toFixed(2)}, regime=${regimeContext.gating_regime}, reasons=${result.reasons.join(',')})`);
+    }
+    
+    // ===========================================================================
+    // RANGE STRATEGY: Evaluate Bollinger Mean Reversion for all symbols
+    // This runs INDEPENDENTLY of agent strategies to ensure range market coverage
+    // ===========================================================================
+    if (rangeEnabled) {
+      console.log(`[trade-cycle] Range strategy enabled, evaluating ${symbolsToEvaluate.length} symbols`);
+      
+      // Check per-symbol cooldown for range trades
+      const cooldownMinutes = isPaperMode ? RANGE_STRATEGY.paper_cooldown_minutes : RANGE_STRATEGY.cooldown_minutes;
+      const cooldownStart = new Date(Date.now() - cooldownMinutes * 60 * 1000).toISOString();
+      
+      for (const sym of symbolsToEvaluate) {
+        const mkt = marketBySymbol.get(sym);
+        if (!mkt) continue;
+        
+        const age = getDataAge(mkt.updated_at);
+        if (age > MAX_MARKET_AGE_SECONDS) continue;
+        
+        // Check symbol cooldown - don't spam range trades
+        const { count: recentRangeTrades } = await supabase
+          .from('paper_orders')
+          .select('*', { count: 'exact', head: true })
+          .eq('symbol', sym)
+          .gte('created_at', cooldownStart)
+          .eq('status', 'filled');
+        
+        if ((recentRangeTrades ?? 0) > 0) {
+          console.log(`[trade-cycle] ${sym}: Range cooldown active (${recentRangeTrades} trades in ${cooldownMinutes}m)`);
+          continue;
+        }
+        
+        const posQty = positionBySymbol.get(sym) ?? 0;
+        const hasPos = posQty > 0;
+        const regimeContext = classifyMarketRegime(mkt);
+        
+        const rangeResult = makeRangeDecision(mkt, hasPos, posQty, RANGE_STRATEGY, agentTradeCount);
+        
+        if (rangeResult.decision !== 'hold') {
+          // Add as candidate - range strategy can produce trades even when agent strategies don't
+          const existingCandidate = candidates.find(c => c.symbol === sym);
+          
+          // Only use range result if agent didn't already find a signal OR range confidence is higher
+          if (!existingCandidate || existingCandidate.decision === 'hold' || rangeResult.confidence > existingCandidate.confidence) {
+            console.log(`[trade-cycle] ${sym}: RANGE ${rangeResult.decision.toUpperCase()} (conf=${rangeResult.confidence.toFixed(2)}, reasons=${rangeResult.reasons.join(',')})`);
+            
+            // Replace or add candidate
+            const newCandidate = {
+              symbol: sym,
+              market: mkt,
+              decision: rangeResult.decision,
+              reasons: rangeResult.reasons,
+              confidence: rangeResult.confidence,
+              confidence_components: rangeResult.confidence_components,
+              exitReason: rangeResult.exitReason,
+              positionQty: posQty,
+              gateFailures: [],
+              nearestPass: undefined,
+              regimeContext,
+              regimeBlocked: false,
+            };
+            
+            if (existingCandidate) {
+              const idx = candidates.indexOf(existingCandidate);
+              candidates[idx] = newCandidate;
+            } else {
+              candidates.push(newCandidate);
+            }
+          }
+        }
+      }
     }
     
     // Pick best actionable candidate

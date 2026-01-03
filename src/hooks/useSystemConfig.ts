@@ -72,6 +72,29 @@ export interface StrategyThresholdsConfig {
   };
 }
 
+export interface RangeStrategyConfig {
+  enabled?: boolean;
+  paper_enabled?: boolean;
+  live_enabled?: boolean;
+  rsi_buy_threshold?: number;
+  rsi_sell_threshold?: number;
+  bb_period?: number;
+  bb_stddev?: number;
+  max_ema_slope?: number;
+  max_atr_ratio?: number;
+  min_atr_ratio?: number;
+  cooldown_minutes?: number;
+  paper_cooldown_minutes?: number;
+}
+
+export interface TradeFlowWatchdogConfig {
+  enabled?: boolean;
+  shadow_threshold_6h?: number;
+  paper_zero_window_hours?: number;
+  auto_enable_drought?: boolean;
+  auto_enable_range_strategy?: boolean;
+}
+
 export interface SystemConfig {
   capital?: {
     active_pool_pct?: number;
@@ -110,6 +133,8 @@ export interface SystemConfig {
   loss_reaction?: LossReactionConfig;
   live_cap_usd?: number;
   strategy_thresholds?: StrategyThresholdsConfig;
+  range_strategy?: RangeStrategyConfig;
+  trade_flow_watchdog?: TradeFlowWatchdogConfig;
 }
 
 export function useSystemConfig() {

@@ -251,6 +251,12 @@ interface RangeStrategyConfig {
   cooldown_minutes: number;
   paper_cooldown_minutes: number;
   force_entry_for_test?: boolean; // Force entry on any move > 0.5% (paper only, for testing plumbing)
+  // Starter Position Logic (Phase 6)
+  starter_enabled?: boolean;            // Enable starter position seeding
+  starter_flat_hours?: number;          // Hours flat before triggering (default: 6)
+  starter_size_pct?: number;            // Position size as % of equity (default: 0.25%)
+  starter_max_symbols?: number;         // Max symbols to seed at once (default: 2)
+  starter_mid_band_tolerance?: number;  // Max % from "mid" to trigger (default: 2.0%)
 }
 
 const DEFAULT_RANGE_STRATEGY: RangeStrategyConfig = {
@@ -267,6 +273,12 @@ const DEFAULT_RANGE_STRATEGY: RangeStrategyConfig = {
   cooldown_minutes: 15,
   paper_cooldown_minutes: 5, // Faster for testing (was 30)
   force_entry_for_test: false,
+  // Starter defaults
+  starter_enabled: true,
+  starter_flat_hours: 6,
+  starter_size_pct: 0.25,
+  starter_max_symbols: 2,
+  starter_mid_band_tolerance: 2.0,
 };
 
 // TRADE FLOW WATCHDOG CONFIGURATION
@@ -1631,6 +1643,129 @@ function makeRangeDecision(
 }
 
 // ===========================================================================
+// STARTER POSITION LOGIC - Seed inventory when flat for too long
+// Prevents "perma-flat" state where range strategy can't SELL (nothing to sell)
+// ===========================================================================
+interface StarterCandidate {
+  symbol: string;
+  market: MarketData;
+  reason: string;
+  confidence: number;
+}
+
+interface StarterCheckResult {
+  should_seed: boolean;
+  candidates: StarterCandidate[];
+  flat_symbols: string[];
+  hours_flat: number;
+}
+
+async function checkStarterPositions(
+  supabase: any,
+  accountId: string,
+  flatSymbols: string[],      // Symbols with qty = 0
+  marketBySymbol: Map<string, MarketData>,
+  config: RangeStrategyConfig,
+  isPaperMode: boolean
+): Promise<StarterCheckResult> {
+  const result: StarterCheckResult = {
+    should_seed: false,
+    candidates: [],
+    flat_symbols: flatSymbols,
+    hours_flat: 0,
+  };
+  
+  // Must be enabled and in paper mode
+  if (!config.starter_enabled || !isPaperMode) {
+    return result;
+  }
+  
+  if (flatSymbols.length === 0) {
+    return result; // Already have positions, no need for starter
+  }
+  
+  const flatHoursThreshold = config.starter_flat_hours ?? 6;
+  const midBandTolerance = config.starter_mid_band_tolerance ?? 2.0;
+  const maxSymbols = config.starter_max_symbols ?? 2;
+  
+  // Check how long we've been completely flat (no trades)
+  const { data: recentTrades } = await supabase
+    .from('paper_orders')
+    .select('created_at, symbol')
+    .eq('account_id', accountId)
+    .eq('status', 'filled')
+    .order('created_at', { ascending: false })
+    .limit(1);
+  
+  let hoursFlat = 999; // Default to very long if no trades ever
+  if (recentTrades && recentTrades.length > 0) {
+    const lastTradeTime = new Date(recentTrades[0].created_at);
+    hoursFlat = (Date.now() - lastTradeTime.getTime()) / (1000 * 60 * 60);
+  }
+  
+  result.hours_flat = hoursFlat;
+  
+  // Not flat long enough yet
+  if (hoursFlat < flatHoursThreshold) {
+    return result;
+  }
+  
+  console.log(`[starter-position] Flat for ${hoursFlat.toFixed(1)}h (threshold: ${flatHoursThreshold}h), checking ${flatSymbols.length} symbols`);
+  
+  // Evaluate each flat symbol for starter eligibility
+  const candidates: StarterCandidate[] = [];
+  
+  for (const sym of flatSymbols) {
+    const market = marketBySymbol.get(sym);
+    if (!market) continue;
+    
+    // Check regime gates (same as range strategy)
+    const slopeAbs = Math.abs(market.ema_50_slope);
+    const isFlat = slopeAbs < config.max_ema_slope;
+    const volOk = market.atr_ratio <= config.max_atr_ratio && market.atr_ratio >= config.min_atr_ratio;
+    
+    if (!isFlat || !volOk) {
+      console.log(`[starter-position] ${sym}: Regime fail (slope=${slopeAbs.toFixed(4)}, atr=${market.atr_ratio.toFixed(2)})`);
+      continue;
+    }
+    
+    // Check if price is near "mid-band" (small 24h change = near mean)
+    const changeAbs = Math.abs(market.change_24h);
+    const nearMid = changeAbs <= midBandTolerance;
+    
+    if (!nearMid) {
+      console.log(`[starter-position] ${sym}: Too far from mid (change=${market.change_24h.toFixed(2)}%, tolerance=${midBandTolerance}%)`);
+      continue;
+    }
+    
+    // Good candidate!
+    const confidence = 0.50 + (0.10 * (1 - changeAbs / midBandTolerance)); // Higher confidence when closer to mid
+    candidates.push({
+      symbol: sym,
+      market,
+      reason: `starter_seed_${hoursFlat.toFixed(0)}h_flat`,
+      confidence,
+    });
+    
+    console.log(`[starter-position] ${sym}: ELIGIBLE (change=${market.change_24h.toFixed(2)}%, conf=${confidence.toFixed(2)})`);
+  }
+  
+  // Sort by liquidity (volume) and take top N
+  const sortedCandidates = candidates
+    .sort((a, b) => b.market.volume_24h - a.market.volume_24h)
+    .slice(0, maxSymbols);
+  
+  result.should_seed = sortedCandidates.length > 0;
+  result.candidates = sortedCandidates;
+  
+  if (result.should_seed) {
+    console.log(`[starter-position] SEEDING ${sortedCandidates.length} starter positions: ${sortedCandidates.map(c => c.symbol).join(', ')}`);
+  }
+  
+  return result;
+}
+
+// ===========================================================================
 // TRADE FLOW WATCHDOG - Detect and auto-fix signal starvation
 // ===========================================================================
 interface WatchdogResult {
@@ -2236,6 +2371,72 @@ Deno.serve(async (req) => {
             } else {
               candidates.push(newCandidate);
             }
+          }
+        }
+      }
+    }
+    
+    // ===========================================================================
+    // STARTER POSITION LOGIC: Seed inventory when flat for too long
+    // Prevents "perma-flat" where range strategy can't exit (nothing to sell)
+    // ===========================================================================
+    if (rangeEnabled && isPaperMode) {
+      // Find symbols where we're flat (no position)
+      const flatSymbols = symbolsToEvaluate.filter(sym => {
+        const posQty = positionBySymbol.get(sym) ?? 0;
+        return posQty === 0;
+      });
+      
+      // Only check starter if no actionable candidates from normal strategies
+      const currentActionable = candidates.filter(c => c.decision !== 'hold');
+      
+      if (currentActionable.length === 0 && flatSymbols.length > 0) {
+        const starterResult = await checkStarterPositions(
+          supabase,
+          paperAccount.id,
+          flatSymbols,
+          marketBySymbol,
+          RANGE_STRATEGY,
+          isPaperMode
+        );
+        
+        if (starterResult.should_seed && starterResult.candidates.length > 0) {
+          // Add starter candidates as BUY decisions
+          for (const starter of starterResult.candidates) {
+            const regimeContext = classifyMarketRegime(starter.market);
+            
+            // Log control event for starter seeding
+            await supabase.from('control_events').insert({
+              action: 'starter_position_triggered',
+              metadata: {
+                symbol: starter.symbol,
+                reason: starter.reason,
+                hours_flat: starterResult.hours_flat,
+                confidence: starter.confidence,
+                price: starter.market.price,
+                change_24h: starter.market.change_24h,
+              },
+            });
+            
+            candidates.push({
+              symbol: starter.symbol,
+              market: starter.market,
+              decision: 'buy' as Decision,
+              reasons: ['starter_position', starter.reason],
+              confidence: starter.confidence,
+              confidence_components: {
+                signal_confidence: starter.confidence,
+                maturity_multiplier: 1,
+                final_confidence: starter.confidence,
+              },
+              positionQty: 0,
+              gateFailures: [],
+              nearestPass: undefined,
+              regimeContext,
+              regimeBlocked: false,
+            });
+            
+            console.log(`[trade-cycle] STARTER BUY added: ${starter.symbol} (conf=${starter.confidence.toFixed(2)}, reason=${starter.reason})`);
           }
         }
       }

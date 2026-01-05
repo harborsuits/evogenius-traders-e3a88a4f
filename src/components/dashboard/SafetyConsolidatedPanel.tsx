@@ -136,7 +136,10 @@ export function SafetyConsolidatedPanel({ compact }: { compact?: boolean }) {
         <ThresholdsTab state={state} />
       )}
       {activeTab === 'tuning' && (
-        <StrategyThresholdsEditor />
+        <div className="space-y-4">
+          <HoldReasonsWidget compact />
+          <StrategyThresholdsEditor />
+        </div>
       )}
       {activeTab === 'range' && (
         <RangeStrategyPanel />
@@ -433,3 +436,4 @@ function ThresholdsTab({ state }: { state: LossReactionState }) {
 import { useSystemConfig } from '@/hooks/useSystemConfig';
 import { StrategyThresholdsEditor } from './StrategyThresholdsEditor';
 import { RangeStrategyPanel } from './RangeStrategyPanel';
+import { HoldReasonsWidget } from './HoldReasonsWidget';

@@ -226,6 +226,7 @@ interface RealizedPnLResult {
   dailyPnL: Map<string, number>;
   equityCurve: number[];
   tradePnLs: number[];
+  tradeNotionals: number[];  // Track actual notional per trade for BPS calc
 }
 
 function calculateRealizedPnL(
@@ -245,6 +246,7 @@ function calculateRealizedPnL(
   let grossProfit = 0;
   const dailyPnL = new Map<string, number>();
   const tradePnLs: number[] = [];
+  const tradeNotionals: number[] = [];  // Track actual notional per trade
   
   // Build equity curve
   let equity = startingCapital;
@@ -266,6 +268,10 @@ function calculateRealizedPnL(
       pos.qty += filled_qty;
       pos.avg_entry = pos.qty > 0 ? pos.cost_basis / pos.qty : 0;
       
+      // Track actual notional for this trade
+      const notional = filled_price * filled_qty;
+      tradeNotionals.push(notional);
+      
       // No realized PnL on buy, but track the fee as a "cost"
       tradePnLs.push(-fee);
       dailyPnL.set(date, (dailyPnL.get(date) ?? 0) - fee);
@@ -274,6 +280,10 @@ function calculateRealizedPnL(
     } else if (side === 'sell') {
       // SELL: Calculate realized PnL using average entry
       const sellQty = Math.min(filled_qty, pos.qty);
+      
+      // Track actual notional for this trade
+      const notional = filled_price * sellQty;
+      tradeNotionals.push(notional);
       
       if (sellQty > 0 && pos.avg_entry > 0) {
         const proceeds = filled_price * sellQty;
@@ -312,6 +322,7 @@ function calculateRealizedPnL(
     dailyPnL,
     equityCurve,
     tradePnLs,
+    tradeNotionals,
   };
 }
 
@@ -409,16 +420,21 @@ function calculateShadowPerformance(trades: ShadowTradeRecord[]): ShadowPerforma
   };
 }
 
-// Blend real and shadow fitness scores
-// When real trades are sparse, shadow trades provide more signal
+// ===========================================================================
+// PAPER vs SHADOW BLENDING (80/20 when mature)
+// ===========================================================================
+// Goal: Paper trades dominate selection, shadow provides signal quality boost
+// Rule: If paper is losing, cap shadow contribution (can't rescue losers)
+// ===========================================================================
 function blendFitnessScores(
   realFitness: number,
   realTrades: number,
   shadowFitness: number,
   shadowTrades: number
 ): { blended_score: number; real_weight: number; shadow_weight: number; blend_reason: string } {
-  const MIN_REAL_TRADES = 10;  // Need 10+ real trades for full weight
-  const MIN_SHADOW_TRADES = 2; // Need 2+ shadow trades to contribute (lowered for warmup)
+  const MATURE_TRADES = 20;      // Need 20+ real trades for full 80/20 blend
+  const MIN_SHADOW_TRADES = 2;   // Need 2+ shadow trades to contribute
+  const LOSER_SHADOW_CAP = 0.05; // If paper is losing, shadow can only add +0.05 max
   
   // If no shadow trades, use real only
   if (shadowTrades < MIN_SHADOW_TRADES) {
@@ -433,29 +449,39 @@ function blendFitnessScores(
   // If no real trades, use shadow only (but cap confidence)
   if (realTrades === 0) {
     return {
-      blended_score: shadowFitness * 0.8, // 20% penalty for shadow-only
+      blended_score: shadowFitness * 0.6,  // 40% penalty for shadow-only (cautious)
       real_weight: 0.0,
-      shadow_weight: 0.8,
+      shadow_weight: 0.6,
       blend_reason: 'shadow_only',
     };
   }
   
-  // Blend based on trade counts
-  // More real trades = more weight on real performance
-  const realMaturity = Math.min(1, realTrades / MIN_REAL_TRADES);
+  // Calculate maturity-based weights
+  // Target: 80% paper, 20% shadow when mature (20+ trades)
+  // Early: 60% paper, 40% shadow to allow more shadow signal
+  const maturity = Math.min(1, realTrades / MATURE_TRADES);
   
-  // Target blend: 30% real, 70% shadow when real trades are sparse
-  // As real trades increase, shift to 70% real, 30% shadow
-  const realWeight = 0.3 + (realMaturity * 0.4); // 0.3 -> 0.7
-  const shadowWeight = 1 - realWeight;           // 0.7 -> 0.3
+  // Mature blend: 80/20 paper/shadow
+  // Early blend: 60/40 paper/shadow
+  const baseRealWeight = 0.6 + (maturity * 0.2);  // 0.6 -> 0.8
+  const baseShadowWeight = 1 - baseRealWeight;    // 0.4 -> 0.2
   
-  const blendedScore = (realFitness * realWeight) + (shadowFitness * shadowWeight);
+  // CRITICAL: Cap shadow contribution if paper is losing
+  // Prevents "paper losers with good shadow vibes" from becoming elites
+  let shadowContribution = shadowFitness * baseShadowWeight;
+  if (realFitness < 0) {
+    shadowContribution = Math.min(shadowContribution, LOSER_SHADOW_CAP);
+    console.log(`[fitness] Paper losing (${realFitness.toFixed(3)}), capping shadow contribution to ${LOSER_SHADOW_CAP}`);
+  }
+  
+  const blendedScore = (realFitness * baseRealWeight) + shadowContribution;
+  const effectiveShadowWeight = shadowContribution / Math.max(0.001, shadowFitness);
   
   return {
     blended_score: blendedScore,
-    real_weight: realWeight,
-    shadow_weight: shadowWeight,
-    blend_reason: realTrades >= MIN_REAL_TRADES ? 'mature_blend' : 'early_blend',
+    real_weight: baseRealWeight,
+    shadow_weight: effectiveShadowWeight,
+    blend_reason: realTrades >= MATURE_TRADES ? 'mature_blend_80_20' : 'early_blend_60_40',
   };
 }
 
@@ -545,9 +571,46 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
   // Normalize sharpe to 0..1 range for weighting (sharpe of 2 = excellent)
   const normalizedSharpe = (sharpe + 3) / 6; // Maps -3..3 to 0..1
   
-  // PnL per trade (crucial for stopping churn)
-  const pnlPerTrade = learnableTrades.length > 0 
-    ? pnlResult.realizedPnl / learnableTrades.length 
+  // ===========================================================================
+  // FIX B: PROFIT GATE - Filter out neutral noise trades BEFORE metrics
+  // ===========================================================================
+  // Only count trades that are NOT neutral noise for fitness calculations
+  // This prevents "busy losers" from diluting the signal
+  // ===========================================================================
+  
+  // Build filtered arrays using actual notionals (FIX A)
+  const filteredPnLs: number[] = [];
+  const filteredNotionals: number[] = [];
+  let edgeTradeCount = 0;
+  let noiseTradeCount = 0;
+  
+  for (let i = 0; i < pnlResult.tradePnLs.length; i++) {
+    const pnl = pnlResult.tradePnLs[i];
+    const notional = pnlResult.tradeNotionals[i] ?? 100;  // Fallback if array mismatch
+    
+    if (isNeutralNoise(pnl)) {
+      noiseTradeCount++;
+      continue;  // Skip noise trades entirely
+    }
+    
+    filteredPnLs.push(pnl);
+    filteredNotionals.push(notional);
+    
+    // Track trades with actual edge (using real notional)
+    if (hasEdge(pnl, notional)) {
+      edgeTradeCount++;
+    }
+  }
+  
+  console.log(`[fitness] Trade quality: ${edgeTradeCount}/${filteredPnLs.length} have edge, ${noiseTradeCount} noise filtered out`);
+  
+  // Use filtered trade count for metrics (not raw learnableTrades.length)
+  const effectiveTradeCount = filteredPnLs.length;
+  const filteredRealizedPnl = filteredPnLs.reduce((sum, p) => sum + p, 0);
+  
+  // PnL per trade using FILTERED trades (crucial for stopping churn)
+  const pnlPerTrade = effectiveTradeCount > 0 
+    ? filteredRealizedPnl / effectiveTradeCount 
     : 0;
   const normalizedPnlPerTrade = normalizePnL(pnlPerTrade, 0.5); // Scale for per-trade
   
@@ -555,11 +618,10 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
   const feeBurdenRaw = pnlResult.totalFees / Math.max(1, Math.abs(pnlResult.realizedPnl) + pnlResult.totalFees);
   const feeBurdenPenalty = Math.min(1, feeBurdenRaw);
   
-  // Trade count penalty (light - just discourages spam)
-  // Kicks in after 20 trades/week (reasonable for learning)
+  // Trade count penalty using FILTERED count (penalize spam, not edge trades)
   const REASONABLE_TRADE_COUNT = 20;
-  const tradeCountPenalty = learnableTrades.length > REASONABLE_TRADE_COUNT
-    ? Math.min(0.3, ((learnableTrades.length - REASONABLE_TRADE_COUNT) / 100) * 0.15)
+  const tradeCountPenalty = effectiveTradeCount > REASONABLE_TRADE_COUNT
+    ? Math.min(0.3, ((effectiveTradeCount - REASONABLE_TRADE_COUNT) / 100) * 0.15)
     : 0;
   
   // NEW FITNESS FORMULA - profit is king
@@ -574,22 +636,16 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
     (overtradingPenalty * 0.10) -              // Legacy overtrading
     (diversityPenalty);                        // Symbol fixation
   
-  // MINIMUM TRADES GATE: Penalize agents with insufficient sample size
+  // MINIMUM TRADES GATE using FILTERED trades
   // Raised to 20 to ensure statistical significance
   const MIN_TRADES_FOR_FULL_FITNESS = 20;
-  if (learnableTrades.length < MIN_TRADES_FOR_FULL_FITNESS) {
-    const samplePenalty = 0.5 * (1 - learnableTrades.length / MIN_TRADES_FOR_FULL_FITNESS);
+  if (effectiveTradeCount < MIN_TRADES_FOR_FULL_FITNESS) {
+    const samplePenalty = 0.5 * (1 - effectiveTradeCount / MIN_TRADES_FOR_FULL_FITNESS);
     fitnessScore *= (1 - samplePenalty);  // Up to 50% reduction for low trades
   }
   
-  // PROFIT GATE: Count "learnable" vs "noise" trades for diagnostics
-  // Filter trades using profit gate
-  const learnableWithEdge = pnlResult.tradePnLs.filter(pnl => !isNeutralNoise(pnl));
-  const profitableWithEdge = pnlResult.tradePnLs.filter(pnl => hasEdge(pnl, 100)); // Assume $100 notional for BPS calc
-  console.log(`[fitness] Trade quality: ${profitableWithEdge.length}/${learnableTrades.length} have edge, ${pnlResult.tradePnLs.length - learnableWithEdge.length} are noise`);
-  
   // Log the new fitness components for debugging
-  console.log(`[fitness] V2 components: pnl=${normalizedPnl.toFixed(3)}, pnl/trade=${normalizedPnlPerTrade.toFixed(3)}, sharpe=${normalizedSharpe.toFixed(3)}, feeBurden=${feeBurdenPenalty.toFixed(3)}, tradeCountPen=${tradeCountPenalty.toFixed(3)}, final=${fitnessScore.toFixed(4)}`);
+  console.log(`[fitness] V2 components: pnl=${normalizedPnl.toFixed(3)}, pnl/trade=${normalizedPnlPerTrade.toFixed(3)}, sharpe=${normalizedSharpe.toFixed(3)}, feeBurden=${feeBurdenPenalty.toFixed(3)}, tradeCountPen=${tradeCountPenalty.toFixed(3)}, effectiveTrades=${effectiveTradeCount}/${learnableTrades.length}, final=${fitnessScore.toFixed(4)}`);
 
   // Phase 6B: Calculate net-cost metrics
   const netPnlAfterCosts = pnlResult.realizedPnl; // Already includes fees in calculation

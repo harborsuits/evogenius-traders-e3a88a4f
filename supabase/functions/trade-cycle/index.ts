@@ -2152,16 +2152,21 @@ Deno.serve(async (req) => {
     console.log(`[trade-cycle] Agent ${agent.id.substring(0, 8)} evaluating ${symbolsToEvaluate.length} symbols: ${symbolsToEvaluate.join(', ')}`);
     
     // Get test mode flag and adaptive tuning config
+    // NOTE: Config is ALWAYS fetched fresh each cycle (no caching)
     const { data: configData } = await supabase
       .from('system_config')
-      .select('config')
+      .select('config, updated_at')
       .limit(1)
       .single();
     
     const systemConfig = (configData?.config ?? {}) as Record<string, unknown>;
+    const configUpdatedAt = configData?.updated_at ?? 'unknown';
     const testMode = systemConfig.strategy_test_mode === true;
     const tuning = systemConfig.adaptive_tuning as AdaptiveTuningConfig | undefined;
     const offsets = tuning?.offsets ?? {};
+    
+    // Log config version for debugging staleness issues
+    console.log(`[trade-cycle] Config loaded (updated_at: ${configUpdatedAt}) | min_confidence: ${(systemConfig as any)?.strategy_thresholds?.baseline?.min_confidence ?? BASELINE_THRESHOLDS.min_confidence}`);
     
     // Load shadow trading config (with defaults)
     const shadowConfig = systemConfig.shadow_trading as Partial<ShadowTradingConfig> | undefined;

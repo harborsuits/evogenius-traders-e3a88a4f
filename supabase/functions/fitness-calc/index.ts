@@ -882,6 +882,39 @@ Deno.serve(async (req) => {
     let newGenerationId: string | null = null;
     let liquidatedPositions: { symbol: string; qty: number; price: number }[] = [];
     
+    // =========================================================================
+    // UPDATE GENERATION SUMMARY (CRITICAL - MUST HAPPEN BEFORE END)
+    // =========================================================================
+    // This is the missing link! We must write aggregated fitness/pnl/trades
+    // to the generations table so evolution can see the results.
+    // =========================================================================
+    const genTotalPnl = results.reduce((sum, r) => sum + r.fitness.realized_pnl, 0);
+    const genTotalTrades = learnableOrders.length;
+    const agentsWithTrades = results.filter(r => r.fitness.total_trades > 0);
+    const genAvgFitness = agentsWithTrades.length > 0
+      ? agentsWithTrades.reduce((sum, r) => sum + r.blended.blended_score, 0) / agentsWithTrades.length
+      : null;
+    const genMaxDrawdown = accountLevelDrawdown * 100; // Convert to percentage for storage
+    
+    console.log(`[fitness-calc] 🧬 GENERATION SUMMARY: pnl=$${genTotalPnl.toFixed(2)}, trades=${genTotalTrades}, avg_fitness=${genAvgFitness?.toFixed(4) ?? 'null'}, drawdown=${genMaxDrawdown.toFixed(2)}%`);
+    
+    // Update generations table with computed values
+    const { error: genUpdateError } = await supabase
+      .from('generations')
+      .update({
+        total_pnl: genTotalPnl,
+        total_trades: genTotalTrades,
+        avg_fitness: genAvgFitness,
+        max_drawdown: genMaxDrawdown,
+      })
+      .eq('id', generationId);
+    
+    if (genUpdateError) {
+      console.error('[fitness-calc] ❌ FAILED to update generation summary:', genUpdateError);
+    } else {
+      console.log('[fitness-calc] ✅ Generation summary written to DB');
+    }
+
     if (endCheck.should_end && endCheck.reason) {
       console.log(`[fitness-calc] Generation ${generation.generation_number} ending: ${endCheck.reason}`);
       

@@ -5,6 +5,29 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Helper function for auth check
+async function checkAuth(req: Request): Promise<{ ok: boolean; error?: string }> {
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return { ok: false, error: 'Unauthorized' };
+  }
+
+  const supabaseAuth = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+    { global: { headers: { Authorization: authHeader } } }
+  );
+
+  const token = authHeader.replace('Bearer ', '');
+  const { data: claimsData, error: claimsError } = await supabaseAuth.auth.getUser(token);
+
+  if (claimsError || !claimsData?.user) {
+    return { ok: false, error: 'Unauthorized' };
+  }
+
+  return { ok: true };
+}
+
 // ===========================================================================
 // FITNESS V1 CALCULATION (CORRECTED)
 // ===========================================================================
@@ -615,6 +638,16 @@ async function checkGenerationEnd(
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
+  }
+
+  // === AUTH CHECK ===
+  const authResult = await checkAuth(req);
+  if (!authResult.ok) {
+    console.log('[fitness-calc] Auth failed');
+    return new Response(
+      JSON.stringify({ ok: false, error: 'Unauthorized' }),
+      { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   }
 
   const supabase = createClient(

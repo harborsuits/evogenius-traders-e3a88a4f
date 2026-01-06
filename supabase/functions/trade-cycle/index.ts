@@ -238,6 +238,27 @@ const EXPLORER_CONSTRAINTS = {
   min_confidence: 0.45,        // Lowered from 0.55 to allow more explorer signals
 };
 
+// ===========================================================================
+// SYMBOL COOLDOWN: Prevent churn and fee bleed
+// ===========================================================================
+// After any fill on a symbol, no new entry for cooldown_minutes UNLESS:
+// - Confidence is very high (>= high_confidence_bypass)
+// - It's an exit/sell (always allowed to protect capital)
+// ===========================================================================
+const SYMBOL_COOLDOWN_DEFAULTS = {
+  enabled: true,
+  cooldown_minutes: 15,           // 15 min cooldown per symbol after fill
+  high_confidence_bypass: 0.75,   // Bypass cooldown if confidence >= 75%
+  apply_to_sells: false,          // Never block exits
+};
+
+interface SymbolCooldownConfig {
+  enabled: boolean;
+  cooldown_minutes: number;
+  high_confidence_bypass: number;
+  apply_to_sells: boolean;
+}
+
 // SHADOW TRADING CONFIGURATION (defaults - overridden by system_config.shadow_trading)
 const SHADOW_TRADING_DEFAULTS = {
   enabled: true,
@@ -2126,6 +2147,9 @@ Deno.serve(async (req) => {
     for (const p of positions ?? []) {
       positionBySymbol.set(p.symbol, p.qty);
     }
+    
+    // Cooldown tracking placeholder - will be populated after config is loaded
+    let cooldownBySymbol = new Map<string, { in_cooldown: boolean; minutes_remaining: number; last_fill_at: string }>();
 
     // 8. Pick one agent for this cycle
     const agentIndex = Math.floor(Date.now() / 60000) % agents.length;
@@ -2178,6 +2202,48 @@ Deno.serve(async (req) => {
       default_stop_pct: shadowConfig?.default_stop_pct ?? SHADOW_TRADING_DEFAULTS.default_stop_pct,
       default_trailing_pct: shadowConfig?.default_trailing_pct ?? SHADOW_TRADING_DEFAULTS.default_trailing_pct,
     };
+    
+    // ===========================================================================
+    // SYMBOL COOLDOWN: Check recent fills to prevent churn
+    // ===========================================================================
+    const cooldownConfig = systemConfig.symbol_cooldown as Partial<SymbolCooldownConfig> | undefined;
+    const SYMBOL_COOLDOWN: SymbolCooldownConfig = {
+      ...SYMBOL_COOLDOWN_DEFAULTS,
+      ...cooldownConfig,
+    };
+    
+    if (SYMBOL_COOLDOWN.enabled) {
+      const cooldownCutoff = new Date(Date.now() - SYMBOL_COOLDOWN.cooldown_minutes * 60 * 1000).toISOString();
+      
+      const { data: recentOrders } = await supabase
+        .from('paper_orders')
+        .select('id, symbol, filled_at')
+        .eq('account_id', paperAccount.id)
+        .eq('status', 'filled')
+        .gte('filled_at', cooldownCutoff)
+        .order('filled_at', { ascending: false });
+      
+      for (const order of recentOrders ?? []) {
+        if (!cooldownBySymbol.has(order.symbol)) {
+          const fillTime = new Date(order.filled_at).getTime();
+          const elapsed = (Date.now() - fillTime) / (1000 * 60);
+          const remaining = SYMBOL_COOLDOWN.cooldown_minutes - elapsed;
+          
+          cooldownBySymbol.set(order.symbol, {
+            in_cooldown: remaining > 0,
+            minutes_remaining: Math.max(0, Math.round(remaining)),
+            last_fill_at: order.filled_at,
+          });
+        }
+      }
+      
+      const inCooldown = Array.from(cooldownBySymbol.entries())
+        .filter(([, c]) => c.in_cooldown)
+        .map(([sym, c]) => `${sym}(${c.minutes_remaining}m)`);
+      if (inCooldown.length > 0) {
+        console.log(`[trade-cycle] Symbol cooldowns active: ${inCooldown.join(', ')}`);
+      }
+    }
     
     // Load range strategy config
     const rangeStrategyConfig = systemConfig.range_strategy as Partial<RangeStrategyConfig> | undefined;

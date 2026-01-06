@@ -91,6 +91,41 @@ function isLearnableTrade(tags: { test_mode?: boolean; entry_reason?: string[] }
   return true;
 }
 
+// ===========================================================================
+// PROFIT GATE: Only count trades with meaningful edge for evolution
+// ===========================================================================
+// A trade only contributes to fitness/learning if:
+// 1. Net PnL >= min_net_pnl ($0.05 default) - covers fee + slippage + edge
+// 2. Prevents "busy loser" breeding where agents churn with no edge
+// ===========================================================================
+const PROFIT_GATE = {
+  min_net_pnl: 0.05,           // $0.05 minimum profit per trade to count as "success"
+  min_edge_bps: 5,             // 5 bps minimum edge after costs
+  count_losses: true,          // Still count losses for learning (they teach what NOT to do)
+  exclude_neutral: true,       // Exclude tiny trades that are basically noise
+  neutral_threshold: 0.02,     // Trades between -$0.02 and +$0.02 are noise
+};
+
+// Check if a trade has meaningful edge (for success counting)
+function hasEdge(tradePnl: number, notionalValue: number): boolean {
+  // Hard floor: must make at least min_net_pnl
+  if (tradePnl >= PROFIT_GATE.min_net_pnl) return true;
+  
+  // BPS check: tradePnl / notional * 10000 >= min_edge_bps
+  if (notionalValue > 0) {
+    const edgeBps = (tradePnl / notionalValue) * 10000;
+    if (edgeBps >= PROFIT_GATE.min_edge_bps) return true;
+  }
+  
+  return false;
+}
+
+// Check if trade is neutral noise (should be excluded from learning)
+function isNeutralNoise(tradePnl: number): boolean {
+  if (!PROFIT_GATE.exclude_neutral) return false;
+  return Math.abs(tradePnl) < PROFIT_GATE.neutral_threshold;
+}
+
 // Normalize PnL using tanh to get stable -1..1 range
 function normalizePnL(pnl: number, scale: number = 50): number {
   return Math.tanh(pnl / scale);
@@ -494,26 +529,67 @@ function calculateFitness(trades: TradeRecord[], startingCapital: number): Fitne
   const diversityPenalty = calculateDiversityPenalty(learnableTrades);
   const symbolsTraded = new Set(learnableTrades.map(t => t.symbol)).size;
 
-  // === FITNESS FORMULA ===
+  // === FITNESS FORMULA V2 ===
+  // REBALANCED to stop breeding "busy losers"
+  // Key insight: more trades should NEVER accidentally improve fitness
+  // 
+  // Weights (tuned for fee-heavy environment):
+  // - Net PnL: 1.0 (king signal - profit after all costs)
+  // - PnL per trade: 0.7 (reward efficiency, not volume)
+  // - Drawdown: -1.2 (heavy penalty - protect capital)
+  // - Fee burden: -1.0 (penalize fee bleed)
+  // - Trade count: -0.15 (light penalty to discourage spam)
+  // - Sharpe: 0.2 (keep small until profitable)
+  // ===========================================================================
+  
   // Normalize sharpe to 0..1 range for weighting (sharpe of 2 = excellent)
   const normalizedSharpe = (sharpe + 3) / 6; // Maps -3..3 to 0..1
   
-  // Base fitness calculation
+  // PnL per trade (crucial for stopping churn)
+  const pnlPerTrade = learnableTrades.length > 0 
+    ? pnlResult.realizedPnl / learnableTrades.length 
+    : 0;
+  const normalizedPnlPerTrade = normalizePnL(pnlPerTrade, 0.5); // Scale for per-trade
+  
+  // Fee burden penalty (0-1 where 1 = all profit eaten by fees)
+  const feeBurdenRaw = pnlResult.totalFees / Math.max(1, Math.abs(pnlResult.realizedPnl) + pnlResult.totalFees);
+  const feeBurdenPenalty = Math.min(1, feeBurdenRaw);
+  
+  // Trade count penalty (light - just discourages spam)
+  // Kicks in after 20 trades/week (reasonable for learning)
+  const REASONABLE_TRADE_COUNT = 20;
+  const tradeCountPenalty = learnableTrades.length > REASONABLE_TRADE_COUNT
+    ? Math.min(0.3, ((learnableTrades.length - REASONABLE_TRADE_COUNT) / 100) * 0.15)
+    : 0;
+  
+  // NEW FITNESS FORMULA - profit is king
   let fitnessScore = 
-    (normalizedPnl * 0.35) +
-    (normalizedSharpe * 0.25) +
-    (profitableDaysRatio * 0.15) -
-    (maxDrawdown * 0.15) -
-    (overtradingPenalty * 0.10) -
-    (diversityPenalty);  // Up to -0.1 for single-symbol fixation
-
+    (normalizedPnl * 1.0) +                    // Net PnL (heavy weight)
+    (normalizedPnlPerTrade * 0.7) +            // Efficiency (reward edge per trade)
+    (normalizedSharpe * 0.2) +                 // Sharpe (light until profitable)
+    (profitableDaysRatio * 0.15) -             // Consistency bonus
+    (maxDrawdown * 1.2) -                      // Drawdown (heavy penalty)
+    (feeBurdenPenalty * 1.0) -                 // Fee bleed penalty
+    (tradeCountPenalty) -                      // Spam penalty
+    (overtradingPenalty * 0.10) -              // Legacy overtrading
+    (diversityPenalty);                        // Symbol fixation
+  
   // MINIMUM TRADES GATE: Penalize agents with insufficient sample size
-  // Prevents lucky 1-2 trade agents from ranking high in selection
-  const MIN_TRADES_FOR_FULL_FITNESS = 10;
+  // Raised to 20 to ensure statistical significance
+  const MIN_TRADES_FOR_FULL_FITNESS = 20;
   if (learnableTrades.length < MIN_TRADES_FOR_FULL_FITNESS) {
     const samplePenalty = 0.5 * (1 - learnableTrades.length / MIN_TRADES_FOR_FULL_FITNESS);
-    fitnessScore *= (1 - samplePenalty);  // Up to 50% reduction for 0 trades
+    fitnessScore *= (1 - samplePenalty);  // Up to 50% reduction for low trades
   }
+  
+  // PROFIT GATE: Count "learnable" vs "noise" trades for diagnostics
+  // Filter trades using profit gate
+  const learnableWithEdge = pnlResult.tradePnLs.filter(pnl => !isNeutralNoise(pnl));
+  const profitableWithEdge = pnlResult.tradePnLs.filter(pnl => hasEdge(pnl, 100)); // Assume $100 notional for BPS calc
+  console.log(`[fitness] Trade quality: ${profitableWithEdge.length}/${learnableTrades.length} have edge, ${pnlResult.tradePnLs.length - learnableWithEdge.length} are noise`);
+  
+  // Log the new fitness components for debugging
+  console.log(`[fitness] V2 components: pnl=${normalizedPnl.toFixed(3)}, pnl/trade=${normalizedPnlPerTrade.toFixed(3)}, sharpe=${normalizedSharpe.toFixed(3)}, feeBurden=${feeBurdenPenalty.toFixed(3)}, tradeCountPen=${tradeCountPenalty.toFixed(3)}, final=${fitnessScore.toFixed(4)}`);
 
   // Phase 6B: Calculate net-cost metrics
   const netPnlAfterCosts = pnlResult.realizedPnl; // Already includes fees in calculation

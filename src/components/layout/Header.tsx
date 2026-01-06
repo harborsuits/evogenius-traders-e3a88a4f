@@ -7,11 +7,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { SystemStatus } from '@/types/evotrader';
-import { Dna, ExternalLink, Square, Activity, AlertTriangle, CheckCircle, Clock, Loader2, FlaskConical, GitCompare, Shield, Timer, Zap } from 'lucide-react';
+import { Dna, ExternalLink, Square, Activity, AlertTriangle, CheckCircle, Clock, Loader2, FlaskConical, GitCompare, Shield, Timer, Zap, LogOut } from 'lucide-react';
 import { useSystemState, useMarketData } from '@/hooks/useEvoTraderData';
 import { useCurrentTradeMode } from '@/contexts/TradeModeContext';
 import { useStrategyTestMode } from '@/hooks/useSystemConfig';
 import { useLiveSafety } from '@/hooks/useLiveSafety';
+import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/hooks/use-toast';
@@ -27,11 +28,19 @@ export function Header({ status, generationNumber }: HeaderProps) {
   const { mode, isLive } = useCurrentTradeMode();
   const isTestMode = useStrategyTestMode();
   const { status: liveSafety } = useLiveSafety();
+  const { signOut } = useAuth();
   const queryClient = useQueryClient();
   const [emergencyStopping, setEmergencyStopping] = useState(false);
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState<number | null>(null);
   const [rotationModalOpen, setRotationModalOpen] = useState(false);
   const [genSheetOpen, setGenSheetOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    await signOut();
+    setSigningOut(false);
+  };
 
   const isArmed = liveSafety.isArmed;
   const armedSeconds = liveSafety.secondsRemaining;
@@ -245,6 +254,20 @@ export function Header({ status, generationNumber }: HeaderProps) {
           <Button variant="ghost" size="sm" className="h-7 px-2 hidden lg:flex text-muted-foreground">
             <ExternalLink className="h-3 w-3" />
             <span className="ml-1 text-[10px]">CB</span>
+          </Button>
+
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={handleSignOut}
+            disabled={signingOut}
+            className="h-7 px-2 text-muted-foreground"
+          >
+            {signingOut ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <LogOut className="h-3 w-3" />
+            )}
           </Button>
         </div>
       </div>

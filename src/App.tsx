@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { TradeModeProvider } from "@/contexts/TradeModeContext";
 import { SystemSnapshotProvider } from "@/contexts/SystemSnapshotContext";
 import { useAlertNotifications } from "@/hooks/useAlertNotifications";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import PortfolioPage from "./pages/PortfolioPage";
@@ -20,6 +21,7 @@ import GenerationsPage from "./pages/GenerationsPage";
 import GenerationDetailPage from "./pages/GenerationDetailPage";
 import AlertsPage from "./pages/AlertsPage";
 import DecisionLogPage from "./pages/DecisionLogPage";
+import AuthPage from "./pages/AuthPage";
 
 const queryClient = new QueryClient();
 
@@ -39,19 +41,20 @@ const App = () => (
           <BrowserRouter>
             <AlertNotificationsRoot />
             <Routes>
-              <Route path="/" element={<Index />} />
-              <Route path="/portfolio" element={<PortfolioPage />} />
-              <Route path="/positions" element={<PositionsPage />} />
-              <Route path="/orders" element={<OrdersPage />} />
-              <Route path="/fills" element={<FillsPage />} />
-              <Route path="/trades" element={<TradesPage />} />
-              <Route path="/agents" element={<AgentsPage />} />
-              <Route path="/agents/compare" element={<AgentComparePage />} />
-              <Route path="/agents/:agentId" element={<AgentDetailPage />} />
-              <Route path="/generations" element={<GenerationsPage />} />
-              <Route path="/generations/:genId" element={<GenerationDetailPage />} />
-              <Route path="/alerts" element={<AlertsPage />} />
-              <Route path="/decisions" element={<DecisionLogPage />} />
+              <Route path="/auth" element={<AuthPage />} />
+              <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
+              <Route path="/portfolio" element={<ProtectedRoute><PortfolioPage /></ProtectedRoute>} />
+              <Route path="/positions" element={<ProtectedRoute><PositionsPage /></ProtectedRoute>} />
+              <Route path="/orders" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
+              <Route path="/fills" element={<ProtectedRoute><FillsPage /></ProtectedRoute>} />
+              <Route path="/trades" element={<ProtectedRoute><TradesPage /></ProtectedRoute>} />
+              <Route path="/agents" element={<ProtectedRoute><AgentsPage /></ProtectedRoute>} />
+              <Route path="/agents/compare" element={<ProtectedRoute><AgentComparePage /></ProtectedRoute>} />
+              <Route path="/agents/:agentId" element={<ProtectedRoute><AgentDetailPage /></ProtectedRoute>} />
+              <Route path="/generations" element={<ProtectedRoute><GenerationsPage /></ProtectedRoute>} />
+              <Route path="/generations/:genId" element={<ProtectedRoute><GenerationDetailPage /></ProtectedRoute>} />
+              <Route path="/alerts" element={<ProtectedRoute><AlertsPage /></ProtectedRoute>} />
+              <Route path="/decisions" element={<ProtectedRoute><DecisionLogPage /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>

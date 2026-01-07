@@ -240,6 +240,23 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Auth check - supports JWT OR internal secret (for cron)
+  const internalSecret = req.headers.get('x-internal-secret');
+  const expectedSecret = Deno.env.get('INTERNAL_FUNCTION_SECRET');
+  const hasInternalAuth = internalSecret && expectedSecret && internalSecret === expectedSecret;
+  
+  if (!hasInternalAuth) {
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      console.log('[news-poll] No auth provided');
+      return new Response(
+        JSON.stringify({ success: false, error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    // For user calls, we just check header exists (service role handles actual auth)
+  }
+
   const startTime = Date.now();
   
   try {

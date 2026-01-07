@@ -3051,11 +3051,12 @@ Deno.serve(async (req) => {
     let executeResult: Record<string, unknown> = { skipped: true, reason: 'shadow_only_mode' };
     
     if (isPaperMode) {
+      const internalSecret = Deno.env.get('INTERNAL_FUNCTION_SECRET');
       const executeResponse = await fetch(`${supabaseUrl}/functions/v1/trade-execute`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${serviceKey}`,
+          'x-internal-secret': internalSecret ?? '',
         },
         body: JSON.stringify({
           symbol,

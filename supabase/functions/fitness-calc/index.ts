@@ -5,8 +5,16 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Helper function for auth check
+// Helper function for auth check - supports JWT OR internal secret
 async function checkAuth(req: Request): Promise<{ ok: boolean; error?: string }> {
+  // Allow internal calls with secret header (for cron/gen-end)
+  const internalSecret = req.headers.get('x-internal-secret');
+  const expectedSecret = Deno.env.get('INTERNAL_FUNCTION_SECRET');
+  if (internalSecret && expectedSecret && internalSecret === expectedSecret) {
+    return { ok: true };
+  }
+
+  // Fall back to JWT auth for user-initiated calls
   const authHeader = req.headers.get('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
     return { ok: false, error: 'Unauthorized' };

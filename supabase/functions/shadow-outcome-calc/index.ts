@@ -163,8 +163,34 @@ Deno.serve(async (req) => {
     console.log(`[shadow-outcome-calc] Current generation: ${currentGenId}`);
     
     const minHoldTime = new Date(Date.now() - minHoldMinutes * 60 * 1000).toISOString();
+    const freshMarketThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString(); // 30 min
     
-    // SMART PRIORITY: First try current generation trades
+    // First, get symbols with fresh market data (< 30 min old)
+    const { data: freshSymbols, error: freshSymbolsError } = await supabase
+      .from('market_data')
+      .select('symbol')
+      .gt('updated_at', freshMarketThreshold);
+    
+    if (freshSymbolsError) {
+      console.error('[shadow-outcome-calc] Failed to fetch fresh symbols:', freshSymbolsError);
+      return new Response(
+        JSON.stringify({ ok: false, error: 'Failed to fetch fresh market symbols' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    const freshSymbolList = (freshSymbols ?? []).map(s => s.symbol);
+    console.log(`[shadow-outcome-calc] ${freshSymbolList.length} symbols have fresh market data`);
+    
+    if (freshSymbolList.length === 0) {
+      console.log('[shadow-outcome-calc] No symbols with fresh market data, skipping');
+      return new Response(
+        JSON.stringify({ ok: true, processed: 0, reason: 'no_fresh_market_data' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // SMART PRIORITY: Get trades only for symbols with fresh market data
     let pendingTrades: ShadowTrade[] = [];
     let tradeSource = 'backlog';
     
@@ -175,23 +201,25 @@ Deno.serve(async (req) => {
         .eq('outcome_status', 'pending')
         .eq('generation_id', currentGenId)
         .lt('entry_time', minHoldTime)
+        .in('symbol', freshSymbolList)
         .order('entry_time', { ascending: true })
         .limit(batchSize);
       
       if (!currentGenError && currentGenTrades && currentGenTrades.length > 0) {
         pendingTrades = currentGenTrades as ShadowTrade[];
         tradeSource = 'current_gen';
-        console.log(`[shadow-outcome-calc] PRIORITY: Found ${pendingTrades.length} trades from current generation`);
+        console.log(`[shadow-outcome-calc] PRIORITY: Found ${pendingTrades.length} trades from current generation with fresh market data`);
       }
     }
     
-    // If no current gen trades, fall back to oldest pending (backlog)
+    // If no current gen trades, fall back to backlog with fresh market data
     if (pendingTrades.length === 0) {
       const { data: backlogTrades, error: backlogError } = await supabase
         .from('shadow_trades')
         .select('*')
         .eq('outcome_status', 'pending')
         .lt('entry_time', minHoldTime)
+        .in('symbol', freshSymbolList)
         .order('entry_time', { ascending: true })
         .limit(batchSize);
       

@@ -359,6 +359,7 @@ interface ShadowPerformance {
   shadow_trades: number;
   calculated_trades: number;
   avg_pnl_pct: number;
+  total_simulated_pnl: number;  // NEW: Total $ PnL from calculated shadow trades
   hit_target_rate: number;
   hit_stop_rate: number;
   avg_confidence: number;
@@ -372,6 +373,7 @@ function calculateShadowPerformance(trades: ShadowTradeRecord[]): ShadowPerforma
       shadow_trades: 0,
       calculated_trades: 0,
       avg_pnl_pct: 0,
+      total_simulated_pnl: 0,  // NEW: Total $ PnL from shadow trades
       hit_target_rate: 0,
       hit_stop_rate: 0,
       avg_confidence: 0,
@@ -388,6 +390,7 @@ function calculateShadowPerformance(trades: ShadowTradeRecord[]): ShadowPerforma
       shadow_trades: trades.length,
       calculated_trades: 0,
       avg_pnl_pct: 0,
+      total_simulated_pnl: 0,
       hit_target_rate: 0,
       hit_stop_rate: 0,
       avg_confidence: trades.reduce((s, t) => s + t.confidence, 0) / trades.length,
@@ -397,6 +400,8 @@ function calculateShadowPerformance(trades: ShadowTradeRecord[]): ShadowPerforma
   }
 
   const avgPnlPct = calculatedTrades.reduce((s, t) => s + (t.simulated_pnl_pct ?? 0), 0) / totalCalculated;
+  // NEW: Sum up total simulated PnL in dollars for evolution signal
+  const totalSimulatedPnl = calculatedTrades.reduce((s, t) => s + (t.simulated_pnl ?? 0), 0);
   const hitTargetRate = calculatedTrades.filter(t => t.hit_target).length / totalCalculated;
   const hitStopRate = calculatedTrades.filter(t => t.hit_stop).length / totalCalculated;
   const avgConfidence = trades.reduce((s, t) => s + t.confidence, 0) / trades.length;
@@ -420,6 +425,7 @@ function calculateShadowPerformance(trades: ShadowTradeRecord[]): ShadowPerforma
     shadow_trades: trades.length,
     calculated_trades: totalCalculated,
     avg_pnl_pct: avgPnlPct,
+    total_simulated_pnl: totalSimulatedPnl,  // NEW: Total $ PnL
     hit_target_rate: hitTargetRate,
     hit_stop_rate: hitStopRate,
     avg_confidence: avgConfidence,
@@ -982,16 +988,28 @@ Deno.serve(async (req) => {
       // This is the key fix - gates now consider shadow decisions as "trades"
       const combinedTrades = fitness.total_trades + shadowPerf.shadow_trades;
       
+      // COMBINED PNL: Blend paper + shadow PnL for evolution signal
+      // If paper trades exist, use paper PnL. Otherwise, use shadow PnL.
+      // This ensures evolution can see profitability even in shadow-only periods.
+      let combinedPnl = fitness.realized_pnl;
+      if (fitness.total_trades === 0 && shadowPerf.calculated_trades > 0) {
+        // Shadow-only: use total simulated PnL from shadow trades
+        combinedPnl = shadowPerf.total_simulated_pnl;
+      } else if (fitness.total_trades > 0 && shadowPerf.calculated_trades > 0) {
+        // Both exist: 80% paper + 20% shadow (match blending weights)
+        combinedPnl = (fitness.realized_pnl * 0.8) + (shadowPerf.total_simulated_pnl * 0.2);
+      }
+      
       results.push({ agent_id: agent.id, fitness, shadow: shadowPerf, blended });
 
-      // Upsert performance record with BLENDED fitness and COMBINED trades
+      // Upsert performance record with BLENDED fitness, COMBINED trades, and COMBINED PnL
       const { error: upsertError } = await supabase
         .from('performance')
         .upsert({
           agent_id: agent.id,
           generation_id: generationId,
           fitness_score: blended.blended_score, // Use blended score
-          net_pnl: fitness.realized_pnl,
+          net_pnl: combinedPnl,  // FIXED: Now includes shadow PnL when paper is absent
           sharpe_ratio: fitness.sharpe_ratio,
           max_drawdown: fitness.max_drawdown,
           profitable_days_ratio: fitness.profitable_days_ratio,
@@ -1002,6 +1020,11 @@ Deno.serve(async (req) => {
 
       if (upsertError) {
         console.error(`[fitness-calc] Failed to upsert performance for ${agent.id}:`, upsertError);
+      }
+      
+      // Log agents with shadow PnL for debugging
+      if (shadowPerf.total_simulated_pnl !== 0) {
+        console.log(`[fitness-calc] Agent ${agent.id.substring(0, 8)}: paper_pnl=$${fitness.realized_pnl.toFixed(2)}, shadow_pnl=$${shadowPerf.total_simulated_pnl.toFixed(2)}, combined=$${combinedPnl.toFixed(2)}`);
       }
     }
     
@@ -1027,16 +1050,35 @@ Deno.serve(async (req) => {
     // =========================================================================
     // This is the missing link! We must write aggregated fitness/pnl/trades
     // to the generations table so evolution can see the results.
+    // FIXED: Now includes shadow PnL when paper PnL is zero.
     // =========================================================================
-    const genTotalPnl = results.reduce((sum, r) => sum + r.fitness.realized_pnl, 0);
-    const genTotalTrades = learnableOrders.length;
-    const agentsWithTrades = results.filter(r => r.fitness.total_trades > 0);
+    
+    // Calculate paper PnL
+    const genPaperPnl = results.reduce((sum, r) => sum + r.fitness.realized_pnl, 0);
+    // Calculate shadow PnL
+    const genShadowPnl = results.reduce((sum, r) => sum + r.shadow.total_simulated_pnl, 0);
+    
+    // Use combined PnL: paper if available, otherwise shadow
+    // This ensures evolution signal even in shadow-only periods
+    let genTotalPnl: number;
+    if (genPaperPnl !== 0) {
+      genTotalPnl = genPaperPnl;
+    } else if (genShadowPnl !== 0) {
+      genTotalPnl = genShadowPnl;
+    } else {
+      genTotalPnl = 0;
+    }
+    
+    const genTotalTrades = learnableOrders.length + results.reduce((sum, r) => sum + r.shadow.calculated_trades, 0);
+    
+    // FIXED: Count agents with ANY trades (paper OR shadow) for avg_fitness
+    const agentsWithTrades = results.filter(r => r.fitness.total_trades > 0 || r.shadow.calculated_trades > 0);
     const genAvgFitness = agentsWithTrades.length > 0
       ? agentsWithTrades.reduce((sum, r) => sum + r.blended.blended_score, 0) / agentsWithTrades.length
       : null;
     const genMaxDrawdown = accountLevelDrawdown * 100; // Convert to percentage for storage
     
-    console.log(`[fitness-calc] 🧬 GENERATION SUMMARY: pnl=$${genTotalPnl.toFixed(2)}, trades=${genTotalTrades}, avg_fitness=${genAvgFitness?.toFixed(4) ?? 'null'}, drawdown=${genMaxDrawdown.toFixed(2)}%`);
+    console.log(`[fitness-calc] 🧬 GENERATION SUMMARY: paper_pnl=$${genPaperPnl.toFixed(2)}, shadow_pnl=$${genShadowPnl.toFixed(2)}, total_pnl=$${genTotalPnl.toFixed(2)}, trades=${genTotalTrades}, avg_fitness=${genAvgFitness?.toFixed(4) ?? 'null'}, drawdown=${genMaxDrawdown.toFixed(2)}%`);
     
     // Update generations table with computed values
     const { error: genUpdateError } = await supabase

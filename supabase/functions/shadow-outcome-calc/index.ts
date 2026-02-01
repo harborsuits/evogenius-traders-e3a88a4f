@@ -152,26 +152,62 @@ Deno.serve(async (req) => {
     
     console.log(`[shadow-outcome-calc] Config: min_hold=${minHoldMinutes}m, max_hold=${maxHoldHours}h`);
     
-    // 1. Get pending shadow trades that are old enough
+    // Get current active generation for priority processing
+    const { data: systemState } = await supabase
+      .from('system_state')
+      .select('current_generation_id')
+      .limit(1)
+      .single();
+    
+    const currentGenId = systemState?.current_generation_id;
+    console.log(`[shadow-outcome-calc] Current generation: ${currentGenId}`);
+    
     const minHoldTime = new Date(Date.now() - minHoldMinutes * 60 * 1000).toISOString();
     
-    const { data: pendingTrades, error: tradesError } = await supabase
-      .from('shadow_trades')
-      .select('*')
-      .eq('outcome_status', 'pending')
-      .lt('entry_time', minHoldTime)
-      .order('entry_time', { ascending: true })
-      .limit(batchSize);
+    // SMART PRIORITY: First try current generation trades
+    let pendingTrades: ShadowTrade[] = [];
+    let tradeSource = 'backlog';
     
-    if (tradesError) {
-      console.error('[shadow-outcome-calc] Failed to fetch pending trades:', tradesError);
-      return new Response(
-        JSON.stringify({ ok: false, error: 'Failed to fetch pending trades' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (currentGenId) {
+      const { data: currentGenTrades, error: currentGenError } = await supabase
+        .from('shadow_trades')
+        .select('*')
+        .eq('outcome_status', 'pending')
+        .eq('generation_id', currentGenId)
+        .lt('entry_time', minHoldTime)
+        .order('entry_time', { ascending: true })
+        .limit(batchSize);
+      
+      if (!currentGenError && currentGenTrades && currentGenTrades.length > 0) {
+        pendingTrades = currentGenTrades as ShadowTrade[];
+        tradeSource = 'current_gen';
+        console.log(`[shadow-outcome-calc] PRIORITY: Found ${pendingTrades.length} trades from current generation`);
+      }
     }
     
-    if (!pendingTrades || pendingTrades.length === 0) {
+    // If no current gen trades, fall back to oldest pending (backlog)
+    if (pendingTrades.length === 0) {
+      const { data: backlogTrades, error: backlogError } = await supabase
+        .from('shadow_trades')
+        .select('*')
+        .eq('outcome_status', 'pending')
+        .lt('entry_time', minHoldTime)
+        .order('entry_time', { ascending: true })
+        .limit(batchSize);
+      
+      if (backlogError) {
+        console.error('[shadow-outcome-calc] Failed to fetch pending trades:', backlogError);
+        return new Response(
+          JSON.stringify({ ok: false, error: 'Failed to fetch pending trades' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      pendingTrades = (backlogTrades ?? []) as ShadowTrade[];
+      tradeSource = 'backlog';
+    }
+    
+    if (pendingTrades.length === 0) {
       console.log('[shadow-outcome-calc] No pending shadow trades to process');
       return new Response(
         JSON.stringify({ ok: true, processed: 0, reason: 'no_pending_trades' }),
@@ -179,7 +215,7 @@ Deno.serve(async (req) => {
       );
     }
     
-    console.log(`[shadow-outcome-calc] Processing ${pendingTrades.length} pending shadow trades`);
+    console.log(`[shadow-outcome-calc] Processing ${pendingTrades.length} pending shadow trades (source: ${tradeSource})`);
     
     // 2. Get unique symbols and fetch current market data
     const symbols = [...new Set(pendingTrades.map(t => t.symbol))];
@@ -270,6 +306,7 @@ Deno.serve(async (req) => {
       action: 'shadow_outcome_calc',
       metadata: {
         processed: pendingTrades.length,
+        source: tradeSource,
         calculated: results.calculated,
         skipped: results.skipped,
         errors: results.errors,
@@ -282,12 +319,13 @@ Deno.serve(async (req) => {
       },
     });
     
-    console.log(`[shadow-outcome-calc] Complete: calculated=${results.calculated}, skipped=${results.skipped}, errors=${results.errors}, reasons=${JSON.stringify(results.byReason)}`);
+    console.log(`[shadow-outcome-calc] Complete: source=${tradeSource}, calculated=${results.calculated}, skipped=${results.skipped}, errors=${results.errors}, reasons=${JSON.stringify(results.byReason)}`);
     
     return new Response(
       JSON.stringify({
         ok: true,
         processed: pendingTrades.length,
+        source: tradeSource,
         results,
         duration_ms: Date.now() - startTime,
       }),

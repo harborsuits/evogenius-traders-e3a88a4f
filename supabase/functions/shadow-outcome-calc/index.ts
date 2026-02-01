@@ -258,10 +258,12 @@ Deno.serve(async (req) => {
         continue;
       }
       
-      // Check if market data is stale (> 5 minutes old)
+      // Check if market data is stale
+      // T1 symbols poll every 5min, T2 every 10min, T3 every 15min
+      // Use 30 min threshold to accommodate all tiers + some buffer
       const marketAge = (now.getTime() - new Date(market.updated_at).getTime()) / 60000;
-      if (marketAge > 5) {
-        console.log(`[shadow-outcome-calc] Market data stale for ${trade.symbol} (${marketAge.toFixed(0)}m), skipping`);
+      if (marketAge > 30) {
+        console.log(`[shadow-outcome-calc] Market data stale for ${trade.symbol} (${marketAge.toFixed(0)}m > 30m), skipping`);
         results.skipped++;
         continue;
       }

@@ -50,6 +50,12 @@ export interface Agent {
   is_elite: boolean;
   status: AgentStatus;
   created_at: string;
+  role?: 'core' | 'explorer';
+  preferred_regime?: 'trend' | 'range' | 'dead' | 'any';
+  // Phase 2: Soft disable fields
+  is_active?: boolean;
+  disabled_reason?: string;
+  disabled_at?: string;
 }
 
 export interface Generation {

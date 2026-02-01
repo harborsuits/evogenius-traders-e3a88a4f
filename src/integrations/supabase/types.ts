@@ -1006,6 +1006,7 @@ export type Database = {
         Args: { gen_id: string; reason: string }
         Returns: undefined
       }
+      mutate_genes: { Args: { base_genes: Json }; Returns: Json }
       spend_arm_session: {
         Args: { request_id: string; session_id: string }
         Returns: {

@@ -136,6 +136,17 @@ export interface SystemConfig {
   strategy_thresholds?: StrategyThresholdsConfig;
   range_strategy?: RangeStrategyConfig;
   trade_flow_watchdog?: TradeFlowWatchdogConfig;
+  
+  // Phase 2: Strategy enable/disable
+  strategy_enabled?: {
+    mean_reversion?: boolean;
+    trend_pullback?: boolean;
+    breakout?: boolean;
+    bollinger_range?: boolean;
+  };
+  
+  // Phase 2: Symbol blacklist
+  symbol_blacklist?: string[];
 }
 
 export function useSystemConfig() {

@@ -2111,10 +2111,12 @@ Deno.serve(async (req) => {
     }
 
     // 5. Get active agents - fetch all, then filter by role based on drought state
+    // Phase 2: Also filter by is_active (soft-disable flag)
     const { data: allAgents, error: agentsError } = await supabase
       .from('agents')
       .select('*')
       .eq('status', 'active')
+      .eq('is_active', true)  // Phase 2: Respect soft-disable flag
       .limit(100);
 
     if (agentsError || !allAgents || allAgents.length === 0) {
@@ -2196,6 +2198,28 @@ Deno.serve(async (req) => {
     const testMode = systemConfig.strategy_test_mode === true;
     const tuning = systemConfig.adaptive_tuning as AdaptiveTuningConfig | undefined;
     const offsets = tuning?.offsets ?? {};
+    
+    // Phase 2: Load strategy enable/disable config
+    const strategyEnabled = (systemConfig.strategy_enabled ?? {
+      mean_reversion: true,
+      trend_pullback: true,
+      breakout: false,  // Disabled by default per Phase 1
+      bollinger_range: true,
+    }) as Record<string, boolean>;
+    
+    // Phase 2: Load symbol blacklist
+    const symbolBlacklist = (systemConfig.symbol_blacklist ?? []) as string[];
+    
+    // Phase 2: Check if agent's strategy is enabled
+    if (!strategyEnabled[agent.strategy_template]) {
+      console.log(`[trade-cycle] Agent ${agent.id.substring(0, 8)}: Strategy ${agent.strategy_template} DISABLED, skipping cycle`);
+      return new Response(
+        JSON.stringify({ ok: true, decision: 'hold', reason: 'strategy_disabled', strategy: agent.strategy_template }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    console.log(`[trade-cycle] Strategy ${agent.strategy_template} enabled | Blacklist: ${symbolBlacklist.length > 0 ? symbolBlacklist.join(', ') : 'none'}`);
     
     // Log config version for debugging staleness issues
     console.log(`[trade-cycle] Config loaded (updated_at: ${configUpdatedAt}) | min_confidence: ${(systemConfig as any)?.strategy_thresholds?.baseline?.min_confidence ?? BASELINE_THRESHOLDS.min_confidence}`);
@@ -2344,6 +2368,12 @@ Deno.serve(async (req) => {
     
     // Evaluate each symbol
     for (const sym of symbolsToEvaluate) {
+      // Phase 2: Skip blacklisted symbols
+      if (symbolBlacklist.includes(sym)) {
+        console.log(`[trade-cycle] ${sym}: BLACKLISTED, skipping`);
+        continue;
+      }
+      
       const mkt = marketBySymbol.get(sym);
       if (!mkt) continue;
       

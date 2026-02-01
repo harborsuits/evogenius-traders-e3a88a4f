@@ -18,9 +18,12 @@ export type Database = {
         Row: {
           capital_allocation: number
           created_at: string
+          disabled_at: string | null
+          disabled_reason: string | null
           generation_id: string
           genes: Json
           id: string
+          is_active: boolean | null
           is_elite: boolean
           preferred_regime: string | null
           role: Database["public"]["Enums"]["agent_role"]
@@ -30,9 +33,12 @@ export type Database = {
         Insert: {
           capital_allocation?: number
           created_at?: string
+          disabled_at?: string | null
+          disabled_reason?: string | null
           generation_id: string
           genes: Json
           id?: string
+          is_active?: boolean | null
           is_elite?: boolean
           preferred_regime?: string | null
           role?: Database["public"]["Enums"]["agent_role"]
@@ -42,9 +48,12 @@ export type Database = {
         Update: {
           capital_allocation?: number
           created_at?: string
+          disabled_at?: string | null
+          disabled_reason?: string | null
           generation_id?: string
           genes?: Json
           id?: string
+          is_active?: boolean | null
           is_elite?: boolean
           preferred_regime?: string | null
           role?: Database["public"]["Enums"]["agent_role"]

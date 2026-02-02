@@ -2110,16 +2110,32 @@ Deno.serve(async (req) => {
       console.log(`[trade-cycle] DROUGHT MODE KILLED: ${droughtKillReason}`);
     }
 
-    // 5. Get active agents - fetch all, then filter by role based on drought state
-    // Phase 2: Also filter by is_active (soft-disable flag)
+    // 5. Get active agents FROM CURRENT COHORT ONLY
+    // CRITICAL: We need to query agents through generation_agents, but avoid
+    // URL length issues with large .in() queries. Use a raw query approach
+    // that handles this efficiently by fetching directly from agents table
+    // filtered by current generation via the junction table.
+    // 
+    // Since Supabase JS doesn't support JOIN directly, we use a workaround:
+    // Query agents filtered by generation_id (agents.generation_id matches current gen)
     const { data: allAgents, error: agentsError } = await supabase
       .from('agents')
       .select('*')
-      .eq('status', 'active')
-      .eq('is_active', true)  // Phase 2: Respect soft-disable flag
-      .limit(100);
-
-    if (agentsError || !allAgents || allAgents.length === 0) {
+      .eq('generation_id', systemState.current_generation_id)
+      .in('status', ['active', 'elite'])
+      .eq('is_active', true);
+    
+    if (agentsError) {
+      console.error('[trade-cycle] Agents query error:', agentsError.message);
+      return new Response(
+        JSON.stringify({ ok: false, error: agentsError.message }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    console.log(`[trade-cycle] Found ${allAgents?.length ?? 0} active/elite agents from current generation`);
+    
+    if (!allAgents || allAgents.length === 0) {
       console.log('[trade-cycle] No active agents found');
       return new Response(
         JSON.stringify({ ok: true, skipped: true, reason: 'no_agents' }),

@@ -948,11 +948,17 @@ Deno.serve(async (req) => {
     const accountLevelDrawdown = calculateMaxDrawdown(accountPnlResult.equityCurve);
     console.log(`[fitness-calc] Account-level drawdown: ${(accountLevelDrawdown * 100).toFixed(2)}%`);
 
-    // 8b. Fetch ALL shadow trades for this generation (for blended fitness)
+    // 8b. Fetch shadow trades for COHORT AGENTS ONLY
+    // CRITICAL FIX: Old code fetched by generation_id, but shadow trades from previous
+    // agents (deleted during selection) were being orphaned. Now we fetch ONLY for
+    // agents that are currently in the generation_agents cohort.
+    const cohortAgentIds = agents.map(a => a.id);
+    
     const { data: shadowTrades } = await supabase
       .from('shadow_trades')
       .select('id, agent_id, symbol, side, confidence, simulated_pnl, simulated_pnl_pct, hit_stop, hit_target, outcome_status, regime, regime_match')
-      .eq('generation_id', generationId);
+      .eq('generation_id', generationId)
+      .in('agent_id', cohortAgentIds);
 
     // Group shadow trades by agent
     const shadowByAgent = new Map<string, ShadowTradeRecord[]>();
@@ -961,7 +967,7 @@ Deno.serve(async (req) => {
       agentShadows.push(st as ShadowTradeRecord);
       shadowByAgent.set(st.agent_id, agentShadows);
     }
-    console.log(`[fitness-calc] Found ${shadowTrades?.length ?? 0} shadow trades for ${shadowByAgent.size} agents`);
+    console.log(`[fitness-calc] Found ${shadowTrades?.length ?? 0} shadow trades for ${shadowByAgent.size} cohort agents (from ${cohortAgentIds.length} total)`);
 
     // 9. Calculate fitness for each agent (blending real + shadow)
     const results: { agent_id: string; fitness: FitnessComponents; shadow: ShadowPerformance; blended: ReturnType<typeof blendFitnessScores> }[] = [];

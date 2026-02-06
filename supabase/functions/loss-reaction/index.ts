@@ -35,6 +35,43 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Verify authentication - allow both JWT and internal secret
+    const authHeader = req.headers.get('Authorization');
+    const internalSecret = req.headers.get('x-internal-secret');
+    const expectedSecret = Deno.env.get('INTERNAL_FUNCTION_SECRET');
+    
+    const isInternalCall = internalSecret && expectedSecret && internalSecret === expectedSecret;
+    
+    if (!isInternalCall) {
+      if (!authHeader?.startsWith('Bearer ')) {
+        return new Response(
+          JSON.stringify({ error: 'Unauthorized' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const supabaseAuth = createClient(
+        Deno.env.get('SUPABASE_URL') ?? '',
+        Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+        { global: { headers: { Authorization: authHeader } } }
+      );
+
+      const token = authHeader.replace('Bearer ', '');
+      const { data: claimsData, error: claimsError } = await supabaseAuth.auth.getClaims(token);
+      
+      if (claimsError || !claimsData?.claims) {
+        console.error('[loss-reaction] Auth error:', claimsError);
+        return new Response(
+          JSON.stringify({ error: 'Unauthorized' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      console.log(`[loss-reaction] Authenticated user: ${claimsData.claims.sub}`);
+    } else {
+      console.log('[loss-reaction] Internal call authenticated via secret');
+    }
+
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''

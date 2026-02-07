@@ -62,17 +62,18 @@ interface AgentWithFitness {
 }
 
 // Mutate a single gene value
+// FIX: Increased mutation rate from 5-15% to 30-35% to escape local maxima
 function mutateGene(
   value: number,
   min: number,
   max: number,
   largeMutation: boolean
 ): number {
-  // Standard mutation: ±5-15%
-  // Large mutation: ±20-30%
+  // Standard mutation: ±30-35% (was ±5-15%)
+  // Large mutation: ±40-50% (was ±20-30%)
   const mutationRange = largeMutation 
-    ? 0.20 + Math.random() * 0.10  // 20-30%
-    : 0.05 + Math.random() * 0.10; // 5-15%
+    ? 0.40 + Math.random() * 0.10  // 40-50%
+    : 0.30 + Math.random() * 0.05; // 30-35%
   
   const direction = Math.random() < 0.5 ? -1 : 1;
   const mutatedValue = value * (1 + direction * mutationRange);
@@ -91,8 +92,8 @@ function createOffspring(
   for (const [geneName, value] of Object.entries(parent.genes)) {
     const geneBounds = bounds[geneName];
     if (geneBounds) {
-      // 10% chance of large mutation for exploration
-      const largeMutation = Math.random() < 0.10;
+      // 20% chance of large mutation for exploration (was 10%)
+      const largeMutation = Math.random() < 0.20;
       newGenes[geneName] = mutateGene(value, geneBounds.min, geneBounds.max, largeMutation);
     } else {
       // Unknown gene, keep as-is
@@ -244,10 +245,18 @@ Deno.serve(async (req) => {
     );
 
     // Calculate dynamic tier sizes based on actual cohort size
+    // FIX: Changed from 10%+15% = 25% survival to 35% survival with minimum floor
     const cohortSize = rankedAgents.length;
-    const eliteCount = Math.max(1, Math.floor(cohortSize * 0.10));   // 10%
-    const parentCount = Math.max(1, Math.floor(cohortSize * 0.15));  // 15%
-    const survivorCount = eliteCount + parentCount;
+    
+    // SURVIVOR FLOOR: At least 10 agents always survive to prevent population collapse
+    const MIN_SURVIVORS = 10;
+    const SURVIVAL_RATE = 0.35; // 35% survival rate (was 25%)
+    const survivorCount = Math.max(MIN_SURVIVORS, Math.floor(cohortSize * SURVIVAL_RATE));
+    
+    // ELITE PRESERVATION: Top 3 agents always survive unchanged (no mutation)
+    const ELITE_FLOOR = 3;
+    const eliteCount = Math.max(ELITE_FLOOR, Math.floor(survivorCount * 0.10)); // 10% of survivors, min 3
+    const parentCount = survivorCount - eliteCount;
 
     const elites = rankedAgents.slice(0, eliteCount);
     const parents = rankedAgents.slice(eliteCount, survivorCount);

@@ -11,5 +11,5 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 COPY --from=builder /app/dist ./dist
 COPY server.js .
-EXPOSE 3000
+EXPOSE 8080
 CMD ["bun", "run", "start"]
